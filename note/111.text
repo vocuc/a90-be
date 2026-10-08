@@ -1,0 +1,88 @@
+Còn nhiều chỗ tài liệu chưa nói rõ. Bạn trả lời giúp mình nhé (trả theo số là được):
+
+A. Kỹ thuật
+1. Stack: Thư mục nằm trong OSPanel nên mình đoán là PHP. Dùng Laravel hay framework nào khác? Database là MySQL hay PostgreSQL? PHP bản mấy?
+	- Sử dụng PHP Laravel 12
+	- MYSQl
+2. Chỉ làm API backend (frontend làm riêng, ví dụ React/Next) hay làm luôn giao diện?
+	- dự án này chỉ làm API, mà một dự án khác làm fontend dùng react
+	
+3. Xác thực dùng JWT, Sanctum token hay session? Có cần đăng nhập Google/Facebook và xác minh email/OTP không?
+	- Sanctum token
+	
+4. Ảnh (ảnh đầu vào, ảnh kết quả, ảnh mẫu) lưu ở đâu: local, S3 hay Cloudflare R2? Có xóa ảnh sau một thời gian không?
+	- Lưu ở S3
+	- Có, xóa ảnh sau 1 năm.
+	
+B. AI Creative và duyệt
+
+5. Ai duyệt Creative ở trạng thái pending_review? Có Admin không, và Admin cần làm được những gì?
+	- Không cần duyệt creator đăng nên mặc định là được duyệt.
+	- Có Admin, admin có quyền ẩn Creative khỏi sàn
+	
+6. Creator đăng bài thì bắt buộc phải qua duyệt, hay một số Creator (ví dụ đã verified) được đăng thẳng?
+	- Tất cả được đăng thẳng
+	
+7. Creative đang published thì Creator sửa prompt hoặc giá được không? Nếu sửa thì phải duyệt lại, hay cần lưu phiên bản (versioning)?
+	- sửa được không cần lưu phiên bản
+8. Bước "Tạo thử" của Creator có mất Credit không? Nếu có thì ai trả?
+	- Creator tự quản lý tài khoản AI của mình họ sẽ mua tài khoản xong lấy token lưu vào tài khoản của mình.
+	
+9. Creator dùng chính Creative của mình thì có bị trừ Credit và có nhận doanh thu không?
+	- không
+10. Có giá tối thiểu hoặc tối đa không? Giá Creator đặt có phải cao hơn chi phí gọi model không?
+	- không
+	
+C. Credit và thanh toán
+
+11. 1 Credit bằng bao nhiêu VND? Các gói Credit do Admin cấu hình, có khuyến mãi hoặc bonus không?
+	- 1  credit bằng 1 vnd không có khuyến mại
+	
+12. Credit có hết hạn không? Đăng ký mới có được tặng Credit không?
+	không hết hạn không được tặng
+13. Cổng thanh toán dùng gì: VNPay, MoMo, PayOS, Stripe?
+	- Chưa xây dựng hệ thống cổng thanh toán, admin sẽ cộng bằng tay
+
+D. Tạo ảnh (quan trọng nhất)
+14. Tạo ảnh chạy bất đồng bộ (queue, frontend polling /status) hay chờ trả kết quả luôn?
+	- Chạy bất đồng bộ, qua queue.
+	
+15. Theo chuỗi trong tài liệu, Credit bị trừ trước khi gọi AI. Nếu thất bại thì có hoàn 100% tự động không? Có trường hợp nào không hoàn không?
+	- Nếu thất bại thì hoàn tự động. các trường hợp khác sẽ bổ sung sau.
+	
+16. POST /generations/:id/retry có trừ Credit lần nữa không? Retry thì tạo Transaction mới hay dùng lại Transaction cũ?
+	- retry có trừ credit tạo transaction mới.
+	
+17. Một lần tạo cho ra mấy ảnh? Người dùng có được chọn số lượng hoặc tỉ lệ ảnh không?
+	- có người dùng tự chọn số lượng ảnh muốn tạo và tỷ lệ khung hình.
+	
+18. Định dùng những AI Provider nào (OpenAI, Replicate, fal.ai, Gemini…)? Mỗi model có giá vốn riêng không?
+	- Tích hợp Gemini trước
+
+E. Doanh thu và rút tiền Creator
+
+19. Revenue chuyển từ pending sang available sau bao lâu, ví dụ 7 ngày để phòng hoàn tiền?
+	- sau 7 ngày
+20. available_balance và withdrawable_balance khác nhau thế nào?
+	- available_balance là tiền đang sẵn trong ví
+	- withdrawable_balance là tiền đang chờ rút, người bán đang tạo lệnh rút tiền.
+	
+21. Creator rút ra tiền VND theo tỉ giá nào? Hạn mức tối thiểu là bao nhiêu, có mất phí rút không?
+	- có mất phí tao sẽ cấu hình phí trong admin
+	- tỷ giá theo VND
+	
+22. Rút xấu? Lúc đó Revenue có bị reversed không?
+
+F. Khác
+25. Rating được tính mỗi Generation 1 lần hay mỗi người một lần cho mỗi Creative?
+	- mỗi người một lần cho mỗi Creative
+26. Ai cấp tick verified cho Creator?
+	- Admin
+27. Phạm vi trước mắt: làm toàn bộ hay làm MVP trước? Nếu MVP thì gồm những phần nào?
+
+	- Làm MVP Trước cho phép người bán tạo Creative và đăng nên, người mua vào Creative xem chi tiết tải ảnh nên bấm tạo và tải kết quả về.
+
+Dự án của tao sẽ sử dụng stack:
+fontend: Reactjs
+backend: PHP/Laravel 12
+DB: mysql

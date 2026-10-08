@@ -1,0 +1,52 @@
+Câu hỏi bổ sung (điền câu trả lời vào dòng "-" dưới mỗi câu)
+
+1. Các câu 22, 23, 24 còn thiếu trong 111.text
+22. Rút tiền: Admin duyệt rồi chuyển khoản tay, hay chuyển tự động? Có cần KYC (CCCD, tài khoản ngân hàng) không? Hạn mức rút tối thiểu là bao nhiêu?
+	- chuyền bằng tay
+23. Platform Fee là một mức chung cho cả hệ thống, hay mỗi Creator/danh mục một mức khác nhau?
+	- mỗi người một mức khác nhau mới đăng ký sẽ sử dụng hạn mức mặc định của nền tảng
+
+24. Transaction đã completed có bị hoàn tiền không (ví dụ người dùng khiếu nại ảnh xấu)? Nếu có thì Revenue của Creator có bị reversed không?
+	- có, reversed bị reversed
+, 
+2. Creator dùng tài khoản AI riêng (câu 8)
+2a. Khi NGƯỜI MUA tạo ảnh, hệ thống gọi Gemini bằng key của CREATOR đúng không? (nền tảng không có key riêng, Creator chịu chi phí AI)
+	- đúng
+2b. Key của Creator hết quota hoặc sai thì tạo ảnh thất bại và tự hoàn Credit. Có cần tự pause Creative hoặc gửi thông báo cho Creator không?
+	- có
+2c. Mỗi Creator lưu 1 key cho mỗi Provider, hay được lưu nhiều key? (key sẽ được mã hóa trong DB, không bao giờ trả về frontend)
+	- mỗi creator lưu được nhiều key cho mỗi Provider, có mã hóa trong db
+
+3. Số lượng ảnh và tỉ lệ khung hình (câu 17)
+3a. Giá Creator đặt là giá cho MỖI ẢNH, và tổng tiền = giá x số lượng, đúng không?
+	- đúng
+3b. Số lượng tối đa mỗi lần là bao nhiêu? Tỉ lệ khung hình được chọn là tất cả tỉ lệ Gemini hỗ trợ, hay do Creator giới hạn trong cấu hình?
+	- mặc định là 5 creator có thể tự cấu hình không quá 10
+
+3c. Chọn 4 ảnh mà chỉ tạo được 3 ảnh: hoàn lại tiền 1 ảnh lỗi, hay coi như thất bại toàn bộ?
+	- hoàn lại tiền một ảnh bị lỗi
+
+3d. Mỗi lần bấm tạo là 1 Transaction (gồm nhiều ảnh), đúng không?
+	- mỗi ảnh một transaction
+
+4. Phạm vi MVP
+4a. MVP có trừ Credit thật không? Nếu có thì cần thêm API Admin cộng Credit bằng tay.
+	- có trừ thật
+	- có cần làm thêm API Admin cộng Credit bằng tay
+4b. MVP có làm Creator Revenue và ví Creator không? (Đề xuất: MVP vẫn ghi bản ghi Revenue để không mất dữ liệu, còn ví và rút tiền làm sau)
+	- có, nhưng chưa làm nghiệp vụ rút tiền.
+
+4c. Admin dùng chung bảng users, phân biệt bằng cột role, được không? MVP có cần API Admin (ẩn Creative, cấp verified, cộng Credit) không?
+	- MVP không cần API Admin (ẩn Creative, cấp verified, cộng Credit)
+	- Được Admin dùng chung bảng users, phân biệt bằng cột role
+4d. Người mua có cần đăng nhập mới xem được danh sách và chi tiết Creative không, hay xem tự do và chỉ cần đăng nhập khi bấm tạo ảnh?
+	- xem tự do
+
+5. Chi tiết nhỏ
+5a. Prompt của Creator gồm System Prompt, Creative Prompt và Negative Prompt như tài liệu ghi? Gemini không có negative prompt riêng, nên sẽ ghép vào prompt chính. Được không?
+	- không sao khi gửi sang gemini sẽ gộp lại thành Một
+
+5b. Ảnh mẫu của Creative chỉ để hiển thị trên sàn, hay còn được gửi kèm làm ảnh tham chiếu (reference) khi gọi AI?
+	- chỉ hiển thị trên sàn
+5c. Đăng ký chỉ cần email và mật khẩu, không cần xác minh email, đúng không?
+	- đúng

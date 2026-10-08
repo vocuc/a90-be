@@ -1,0 +1,35 @@
+Câu hỏi bổ sung lần 3 (điền vào dòng "-")
+
+1. Câu 4a và 4c đang mâu thuẫn: 4a cần API Admin cộng Credit, nhưng 4c nói MVP không cần API Admin cộng Credit.
+   Trong MVP, người mua lấy Credit bằng cách nào?
+   (a) Có API Admin cộng Credit
+   (b) Không có API, dev cộng Credit bằng lệnh artisan, ví dụ: php artisan credit:add {email} {amount}
+	- a
+
+2. Mỗi ảnh là 1 Transaction. Đề xuất cách tổ chức dữ liệu:
+   1 lần bấm tạo = 1 Generation (lưu ảnh đầu vào, tỉ lệ khung hình, số lượng)
+     -> N GenerationOutput (mỗi output là 1 ảnh)
+     -> mỗi output gắn với 1 Transaction riêng
+   Ảnh nào lỗi thì Transaction của ảnh đó bị hoàn tiền. Được không?
+	- được
+
+3. Retry (POST /generations/:id/retry): tạo lại TOÀN BỘ lần tạo đó, hay chỉ tạo lại những ảnh bị lỗi?
+	- cho người dùng chọn ảnh nào muốn retry
+
+4. Creator có nhiều key Gemini thì Creative dùng key nào?
+   (a) Creator chọn 1 key cụ thể khi tạo/cấu hình Creative
+   (b) Hệ thống tự dùng lần lượt các key, key này lỗi thì chuyển sang key khác
+	- b
+
+5. Khi key lỗi thì pause Creative và báo cho Creator (câu 2b). Báo bằng cách nào?
+   (a) Thông báo trong hệ thống (bảng notifications, frontend gọi API để lấy)
+   (b) Email
+   (c) Cả hai
+   Trong MVP có cần làm phần này không?
+	- không cần
+
+6. Platform Fee mặc định của nền tảng là bao nhiêu %? (Lưu trong bảng cấu hình, sửa được sau)
+	- 10%
+
+7. Model AI (bảng ai_models) do ai thêm? Đề xuất: dev seed sẵn danh sách model Gemini, Creator chỉ chọn trong danh sách đó.
+	- dev seed
