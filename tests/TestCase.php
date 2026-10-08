@@ -92,7 +92,7 @@ abstract class TestCase extends BaseTestCase
         ]);
         $creative->config()->create(array_merge([
             'system_prompt' => 'You are a product photographer.',
-            'creative_prompt' => 'Place the product on a marble table.',
+            'creative_prompt' => [['label' => 'Bối cảnh', 'value' => 'Place the product on a marble table.']],
             'negative_prompt' => 'text, watermark',
             'max_outputs' => 5,
             'default_aspect_ratio' => '1:1',

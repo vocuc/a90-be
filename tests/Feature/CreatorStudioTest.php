@@ -38,10 +38,20 @@ class CreatorStudioTest extends TestCase
             'title' => 'Ảnh mỹ phẩm',
             'model_id' => AiModel::query()->firstOrFail()->id,
             'price_per_image' => 2000,
-            'creative_prompt' => 'Luxury cosmetic shot',
+            'creative_prompt' => [['label' => 'Phong cách', 'value' => 'Luxury cosmetic shot']],
             'max_outputs' => 4,
             'allowed_aspect_ratios' => ['1:1', '4:5'],
         ])->assertCreated()->assertJsonPath('data.status', 'draft')->json('data.id');
+
+        // creative_prompt lưu và trả về dạng mảng, không phải chuỗi.
+        $this->getJson("/api/v1/creator/creatives/{$creativeId}")->assertOk()
+            ->assertJsonPath('data.config.creative_prompt', [['label' => 'Phong cách', 'value' => 'Luxury cosmetic shot']]);
+
+        // Chuỗi thường và câu lệnh thiếu nội dung bị từ chối.
+        $this->putJson("/api/v1/creator/creatives/{$creativeId}", ['creative_prompt' => 'Luxury cosmetic shot'])
+            ->assertStatus(422)->assertJsonValidationErrors('creative_prompt');
+        $this->putJson("/api/v1/creator/creatives/{$creativeId}", ['creative_prompt' => [['label' => 'Phong cách']]])
+            ->assertStatus(422)->assertJsonValidationErrors('creative_prompt.0.value');
 
         // Chưa có ảnh mẫu: chưa đăng được.
         $this->postJson("/api/v1/creator/creatives/{$creativeId}/publish")

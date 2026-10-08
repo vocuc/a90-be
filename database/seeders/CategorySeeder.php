@@ -10,10 +10,23 @@ class CategorySeeder extends Seeder
 {
     public function run(): void
     {
-        $names = ['Thời trang', 'Mỹ phẩm', 'Đồ ăn & Đồ uống', 'Nội thất', 'Điện tử', 'Trang sức', 'Khác'];
+        // Tên danh mục => icon Material Symbols
+        $categories = [
+            'Thời trang' => 'styler',
+            'Mỹ phẩm' => 'spa',
+            'Đồ ăn & Đồ uống' => 'restaurant',
+            'Nội thất' => 'chair',
+            'Điện tử' => 'devices',
+            'Trang sức' => 'diamond',
+            'Khác' => 'category',
+        ];
 
-        foreach ($names as $order => $name) {
-            Category::query()->firstOrCreate(['slug' => Str::slug($name)], ['name' => $name, 'sort_order' => $order]);
+        $order = 0;
+        foreach ($categories as $name => $icon) {
+            Category::query()->firstOrCreate(
+                ['slug' => Str::slug($name)],
+                ['name' => $name, 'icon' => $icon, 'sort_order' => $order++],
+            );
         }
     }
 }

@@ -25,7 +25,11 @@ class CreativeRequest extends FormRequest
             'model_id' => [$required, 'integer', Rule::exists('ai_models', 'id')->where('is_active', true)],
             'price_per_image' => [$required, 'integer', 'min:0', 'max:100000000'],
             'system_prompt' => ['nullable', 'string', 'max:10000'],
-            'creative_prompt' => ['nullable', 'string', 'max:10000'],
+            // Danh sách câu lệnh [{label, value}], ghép thành prompt khi gọi model (ModelService::buildPrompt)
+            'creative_prompt' => ['nullable', 'array', 'max:20'],
+            'creative_prompt.*' => ['array:label,value'],
+            'creative_prompt.*.label' => ['required', 'string', 'max:100'],
+            'creative_prompt.*.value' => ['required', 'string', 'max:5000'],
             'negative_prompt' => ['nullable', 'string', 'max:5000'],
             'max_outputs' => ['sometimes', 'integer', 'min:1', "max:{$limit}"],
             'allowed_aspect_ratios' => ['nullable', 'array', 'min:1'],

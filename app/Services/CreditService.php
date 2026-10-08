@@ -11,10 +11,45 @@ use LogicException;
 
 /**
  * Nơi DUY NHẤT được thay đổi số dư Credit.
- * Mọi hàm đều yêu cầu đang ở trong DB transaction; ví được khóa FOR UPDATE.
+ * Các hàm cấp thấp (lockWallet, apply) yêu cầu đang ở trong DB transaction; ví được khóa FOR UPDATE.
  */
 class CreditService
 {
+    public function __construct(private AuditLogger $audit) {}
+
+    /**
+     * Admin cộng (amount > 0) hoặc trừ (amount < 0, loại admin_adjust) Credit bằng tay.
+     * Gửi lại cùng idempotency_key trả về bản ghi cũ, không ghi lần 2.
+     *
+     * @return array{0: CreditLedger, 1: bool} bản ghi ledger và cờ "vừa tạo mới"
+     */
+    public function adminAdjust(int $userId, int $amount, string $idempotencyKey, ?string $note, int $adminId): array
+    {
+        $key = "admin:{$idempotencyKey}";
+        $type = $amount > 0 ? LedgerType::AdminTopup : LedgerType::AdminAdjust;
+
+        $entry = DB::transaction(function () use ($userId, $amount, $key, $type, $note, $adminId) {
+            $entry = $this->apply($this->lockWallet($userId), $amount, $type, $key, 'user', $userId, $note, $adminId);
+
+            if ($entry) {
+                $this->audit->log('credit.'.$type->value, $entry, ['user_id' => $userId, 'amount' => $amount, 'note' => $note], $adminId);
+            }
+
+            return $entry;
+        });
+
+        if ($entry) {
+            return [$entry, true];
+        }
+
+        $existing = CreditLedger::query()->where('idempotency_key', $key)->first();
+        if (! $existing || $existing->user_id !== $userId || $existing->amount !== $amount) {
+            throw BusinessException::idempotencyConflict();
+        }
+
+        return [$existing, false];
+    }
+
     public function lockWallet(int $userId): CreditWallet
     {
         $this->assertInTransaction();

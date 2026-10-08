@@ -126,7 +126,7 @@ Quy ước: mọi bảng có `id BIGINT UNSIGNED` và `created_at`, `updated_at`
 
 ### 4.3 AI Creative
 
-**categories**: dev seed. Cột: `name`, `slug` unique, `sort_order`, `is_active`.
+**categories**: dev seed. Cột: `name`, `slug` unique, `icon` (tên icon Material Symbols, null được), `sort_order`, `is_active`.
 
 **ai_creatives**
 | Cột | Kiểu | Ghi chú |
@@ -154,7 +154,7 @@ Quy ước: mọi bảng có `id BIGINT UNSIGNED` và `created_at`, `updated_at`
 |---|---|---|
 | creative_id | FK unique | |
 | system_prompt | text null | |
-| creative_prompt | text | |
+| creative_prompt | json null | `[{label, value}]`, tối đa 20 câu lệnh (label ≤ 100, value ≤ 5000 ký tự) |
 | negative_prompt | text null | |
 | max_outputs | tinyint | mặc định 5, tối đa 10 |
 | allowed_aspect_ratios | json null | null thì cho phép tất cả tỉ lệ model hỗ trợ |
@@ -365,7 +365,7 @@ draft ──publish──> published ──pause──> paused ──publish─�
 
 Avoid: {negative_prompt}
 ```
-Phần nào trống thì bỏ qua. Ảnh đầu vào gửi dạng `inlineData`, tỉ lệ khung hình gửi qua `generationConfig.imageConfig.aspectRatio`. Mỗi lần gọi API tạo 1 ảnh.
+Phần nào trống thì bỏ qua. `{creative_prompt}` là các câu lệnh ghép lại, mỗi câu một dòng `label: value`. Ảnh đầu vào gửi dạng `inlineData`, tỉ lệ khung hình gửi qua `generationConfig.imageConfig.aspectRatio`. Mỗi lần gọi API tạo 1 ảnh.
 
 ---
 
@@ -384,7 +384,7 @@ Tiền tố: `/api/v1`. Response JSON dạng `{ "data": ..., "meta": ... }`. L�
 ### 6.2 Marketplace (công khai)
 | Method | Path | Mô tả |
 |---|---|---|
-| GET | /categories | danh sách danh mục |
+| GET | /categories | danh sách danh mục `{ id, name, slug, icon }` |
 | GET | /creatives | lọc theo `category`, `q`; sắp xếp `newest`, `popular`, `price_asc`, `price_desc`; có phân trang |
 | GET | /creatives/{slug} | chi tiết gồm ảnh mẫu, giá, `max_outputs`, các tỉ lệ cho phép, thông tin Creator. **Không có prompt.** |
 | GET | /creators/{username} | profile Creator và danh sách Creative `published` |

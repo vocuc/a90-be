@@ -10,6 +10,7 @@ use App\Models\AiModel;
 use App\Models\CreatorProfile;
 use App\Models\User;
 use App\Services\AI\ApiKeyRotator;
+use App\Services\AI\ModelService;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -79,7 +80,7 @@ class CreativeService
         if (! $creative->model?->is_active) {
             $reasons[] = 'Model AI không còn hoạt động.';
         }
-        if (trim((string) $creative->config?->creative_prompt) === '') {
+        if (ModelService::formatCreativePrompt($creative->config?->creative_prompt) === '') {
             $reasons[] = 'Chưa nhập Creative Prompt.';
         }
         if (! $creative->images()->exists()) {
@@ -154,6 +155,27 @@ class CreativeService
             $creative->delete();
         });
         $paths->each(fn ($path) => $this->media->delete($path));
+    }
+
+    /** Admin ẩn Creative khỏi Marketplace (không đổi trạng thái của Creator). */
+    public function hide(AiCreative $creative, ?string $reason = null): AiCreative
+    {
+        if ($creative->hidden_at === null) {
+            $creative->update(['hidden_at' => now()]);
+            $this->audit->log('admin.creative.hide', $creative, ['reason' => $reason]);
+        }
+
+        return $creative;
+    }
+
+    public function unhide(AiCreative $creative): AiCreative
+    {
+        if ($creative->hidden_at !== null) {
+            $creative->update(['hidden_at' => null]);
+            $this->audit->log('admin.creative.unhide', $creative);
+        }
+
+        return $creative;
     }
 
     /**

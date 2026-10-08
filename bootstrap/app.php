@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureAdmin;
+use App\Http\Middleware\EnsureAdminSession;
 use App\Http\Middleware\EnsureCreatorProfile;
 use App\Http\Middleware\EnsureUserIsActive;
 use Illuminate\Foundation\Application;
@@ -19,8 +20,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'active' => EnsureUserIsActive::class,
             'admin' => EnsureAdmin::class,
+            'admin.session' => EnsureAdminSession::class,
             'creator' => EnsureCreatorProfile::class,
         ]);
+
+        // API không chuyển hướng; trang quản trị chuyển về form đăng nhập admin.
+        $middleware->redirectGuestsTo(fn (Request $request) => $request->is('api/*') ? null : route('admin.login'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // API luôn trả lỗi dạng JSON.
