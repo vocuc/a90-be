@@ -24,6 +24,13 @@ return [
         'rate_limit_per_minute' => 10,
     ],
 
+    // Tài khoản admin do AdminSeeder tạo.
+    'admin' => [
+        'name' => env('ADMIN_NAME', 'Admin'),
+        'email' => env('ADMIN_EMAIL', 'admin@a90.local'),
+        'password' => env('ADMIN_PASSWORD'),
+    ],
+
     'auth' => [
         'token_ttl_days' => 30,
     ],
