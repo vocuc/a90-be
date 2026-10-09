@@ -67,8 +67,8 @@
                                             <div>TX <code>{{ $output->transaction->code }}</code> <x-admin.status :value="$output->transaction->status" /></div>
                                             <div class="text-muted">@credit($output->transaction->amount) · phí @credit($output->transaction->platform_fee_amount) · Creator @credit($output->transaction->creator_amount)</div>
                                         @endif
-                                        @if ($output->apiKey)
-                                            <div class="text-muted">Key: {{ $output->apiKey->label }} (••••{{ $output->apiKey->key_hint }})</div>
+                                        @if ($output->worker)
+                                            <div class="text-muted">Worker: {{ $output->worker->name }} · lần nhận {{ $output->attempts }}</div>
                                         @endif
                                         @if ($output->retry_of_output_id)
                                             <div class="text-muted">Retry của ảnh #{{ $output->retry_of_output_id }}</div>

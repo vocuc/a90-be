@@ -42,7 +42,6 @@
                         <td>
                             <x-admin.status :value="$creative->status" />
                             @if ($creative->hidden_at)<span class="badge badge-danger"><i class="fas fa-eye-slash"></i> Bị ẩn</span>@endif
-                            @if ($creative->pause_reason?->value === 'no_valid_api_key')<span class="badge badge-warning" title="Tự tạm dừng vì Creator không còn key hợp lệ"><i class="fas fa-key"></i></span>@endif
                         </td>
                         <td class="text-right"><a href="{{ route('admin.creatives.show', $creative) }}" class="btn btn-xs btn-outline-primary">Chi tiết</a></td>
                     </tr>

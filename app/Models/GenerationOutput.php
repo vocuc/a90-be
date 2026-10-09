@@ -14,6 +14,7 @@ class GenerationOutput extends Model
     {
         return [
             'status' => OutputStatus::class,
+            'lease_expires_at' => 'datetime',
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
         ];
@@ -29,8 +30,8 @@ class GenerationOutput extends Model
         return $this->belongsTo(Transaction::class);
     }
 
-    public function apiKey(): BelongsTo
+    public function worker(): BelongsTo
     {
-        return $this->belongsTo(CreatorApiKey::class, 'api_key_id')->withTrashed();
+        return $this->belongsTo(Worker::class);
     }
 }

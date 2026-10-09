@@ -2,29 +2,27 @@
 
 namespace Tests;
 
-use App\Enums\ApiKeyStatus;
 use App\Enums\CreativeStatus;
 use App\Enums\LedgerType;
 use App\Models\AiCreative;
 use App\Models\AiModel;
-use App\Models\CreatorApiKey;
 use App\Models\CreditLedger;
 use App\Models\CreditWallet;
 use App\Models\Generation;
 use App\Models\User;
+use App\Models\Worker;
 use App\Services\CreditService;
 use Database\Seeders\AiModelSeeder;
 use Database\Seeders\CategorySeeder;
 use Database\Seeders\SettingSeeder;
-use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
-use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -56,27 +54,12 @@ abstract class TestCase extends BaseTestCase
         return $user;
     }
 
-    protected function creator(int $keys = 1): User
+    protected function creator(): User
     {
         $user = $this->buyer();
         $user->creatorProfile()->create(['shop_name' => 'Shop '.$user->id, 'username' => 'creator'.$user->id]);
 
-        for ($i = 1; $i <= $keys; $i++) {
-            $this->addKey($user, "AIzaKEY{$i}-{$user->id}");
-        }
-
         return $user;
-    }
-
-    protected function addKey(User $creator, string $key): CreatorApiKey
-    {
-        return $creator->apiKeys()->create([
-            'provider_id' => AiModel::query()->firstOrFail()->provider_id,
-            'label' => 'key',
-            'api_key' => $key,
-            'key_hint' => substr($key, -4),
-            'status' => ApiKeyStatus::Active,
-        ]);
     }
 
     protected function publishedCreative(User $creator, int $price = 1000, array $config = []): AiCreative
@@ -113,7 +96,7 @@ abstract class TestCase extends BaseTestCase
         ], $extra), ['Accept' => 'application/json']);
     }
 
-    /** Trạng thái mới nhất trong DB (response 202 chỉ phản ánh lúc vừa đưa vào queue). */
+    /** Trạng thái mới nhất trong DB (response 202 chỉ phản ánh lúc vừa tạo, trước khi worker xử lý). */
     protected function latestStatus($response): array
     {
         $generation = Generation::query()->with('outputs')->findOrFail($response->json('data.id'));
@@ -138,39 +121,50 @@ abstract class TestCase extends BaseTestCase
         );
     }
 
-    // ---- Gemini fake responses ----
+    // ---- Worker ----
 
-    protected static function geminiImage(): array
+    /** Tạo worker, trả về token. */
+    protected function workerToken(string $name = 'worker-1'): string
     {
-        return ['candidates' => [[
-            'content' => ['parts' => [['inlineData' => ['mimeType' => 'image/png', 'data' => base64_encode('PNG-BYTES')]]]],
-            'finishReason' => 'STOP',
-        ]]];
+        return Worker::register($name)[1];
     }
 
-    protected static function geminiBlocked(): array
+    protected function claimJob(string $token): TestResponse
     {
-        return ['promptFeedback' => ['blockReason' => 'SAFETY']];
+        return $this->withToken($token)->getJson('/api/v1/jobs');
     }
 
-    protected static function geminiInvalidKey(): array
+    protected function completeJob(string $token, int $jobId): TestResponse
     {
-        return ['error' => [
-            'code' => 400,
-            'message' => 'API key not valid. Please pass a valid API key.',
-            'status' => 'INVALID_ARGUMENT',
-            'details' => [['reason' => 'API_KEY_INVALID']],
-        ]];
+        return $this->withToken($token)->post("/api/v1/jobs/{$jobId}", [
+            'status' => 'completed',
+            'image' => UploadedFile::fake()->image('result.png', 32, 32),
+        ], ['Accept' => 'application/json']);
     }
 
-    /** @param  array<int, PromiseInterface>  $responses */
-    protected function fakeGemini(array $responses): HttpFactory
+    protected function failJob(string $token, int $jobId, string $errorCode = 'CONTENT_BLOCKED'): TestResponse
     {
-        $sequence = Http::sequence();
-        foreach ($responses as $response) {
-            $sequence->pushResponse($response);
+        return $this->withToken($token)->postJson("/api/v1/jobs/{$jobId}", [
+            'status' => 'failed',
+            'error_code' => $errorCode,
+            'error_message' => 'blocked by safety filter',
+        ]);
+    }
+
+    /**
+     * Worker nhận lần lượt các job đang chờ và trả kết quả: null = thành công, chuỗi = mã lỗi.
+     *
+     * @param  array<int, string|null>  $results
+     */
+    protected function runWorker(array $results): void
+    {
+        $token = $this->workerToken('runner-'.Str::random(6));
+
+        foreach ($results as $errorCode) {
+            $jobId = $this->claimJob($token)->assertOk()->json('data.id');
+            $errorCode === null
+                ? $this->completeJob($token, $jobId)->assertOk()
+                : $this->failJob($token, $jobId, $errorCode)->assertOk();
         }
-
-        return Http::fake(['*:generateContent' => $sequence]);
     }
 }

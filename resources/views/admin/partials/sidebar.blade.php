@@ -8,6 +8,7 @@
         ['header' => 'NỘI DUNG'],
         ['route' => 'admin.creatives.index', 'pattern' => 'admin.creatives.*', 'icon' => 'fas fa-magic', 'label' => 'AI Creative'],
         ['route' => 'admin.categories.index', 'pattern' => 'admin.categories.*', 'icon' => 'fas fa-tags', 'label' => 'Danh mục'],
+        ['route' => 'admin.banners.index', 'pattern' => 'admin.banners.*', 'icon' => 'fas fa-image', 'label' => 'Banner'],
         ['route' => 'admin.generations.index', 'pattern' => 'admin.generations.*', 'icon' => 'fas fa-images', 'label' => 'Lượt tạo ảnh'],
         ['header' => 'TÀI CHÍNH'],
         ['route' => 'admin.transactions.index', 'pattern' => 'admin.transactions.*', 'icon' => 'fas fa-exchange-alt', 'label' => 'Transaction'],

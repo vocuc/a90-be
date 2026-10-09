@@ -2,21 +2,17 @@
 
 namespace App\Services;
 
-use App\Enums\CreativeStatus;
 use App\Enums\GenerationStatus;
 use App\Enums\GenerationType;
 use App\Enums\LedgerType;
 use App\Enums\OutputStatus;
 use App\Enums\TransactionStatus;
 use App\Exceptions\BusinessException;
-use App\Jobs\ProcessGenerationOutput;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\Transaction;
 use App\Models\User;
-use App\Services\AI\ApiKeyRotator;
-use App\Services\AI\ModelService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -24,7 +20,8 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Tạo Generation: kiểm tra Creative, trừ Credit, tạo Transaction cho từng ảnh rồi đưa job vào queue.
+ * Tạo Generation: kiểm tra Creative, trừ Credit, tạo Transaction cho từng ảnh.
+ * Các ảnh ở trạng thái queued chờ worker nhận qua GET /api/v1/jobs (xem WorkerJobService).
  * Giá, model, prompt, phí luôn đọc từ database, không bao giờ lấy từ request.
  */
 class GenerationService
@@ -32,7 +29,6 @@ class GenerationService
     public function __construct(
         private CreditService $credits,
         private PlatformFeeService $fees,
-        private ApiKeyRotator $keys,
         private MediaStorage $media,
         private AuditLogger $audit,
     ) {}
@@ -51,15 +47,11 @@ class GenerationService
             fn () => $this->media->storeUpload($inputImage, MediaStorage::datedDirectory('generations/inputs')));
     }
 
-    /** Creator tạo thử (kể cả bản nháp): dùng key của Creator, không trừ Credit. */
+    /** Creator tạo thử (kể cả bản nháp): không trừ Credit. */
     public function createTest(User $creator, AiCreative $creative, UploadedFile $inputImage, int $quantity, string $aspectRatio, string $idempotencyKey): Generation
     {
         if ($existing = $this->findExisting($creator, $idempotencyKey, $creative->id)) {
             return $existing;
-        }
-
-        if ($creative->status === CreativeStatus::Archived) {
-            throw BusinessException::invalidState('Không thể tạo thử AI Creative đã lưu trữ.');
         }
 
         return $this->start($creator, $creative, GenerationType::Test, $quantity, $aspectRatio, $idempotencyKey,
@@ -112,10 +104,10 @@ class GenerationService
         ?Generation $parent = null,
         array $retryOfOutputIds = [],
     ): Generation {
-        $creative->loadMissing(['config', 'model.provider']);
+        $creative->loadMissing(['config', 'model']);
         $this->assertOptions($creative, $quantity, $aspectRatio);
 
-        if (! $creative->model->is_active || ! $this->keys->hasActiveKey($creative->creator_id, $creative->model->provider_id)) {
+        if (! $creative->model->is_active) {
             throw BusinessException::creativeTemporarilyUnavailable();
         }
 
@@ -146,7 +138,7 @@ class GenerationService
                     'aspect_ratio' => $aspectRatio,
                     'quantity' => $quantity,
                     'price_per_image' => $paid ? $price : 0,
-                    'prompt_snapshot' => ModelService::buildPrompt($config->system_prompt, $config->creative_prompt, $config->negative_prompt),
+                    'prompt_snapshot' => PromptBuilder::build($config->system_prompt, $config->creative_prompt, $config->negative_prompt),
                     'status' => GenerationStatus::Queued,
                     'idempotency_key' => $idempotencyKey,
                 ]);
@@ -196,12 +188,7 @@ class GenerationService
             throw $e;
         }
 
-        $generation->load('outputs');
-        foreach ($generation->outputs as $output) {
-            ProcessGenerationOutput::dispatch($output->id);
-        }
-
-        return $generation;
+        return $generation->load('outputs');
     }
 
     private function findExisting(User $user, string $idempotencyKey, int $creativeId): ?Generation

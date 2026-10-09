@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Admin\AuditLogController;
 use App\Http\Controllers\Admin\AuthController;
+use App\Http\Controllers\Admin\BannerController;
 use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\CreativeController;
 use App\Http\Controllers\Admin\CreatorController;
@@ -38,6 +39,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
         Route::resource('categories', CategoryController::class)->except('show');
         Route::post('categories/{category}/toggle', [CategoryController::class, 'toggle'])->name('categories.toggle');
+
+        Route::resource('banners', BannerController::class)->except('show');
+        Route::post('banners/{banner}/toggle', [BannerController::class, 'toggle'])->name('banners.toggle');
 
         Route::get('generations', [GenerationController::class, 'index'])->name('generations.index');
         Route::get('generations/{generation}', [GenerationController::class, 'show'])->name('generations.show');

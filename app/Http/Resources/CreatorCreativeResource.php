@@ -29,7 +29,6 @@ class CreatorCreativeResource extends JsonResource
             'model_id' => $this->model_id,
             'price_per_image' => $this->price_per_image,
             'status' => $this->status,
-            'pause_reason' => $this->pause_reason,
             'is_hidden' => $this->hidden_at !== null,
             'usage_count' => $this->usage_count,
             'rating_avg' => (float) $this->rating_avg,

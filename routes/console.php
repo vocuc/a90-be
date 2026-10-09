@@ -3,4 +3,5 @@
 use Illuminate\Support\Facades\Schedule;
 
 Schedule::command('revenue:release')->hourly()->withoutOverlapping();
-Schedule::command('generations:sweep-stuck')->everyFiveMinutes()->withoutOverlapping();
+// Giao lại job worker giữ quá hạn, đánh dấu thất bại ảnh chờ quá lâu.
+Schedule::command('generations:sweep-stuck')->everyMinute()->withoutOverlapping();

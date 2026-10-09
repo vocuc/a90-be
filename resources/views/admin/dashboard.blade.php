@@ -75,10 +75,10 @@
         </div>
         <div class="col-md-3 col-sm-6">
             <div class="info-box">
-                <span class="info-box-icon {{ $stats['invalid_keys'] ? 'bg-danger' : 'bg-secondary' }}"><i class="fas fa-key"></i></span>
+                <span class="info-box-icon bg-secondary"><i class="fas fa-cogs"></i></span>
                 <div class="info-box-content">
-                    <span class="info-box-text">Đang xử lý / Key lỗi</span>
-                    <span class="info-box-number">{{ $stats['processing'] }} / {{ $stats['invalid_keys'] }}</span>
+                    <span class="info-box-text">Ảnh chờ worker / đang xử lý</span>
+                    <span class="info-box-number">{{ $stats['queued'] }} / {{ $stats['processing'] }}</span>
                 </div>
             </div>
         </div>

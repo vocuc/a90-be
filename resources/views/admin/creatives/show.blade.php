@@ -15,7 +15,6 @@
                     <p class="mb-2">
                         <x-admin.status :value="$creative->status" />
                         @if ($creative->hidden_at)<span class="badge badge-danger"><i class="fas fa-eye-slash"></i> Bị ẩn từ {{ $creative->hidden_at->format('d/m/Y H:i') }}</span>@endif
-                        @if ($creative->pause_reason)<span class="badge badge-light">Lý do dừng: {{ $creative->pause_reason->value }}</span>@endif
                     </p>
                     <dl class="mb-0">
                         <dt>Creator</dt>
@@ -79,7 +78,7 @@
                 <div class="card-body">
                     <dl class="mb-0">
                         <dt>System Prompt</dt><dd class="pre-wrap">{{ $creative->config?->system_prompt ?: '—' }}</dd>
-                        <dt>Creative Prompt</dt><dd class="pre-wrap">{{ \App\Services\AI\ModelService::formatCreativePrompt($creative->config?->creative_prompt) ?: '—' }}</dd>
+                        <dt>Creative Prompt</dt><dd class="pre-wrap">{{ \App\Services\PromptBuilder::formatCreativePrompt($creative->config?->creative_prompt) ?: '—' }}</dd>
                         <dt>Negative Prompt</dt><dd class="pre-wrap">{{ $creative->config?->negative_prompt ?: '—' }}</dd>
                         <dt>Số ảnh tối đa / lần</dt><dd>{{ $creative->config?->max_outputs }}</dd>
                         <dt>Tỉ lệ khung hình</dt>

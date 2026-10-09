@@ -17,7 +17,7 @@ use Illuminate\Support\Str;
 
 /**
  * Chốt kết quả của từng ảnh. Mỗi hàm idempotent: output đã chốt thì không làm gì nữa,
- * nên job chạy lặp cũng không hoàn tiền hay ghi doanh thu 2 lần.
+ * nên worker gửi lặp hay lệnh sweep chạy lặp cũng không hoàn tiền hay ghi doanh thu 2 lần.
  * Thứ tự khóa: output -> generation -> transaction -> ví.
  */
 class GenerationFinalizer
@@ -28,27 +28,9 @@ class GenerationFinalizer
         private AuditLogger $audit,
     ) {}
 
-    public function markProcessing(int $outputId): ?GenerationOutput
+    public function complete(int $outputId, string $imagePath, string $mime, int $sizeBytes): void
     {
-        return DB::transaction(function () use ($outputId) {
-            $output = GenerationOutput::query()->lockForUpdate()->find($outputId);
-            if (! $output || $output->status->isFinal()) {
-                return null;
-            }
-
-            $output->update(['status' => OutputStatus::Processing, 'started_at' => $output->started_at ?? now()]);
-            Generation::query()
-                ->whereKey($output->generation_id)
-                ->where('status', GenerationStatus::Queued)
-                ->update(['status' => GenerationStatus::Processing]);
-
-            return $output;
-        });
-    }
-
-    public function complete(int $outputId, string $imagePath, string $mime, int $sizeBytes, ?int $apiKeyId): void
-    {
-        DB::transaction(function () use ($outputId, $imagePath, $mime, $sizeBytes, $apiKeyId) {
+        DB::transaction(function () use ($outputId, $imagePath, $mime, $sizeBytes) {
             $output = GenerationOutput::query()->lockForUpdate()->find($outputId);
             if (! $output || $output->status->isFinal()) {
                 return;
@@ -61,7 +43,7 @@ class GenerationFinalizer
                 'image_path' => $imagePath,
                 'mime' => $mime,
                 'size_bytes' => $sizeBytes,
-                'api_key_id' => $apiKeyId,
+                'lease_expires_at' => null,
                 'error_code' => null,
                 'error_message' => null,
                 'finished_at' => now(),
@@ -87,9 +69,9 @@ class GenerationFinalizer
         });
     }
 
-    public function fail(int $outputId, string $errorCode, string $errorMessage, ?int $apiKeyId = null): void
+    public function fail(int $outputId, string $errorCode, string $errorMessage): void
     {
-        DB::transaction(function () use ($outputId, $errorCode, $errorMessage, $apiKeyId) {
+        DB::transaction(function () use ($outputId, $errorCode, $errorMessage) {
             $output = GenerationOutput::query()->lockForUpdate()->find($outputId);
             if (! $output || $output->status->isFinal()) {
                 return;
@@ -99,7 +81,7 @@ class GenerationFinalizer
 
             $output->update([
                 'status' => OutputStatus::Failed,
-                'api_key_id' => $apiKeyId ?? $output->api_key_id,
+                'lease_expires_at' => null,
                 'error_code' => $errorCode,
                 'error_message' => Str::limit($errorMessage, 490),
                 'finished_at' => now(),

@@ -3,10 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AiModel;
-use App\Models\CreatorApiKey;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -20,19 +17,6 @@ class CreatorStudioTest extends TestCase
         $this->postJson('/api/v1/creator/creatives', [])->assertStatus(403)->assertJsonPath('code', 'CREATOR_PROFILE_REQUIRED');
 
         $this->postJson('/api/v1/creator/profile', ['shop_name' => 'Shop A', 'username' => 'shop-a'])->assertCreated();
-
-        // Thêm key: hệ thống gọi Gemini để kiểm tra.
-        Http::fake(['*/models?*' => Http::response(['models' => []])]);
-        $keyResponse = $this->postJson('/api/v1/creator/api-keys', [
-            'provider_id' => AiModel::query()->firstOrFail()->provider_id,
-            'label' => 'Key chính',
-            'api_key' => 'AIzaSySECRETKEY1234',
-        ])->assertCreated();
-        $this->assertStringNotContainsString('SECRETKEY', $keyResponse->getContent());
-        $this->assertSame('••••1234', $keyResponse->json('data.key_hint'));
-        // Key được mã hóa trong DB.
-        $this->assertStringNotContainsString('SECRETKEY', DB::table('creator_api_keys')->value('api_key'));
-        $this->assertSame('AIzaSySECRETKEY1234', CreatorApiKey::query()->firstOrFail()->api_key);
 
         $creativeId = $this->postJson('/api/v1/creator/creatives', [
             'title' => 'Ảnh mỹ phẩm',
@@ -78,26 +62,16 @@ class CreatorStudioTest extends TestCase
         $this->getJson('/api/v1/creators/shop-a')->assertOk()->assertJsonPath('data.profile.creative_count', 1);
     }
 
-    public function test_invalid_api_key_is_rejected_on_save(): void
+    public function test_api_key_endpoints_no_longer_exist(): void
     {
-        $user = $this->creator(keys: 0);
-        Http::fake(['*/models?*' => Http::response(self::geminiInvalidKey(), 400)]);
-
-        $this->actingAs($user)->postJson('/api/v1/creator/api-keys', [
-            'provider_id' => AiModel::query()->firstOrFail()->provider_id,
-            'label' => 'Sai',
-            'api_key' => 'AIzaWRONGKEY0000',
-        ])->assertStatus(422)->assertJsonPath('code', 'API_KEY_INVALID');
-
-        $this->assertSame(0, CreatorApiKey::query()->count());
+        $this->actingAs($this->creator())->getJson('/api/v1/creator/api-keys')->assertNotFound();
     }
 
-    public function test_creator_test_run_uses_own_key_without_charging(): void
+    public function test_creator_test_run_goes_through_worker_without_charging(): void
     {
         $creator = $this->creator();
         $creative = $this->publishedCreative($creator, price: 5000);
         $creative->update(['status' => 'draft']);
-        $this->fakeGemini([Http::response(self::geminiImage())]);
 
         $response = $this->actingAs($creator)->post("/api/v1/creator/creatives/{$creative->id}/test", [
             'input_image' => UploadedFile::fake()->image('p.png'),
@@ -108,6 +82,8 @@ class CreatorStudioTest extends TestCase
             ->assertStatus(202)
             ->assertJsonPath('data.type', 'test');
 
+        $this->assertSame('queued', $this->latestStatus($response)['status']);
+        $this->runWorker([null]);
         $this->assertSame('completed', $this->latestStatus($response)['status']);
 
         $this->assertSame(0, $this->balance($creator));
@@ -126,11 +102,20 @@ class CreatorStudioTest extends TestCase
     {
         $creator = $this->creator();
         $creative = $this->publishedCreative($creator);
-        $this->fakeGemini([Http::response(self::geminiImage())]);
         $this->generate($this->buyer(credit: 5000), $creative);
         $creative->update(['status' => 'draft']);
 
         $this->actingAs($creator)->deleteJson("/api/v1/creator/creatives/{$creative->id}")
             ->assertStatus(409)->assertJsonPath('code', 'INVALID_STATE');
+    }
+
+    public function test_archived_status_no_longer_exists(): void
+    {
+        $creator = $this->creator();
+        $creative = $this->publishedCreative($creator);
+
+        $this->actingAs($creator)->postJson("/api/v1/creator/creatives/{$creative->id}/archive")->assertNotFound();
+        $this->actingAs($creator)->getJson('/api/v1/creator/creatives?status=archived')
+            ->assertStatus(422)->assertJsonValidationErrors('status');
     }
 }

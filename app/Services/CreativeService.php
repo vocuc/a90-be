@@ -2,15 +2,11 @@
 
 namespace App\Services;
 
-use App\Enums\CreativePauseReason;
 use App\Enums\CreativeStatus;
 use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
-use App\Models\AiModel;
 use App\Models\CreatorProfile;
 use App\Models\User;
-use App\Services\AI\ApiKeyRotator;
-use App\Services\AI\ModelService;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -23,7 +19,6 @@ class CreativeService
     ];
 
     public function __construct(
-        private ApiKeyRotator $keys,
         private SettingService $settings,
         private AuditLogger $audit,
         private MediaStorage $media,
@@ -53,10 +48,6 @@ class CreativeService
 
     public function update(AiCreative $creative, array $data): AiCreative
     {
-        if ($creative->status === CreativeStatus::Archived) {
-            throw BusinessException::invalidState('Không thể sửa AI Creative đã lưu trữ.');
-        }
-
         DB::transaction(function () use ($creative, $data) {
             $creative->update(Arr::except($data, self::CONFIG_FIELDS));
 
@@ -74,20 +65,17 @@ class CreativeService
     /** @return string[] lý do chưa đăng được, rỗng nghĩa là đủ điều kiện */
     public function publishBlockers(AiCreative $creative): array
     {
-        $creative->loadMissing(['config', 'model.provider']);
+        $creative->loadMissing(['config', 'model']);
         $reasons = [];
 
         if (! $creative->model?->is_active) {
             $reasons[] = 'Model AI không còn hoạt động.';
         }
-        if (ModelService::formatCreativePrompt($creative->config?->creative_prompt) === '') {
+        if (PromptBuilder::formatCreativePrompt($creative->config?->creative_prompt) === '') {
             $reasons[] = 'Chưa nhập Creative Prompt.';
         }
         if (! $creative->images()->exists()) {
             $reasons[] = 'Cần ít nhất 1 ảnh mẫu.';
-        }
-        if ($creative->model && ! $this->keys->hasActiveKey($creative->creator_id, $creative->model->provider_id)) {
-            $reasons[] = 'Chưa có API key hoạt động cho '.$creative->model->provider->name.'.';
         }
 
         return $reasons;
@@ -105,7 +93,6 @@ class CreativeService
 
         $creative->update([
             'status' => CreativeStatus::Published,
-            'pause_reason' => null,
             'published_at' => $creative->published_at ?? now(),
         ]);
         $this->refreshCreatorCount($creative->creator_id);
@@ -114,30 +101,15 @@ class CreativeService
         return $creative;
     }
 
-    public function pause(AiCreative $creative, CreativePauseReason $reason = CreativePauseReason::Manual): AiCreative
+    public function pause(AiCreative $creative): AiCreative
     {
         if ($creative->status !== CreativeStatus::Published) {
             throw BusinessException::invalidState('Chỉ tạm dừng được AI Creative đang xuất bản.');
         }
 
-        $creative->update(['status' => CreativeStatus::Paused, 'pause_reason' => $reason]);
+        $creative->update(['status' => CreativeStatus::Paused]);
         $this->refreshCreatorCount($creative->creator_id);
-        $this->audit->log($reason === CreativePauseReason::Manual ? 'creative.pause' : 'creative.auto_paused', $creative, [
-            'reason' => $reason->value,
-        ], $reason === CreativePauseReason::Manual ? null : $creative->creator_id);
-
-        return $creative;
-    }
-
-    public function archive(AiCreative $creative): AiCreative
-    {
-        if ($creative->status === CreativeStatus::Archived) {
-            return $creative;
-        }
-
-        $creative->update(['status' => CreativeStatus::Archived]);
-        $this->refreshCreatorCount($creative->creator_id);
-        $this->audit->log('creative.archive', $creative);
+        $this->audit->log('creative.pause', $creative);
 
         return $creative;
     }
@@ -146,7 +118,7 @@ class CreativeService
     public function delete(AiCreative $creative): void
     {
         if ($creative->status !== CreativeStatus::Draft || $creative->generations()->exists()) {
-            throw BusinessException::invalidState('Chỉ xóa được bản nháp chưa tạo ảnh. Hãy dùng lưu trữ (archive).');
+            throw BusinessException::invalidState('Chỉ xóa được bản nháp chưa tạo ảnh. Creative đang bán thì hãy tạm dừng (pause).');
         }
 
         $paths = $creative->images()->pluck('path');
@@ -176,29 +148,6 @@ class CreativeService
         }
 
         return $creative;
-    }
-
-    /**
-     * Creator không còn key active cho Provider: tạm dừng mọi Creative đang xuất bản dùng Provider đó.
-     */
-    public function pauseIfNoActiveKey(int $creatorId, int $providerId): int
-    {
-        if ($this->keys->hasActiveKey($creatorId, $providerId)) {
-            return 0;
-        }
-
-        $modelIds = AiModel::query()->where('provider_id', $providerId)->pluck('id');
-        $creatives = AiCreative::query()
-            ->where('creator_id', $creatorId)
-            ->where('status', CreativeStatus::Published)
-            ->whereIn('model_id', $modelIds)
-            ->get();
-
-        foreach ($creatives as $creative) {
-            $this->pause($creative, CreativePauseReason::NoValidApiKey);
-        }
-
-        return $creatives->count();
     }
 
     private function refreshCreatorCount(int $creatorId): void

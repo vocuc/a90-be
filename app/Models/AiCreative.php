@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Enums\CreativePauseReason;
 use App\Enums\CreativeStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -18,7 +17,6 @@ class AiCreative extends Model
     {
         return [
             'status' => CreativeStatus::class,
-            'pause_reason' => CreativePauseReason::class,
             'hidden_at' => 'datetime',
             'published_at' => 'datetime',
             'rating_avg' => 'decimal:2',

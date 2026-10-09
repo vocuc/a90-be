@@ -2,45 +2,116 @@
 
 namespace Tests\Feature;
 
-use App\Enums\CreativePauseReason;
-use App\Enums\CreativeStatus;
 use App\Enums\GenerationStatus;
 use App\Enums\OutputStatus;
 use App\Enums\RevenueStatus;
 use App\Enums\TransactionStatus;
-use App\Jobs\ProcessGenerationOutput;
 use App\Models\CreatorRevenue;
 use App\Models\CreatorWallet;
 use App\Models\Generation;
+use App\Models\GenerationOutput;
 use App\Models\Transaction;
-use App\Services\AI\ApiKeyRotator;
-use App\Services\AI\ModelService;
-use App\Services\CreativeService;
+use App\Models\Worker;
 use App\Services\GenerationFinalizer;
 use App\Services\MediaStorage;
-use Illuminate\Http\Client\Request;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class GenerationTest extends TestCase
 {
+    public function test_generation_waits_in_db_until_a_worker_claims_it(): void
+    {
+        $creative = $this->publishedCreative($this->creator(), price: 1000);
+        $buyer = $this->buyer(credit: 5000);
+
+        $response = $this->generate($buyer, $creative, quantity: 2)->assertStatus(202);
+
+        // Chưa có worker nào nhận: mọi ảnh vẫn chờ, Credit đã bị giữ.
+        $this->assertSame(['status' => 'queued', 'outputs' => [
+            ['status' => 'queued', 'error_code' => null],
+            ['status' => 'queued', 'error_code' => null],
+        ]], $this->latestStatus($response));
+        $this->assertSame(3000, $this->balance($buyer));
+    }
+
+    public function test_worker_receives_prompt_input_image_and_aspect_ratio(): void
+    {
+        $creative = $this->publishedCreative($this->creator(), config: ['extra_params' => ['seed' => 42]]);
+        $response = $this->generate($this->buyer(credit: 5000), $creative, extra: ['aspect_ratio' => '1:1'])->assertStatus(202);
+        $generation = Generation::query()->with('outputs')->findOrFail($response->json('data.id'));
+        $token = $this->workerToken();
+
+        $job = $this->claimJob($token)->assertOk()->json('data');
+
+        $this->assertSame($generation->outputs[0]->id, $job['id']);
+        $this->assertSame(
+            "You are a product photographer.\n\nBối cảnh: Place the product on a marble table.\n\nAvoid: text, watermark",
+            $job['prompt'],
+        );
+        $this->assertSame('1:1', $job['aspect_ratio']);
+        $this->assertSame("https://media.test/{$generation->input_image_path}", $job['input_image_url']);
+        $this->assertSame('image/png', $job['input_mime']);
+        $this->assertSame('gemini-2.5-flash-image', $job['model']);
+        $this->assertSame(['seed' => 42], $job['extra_params']);
+        $this->assertSame(1, $job['attempt']);
+
+        $output = $generation->outputs[0]->fresh();
+        $this->assertSame(OutputStatus::Processing, $output->status);
+        $this->assertSame(Worker::query()->value('id'), $output->worker_id);
+        $this->assertSame(GenerationStatus::Processing, $generation->fresh()->status);
+        $this->assertNotNull(Worker::query()->value('last_seen_at'));
+    }
+
+    public function test_no_pending_job_returns_204(): void
+    {
+        $this->claimJob($this->workerToken())->assertNoContent();
+    }
+
+    public function test_invalid_or_disabled_worker_token_is_rejected(): void
+    {
+        $this->claimJob('wrong-token')->assertStatus(401)->assertJsonPath('code', 'WORKER_UNAUTHORIZED');
+        $this->withToken('wrong-token')->postJson('/api/v1/jobs/999', ['status' => 'failed'])->assertStatus(401);
+        $this->getJson('/api/v1/jobs')->assertStatus(401);
+
+        $token = $this->workerToken();
+        Worker::query()->update(['is_active' => false]);
+        $this->claimJob($token)->assertStatus(401);
+    }
+
+    public function test_each_claim_gets_a_different_image(): void
+    {
+        $creative = $this->publishedCreative($this->creator());
+        $this->generate($this->buyer(credit: 5000), $creative, quantity: 2)->assertStatus(202);
+        $first = $this->workerToken('w1');
+        $second = $this->workerToken('w2');
+
+        $a = $this->claimJob($first)->assertOk()->json('data.id');
+        $b = $this->claimJob($second)->assertOk()->json('data.id');
+
+        $this->assertNotSame($a, $b);
+        $this->claimJob($first)->assertNoContent();
+    }
+
     public function test_paid_generation_charges_per_image_and_records_revenue(): void
     {
         $creator = $this->creator();
         $creative = $this->publishedCreative($creator, price: 1000);
         $buyer = $this->buyer(credit: 10000);
-        $this->fakeGemini([
-            Http::response(self::geminiImage()),
-            Http::response(self::geminiImage()),
-            Http::response(self::geminiImage()),
-        ]);
 
         $response = $this->generate($buyer, $creative, quantity: 3)->assertStatus(202);
+        $this->runWorker([null, null, null]);
 
-        $generation = Generation::query()->findOrFail($response->json('data.id'));
+        $generation = Generation::query()->with('outputs')->findOrFail($response->json('data.id'));
         $this->assertSame(GenerationStatus::Completed, $generation->status);
         $this->assertSame(3, $generation->success_count);
+
+        // Ảnh worker gửi lên được lưu và trả link cho người dùng.
+        $output = $generation->outputs[0];
+        $this->assertStringStartsWith('generations/outputs/', $output->image_path);
+        $this->assertSame('image/png', $output->mime);
+        $this->assertTrue(app(MediaStorage::class)->disk()->exists($output->image_path));
+        $this->actingAs($buyer)->getJson("/api/v1/generations/{$generation->id}/status")
+            ->assertJsonPath('data.outputs.0.image_url', "https://media.test/{$output->image_path}");
 
         // Mỗi ảnh một Transaction, phí 10%: Creator nhận 900 / ảnh.
         $transactions = Transaction::query()->where('generation_id', $generation->id)->get();
@@ -55,11 +126,6 @@ class GenerationTest extends TestCase
         $this->assertSame(2700, $wallet->pending_balance);
         $this->assertSame(0, $wallet->available_balance);
         $this->assertSame(3, $creative->fresh()->usage_count);
-
-        // Prompt gộp và key của Creator được gửi sang Gemini.
-        Http::assertSent(fn (Request $request) => $request->hasHeader('x-goog-api-key', "AIzaKEY1-{$creator->id}")
-            && str_contains($request['contents'][0]['parts'][0]['text'], "Place the product on a marble table.\n\nAvoid: text, watermark")
-            && $request['generationConfig']['imageConfig']['aspectRatio'] === '1:1');
     }
 
     public function test_insufficient_credit_creates_nothing(): void
@@ -74,14 +140,12 @@ class GenerationTest extends TestCase
         $this->assertSame(0, Generation::query()->count());
         $this->assertSame(0, Transaction::query()->count());
         $this->assertSame(1500, $this->balance($buyer));
-        Http::assertNothingSent();
     }
 
     public function test_same_idempotency_key_does_not_charge_twice(): void
     {
         $creative = $this->publishedCreative($this->creator(), price: 1000);
         $buyer = $this->buyer(credit: 5000);
-        $this->fakeGemini([Http::response(self::geminiImage())]);
         $key = (string) Str::uuid();
 
         $first = $this->generate($buyer, $creative, extra: ['idempotency_key' => $key])->assertStatus(202);
@@ -89,124 +153,99 @@ class GenerationTest extends TestCase
 
         $this->assertSame($first->json('data.id'), $second->json('data.id'));
         $this->assertSame(1, Transaction::query()->count());
+        $this->assertSame(1, GenerationOutput::query()->count());
         $this->assertSame(4000, $this->balance($buyer));
     }
 
     public function test_partial_failure_refunds_only_failed_images(): void
     {
-        $creator = $this->creator();
-        $creative = $this->publishedCreative($creator, price: 1000);
+        $creative = $this->publishedCreative($this->creator(), price: 1000);
         $buyer = $this->buyer(credit: 10000);
-        $this->fakeGemini([
-            Http::response(self::geminiImage()),
-            Http::response(self::geminiBlocked()),
-            Http::response(self::geminiImage()),
-            Http::response(self::geminiImage()),
-        ]);
 
         $response = $this->generate($buyer, $creative, quantity: 4)->assertStatus(202);
+        $this->runWorker([null, 'CONTENT_BLOCKED', null, null]);
         $generation = Generation::query()->with('outputs')->findOrFail($response->json('data.id'));
 
         $this->assertSame(GenerationStatus::Completed, $generation->status);
         $this->assertSame(3, $generation->success_count);
         $this->assertSame(1, $generation->failed_count);
         $this->assertSame('CONTENT_BLOCKED', $generation->outputs[1]->error_code);
+        $this->assertSame('blocked by safety filter', $generation->outputs[1]->error_message);
 
         $this->assertSame(1, Transaction::query()->where('status', TransactionStatus::Refunded)->count());
         $this->assertSame(7000, $this->balance($buyer));
         $this->assertLedgerMatchesBalance($buyer);
         $this->assertSame(3, CreatorRevenue::query()->where('status', RevenueStatus::Pending)->count());
         $this->assertSame(3, $creative->fresh()->usage_count);
+
+        // Người dùng thấy thông báo thân thiện, không thấy lỗi nội bộ của worker.
+        $this->actingAs($buyer)->getJson("/api/v1/generations/{$generation->id}")
+            ->assertJsonPath('data.outputs.1.error_message', 'Ảnh hoặc nội dung vi phạm chính sách an toàn của AI.');
     }
 
     public function test_finalizing_an_output_twice_refunds_once(): void
     {
         $creative = $this->publishedCreative($this->creator(), price: 1000);
         $buyer = $this->buyer(credit: 5000);
-        $this->fakeGemini([Http::response(self::geminiBlocked())]);
+        $this->generate($buyer, $creative)->assertStatus(202);
+        $token = $this->workerToken();
 
-        $response = $this->generate($buyer, $creative)->assertStatus(202);
-        $output = Generation::query()->findOrFail($response->json('data.id'))->outputs()->firstOrFail();
+        $jobId = $this->claimJob($token)->json('data.id');
+        $this->failJob($token, $jobId)->assertOk();
         $this->assertSame(5000, $this->balance($buyer));
 
-        // Job chạy lại hoặc lệnh sweep chạm vào output đã chốt: không hoàn thêm.
-        app(GenerationFinalizer::class)->fail($output->id, 'TIMEOUT', 'again');
-        (new ProcessGenerationOutput($output->id))->handle(
-            app(GenerationFinalizer::class),
-            app(ApiKeyRotator::class),
-            app(ModelService::class),
-            app(MediaStorage::class),
-            app(CreativeService::class),
-        );
+        // Worker gửi lại hoặc lệnh sweep chạm vào output đã chốt: không hoàn thêm.
+        $this->failJob($token, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
+        $this->completeJob($token, $jobId)->assertStatus(409);
+        app(GenerationFinalizer::class)->fail($jobId, 'TIMEOUT', 'again');
 
         $this->assertSame(5000, $this->balance($buyer));
         $this->assertLedgerMatchesBalance($buyer);
+        $this->assertSame(OutputStatus::Failed, GenerationOutput::query()->findOrFail($jobId)->status);
     }
 
-    public function test_invalid_key_rotates_to_next_key(): void
+    public function test_worker_cannot_submit_a_job_held_by_another_worker(): void
     {
-        $creator = $this->creator(keys: 2);
-        $creative = $this->publishedCreative($creator);
-        $buyer = $this->buyer(credit: 5000);
-        $this->fakeGemini([
-            Http::response(self::geminiInvalidKey(), 400),
-            Http::response(self::geminiImage()),
-        ]);
+        $creative = $this->publishedCreative($this->creator());
+        $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
+        $owner = $this->workerToken('w1');
+        $other = $this->workerToken('w2');
 
-        $response = $this->generate($buyer, $creative)->assertStatus(202);
+        $jobId = $this->claimJob($owner)->json('data.id');
 
-        $this->assertSame('completed', $this->latestStatus($response)['status']);
-        $this->assertSame(1, $creator->apiKeys()->where('status', 'invalid')->count());
-        $this->assertSame(CreativeStatus::Published, $creative->fresh()->status);
+        $this->completeJob($other, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
+        $this->assertSame(OutputStatus::Processing, GenerationOutput::query()->findOrFail($jobId)->status);
+        $this->assertCount(0, app(MediaStorage::class)->disk()->allFiles('generations/outputs'));
+
+        $this->completeJob($owner, $jobId)->assertOk()->assertJsonPath('data.status', 'completed');
     }
 
-    public function test_all_keys_invalid_refunds_and_auto_pauses_creative(): void
+    public function test_result_payload_is_validated(): void
     {
-        $creator = $this->creator(keys: 2);
-        $creative = $this->publishedCreative($creator);
-        $buyer = $this->buyer(credit: 5000);
-        $this->fakeGemini([
-            Http::response(self::geminiInvalidKey(), 400),
-            Http::response(self::geminiInvalidKey(), 400),
-        ]);
+        $creative = $this->publishedCreative($this->creator());
+        $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
+        $token = $this->workerToken();
+        $jobId = $this->claimJob($token)->json('data.id');
 
-        $response = $this->generate($buyer, $creative)->assertStatus(202);
+        $this->withToken($token)->postJson("/api/v1/jobs/{$jobId}", ['status' => 'completed'])
+            ->assertStatus(422)->assertJsonValidationErrors('image');
+        $this->withToken($token)->postJson("/api/v1/jobs/{$jobId}", ['status' => 'failed'])
+            ->assertStatus(422)->assertJsonValidationErrors('error_code');
+        $this->withToken($token)->postJson("/api/v1/jobs/{$jobId}", ['status' => 'done'])
+            ->assertStatus(422)->assertJsonValidationErrors('status');
+        $this->withToken($token)->postJson('/api/v1/jobs/999999', ['status' => 'failed', 'error_code' => 'X'])
+            ->assertNotFound();
 
-        $this->assertSame('failed', $this->latestStatus($response)['status']);
-        $this->assertSame('NO_USABLE_API_KEY', $this->latestStatus($response)['outputs'][0]['error_code']);
-        $this->assertSame(5000, $this->balance($buyer));
-        $creative->refresh();
-        $this->assertSame(CreativeStatus::Paused, $creative->status);
-        $this->assertSame(CreativePauseReason::NoValidApiKey, $creative->pause_reason);
-
-        // Creative đã bị pause: không cho tạo nữa.
-        $this->generate($buyer, $creative)->assertStatus(404)->assertJsonPath('code', 'CREATIVE_NOT_AVAILABLE');
-    }
-
-    public function test_rate_limited_key_is_cooled_down_not_invalidated(): void
-    {
-        $creator = $this->creator(keys: 1);
-        $creative = $this->publishedCreative($creator);
-        $buyer = $this->buyer(credit: 5000);
-        $this->fakeGemini([Http::response(['error' => ['code' => 429, 'message' => 'Quota exceeded', 'status' => 'RESOURCE_EXHAUSTED']], 429)]);
-
-        $response = $this->generate($buyer, $creative)->assertStatus(202);
-        $this->assertSame('failed', $this->latestStatus($response)['status']);
-
-        $key = $creator->apiKeys()->firstOrFail();
-        $this->assertSame('active', $key->status->value);
-        $this->assertNotNull($key->cooldown_until);
-        $this->assertSame(CreativeStatus::Published, $creative->fresh()->status);
-        $this->assertSame(5000, $this->balance($buyer));
+        $this->assertSame(OutputStatus::Processing, GenerationOutput::query()->findOrFail($jobId)->status);
     }
 
     public function test_creator_using_own_creative_is_not_charged(): void
     {
         $creator = $this->creator();
         $creative = $this->publishedCreative($creator, price: 1000);
-        $this->fakeGemini([Http::response(self::geminiImage())]);
 
         $response = $this->generate($creator, $creative)->assertStatus(202);
+        $this->runWorker([null]);
 
         $this->assertSame('owner', $response->json('data.type'));
         $this->assertSame('completed', $this->latestStatus($response)['status']);
@@ -219,15 +258,15 @@ class GenerationTest extends TestCase
     {
         $creative = $this->publishedCreative($this->creator(), price: 1000);
         $buyer = $this->buyer(credit: 5000);
-        $this->fakeGemini([Http::response(self::geminiImage())]);
 
         $this->generate($buyer, $creative, extra: [
             'price' => 1, 'price_per_image' => 1, 'model_id' => 999, 'prompt' => 'hack', 'platform_fee' => 0,
         ])->assertStatus(202);
 
         $this->assertSame(4000, $this->balance($buyer));
-        Http::assertSent(fn (Request $request) => str_contains($request->url(), 'gemini-2.5-flash-image')
-            && ! str_contains($request['contents'][0]['parts'][0]['text'], 'hack'));
+        $job = $this->claimJob($this->workerToken())->json('data');
+        $this->assertSame('gemini-2.5-flash-image', $job['model']);
+        $this->assertStringNotContainsString('hack', $job['prompt']);
     }
 
     public function test_quantity_and_aspect_ratio_limits(): void
@@ -244,13 +283,9 @@ class GenerationTest extends TestCase
     {
         $creative = $this->publishedCreative($this->creator(), price: 1000);
         $buyer = $this->buyer(credit: 10000);
-        $this->fakeGemini([
-            Http::response(self::geminiImage()),
-            Http::response(self::geminiBlocked()),
-            Http::response(self::geminiImage()),
-        ]);
 
         $original = $this->generate($buyer, $creative, quantity: 2)->json('data');
+        $this->runWorker([null, 'CONTENT_BLOCKED']);
         $failedOutputId = $original['outputs'][1]['id'];
         $this->assertSame(9000, $this->balance($buyer));
 
@@ -261,6 +296,14 @@ class GenerationTest extends TestCase
 
         $this->assertSame($original['id'], $retry->json('data.parent_generation_id'));
         $this->assertSame($failedOutputId, $retry->json('data.outputs.0.retry_of_output_id'));
+
+        // Lần retry dùng lại ảnh đầu vào của lần tạo gốc.
+        $token = $this->workerToken('retry-worker');
+        $job = $this->claimJob($token)->json('data');
+        $this->assertSame($retry->json('data.outputs.0.id'), $job['id']);
+        $this->assertSame($original['input_image_url'], $job['input_image_url']);
+        $this->completeJob($token, $job['id'])->assertOk();
+
         $this->assertSame('completed', $this->latestStatus($retry)['status']);
         $this->assertSame(3, Transaction::query()->count());
         $this->assertSame(8000, $this->balance($buyer));
@@ -271,8 +314,8 @@ class GenerationTest extends TestCase
     {
         $creative = $this->publishedCreative($this->creator());
         $buyer = $this->buyer(credit: 5000);
-        $this->fakeGemini([Http::response(self::geminiImage())]);
         $id = $this->generate($buyer, $creative)->json('data.id');
+        $this->runWorker([null]);
 
         $this->actingAs($this->buyer())->getJson("/api/v1/generations/{$id}")->assertNotFound();
         $this->actingAs($buyer)->getJson("/api/v1/generations/{$id}/status")

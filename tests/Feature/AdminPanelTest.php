@@ -7,7 +7,6 @@ use App\Models\Generation;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\SettingService;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -53,8 +52,8 @@ class AdminPanelTest extends TestCase
         $creator = $this->creator();
         $creative = $this->publishedCreative($creator, price: 1000);
         $buyer = $this->buyer(credit: 5000);
-        $this->fakeGemini([Http::response(self::geminiImage()), Http::response(self::geminiBlocked())]);
         $this->generate($buyer, $creative, quantity: 2)->assertStatus(202);
+        $this->runWorker([null, 'CONTENT_BLOCKED']);
         $generation = Generation::query()->firstOrFail();
 
         $this->actingAs($this->admin());
@@ -129,7 +128,6 @@ class AdminPanelTest extends TestCase
         $this->assertSame('25.00', $profile->platform_fee_percent);
 
         // Phí riêng được áp dụng cho Transaction mới.
-        $this->fakeGemini([Http::response(self::geminiImage())]);
         $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
         $this->assertDatabaseHas('transactions', ['platform_fee_amount' => 250, 'creator_amount' => 750]);
 
@@ -145,7 +143,7 @@ class AdminPanelTest extends TestCase
 
         $payload = [
             'platform_fee_percent' => 15, 'revenue_hold_days' => 3, 'default_max_outputs' => 4,
-            'max_outputs_limit' => 8, 'input_max_size_kb' => 5120, 'cooldown_minutes' => 5,
+            'max_outputs_limit' => 8, 'input_max_size_kb' => 5120,
         ];
         $this->put('/admin/settings', $payload)->assertSessionHas('success');
 

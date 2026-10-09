@@ -21,7 +21,7 @@
                 <thead>
                 <tr>
                     <th>Creator</th><th>Email</th><th class="text-center">Creative</th><th class="text-right">Lượt dùng</th>
-                    <th class="text-center">Key hoạt động</th><th class="text-right">Ví (pending / available)</th>
+                    <th class="text-right">Ví (pending / available)</th>
                     <th style="width:330px">Xác minh &amp; phí riêng</th>
                 </tr>
                 </thead>
@@ -36,9 +36,6 @@
                         <td><a href="{{ route('admin.users.show', $creator->user_id) }}">{{ $creator->user->email }}</a></td>
                         <td class="text-center"><a href="{{ route('admin.creatives.index', ['q' => $creator->username]) }}">{{ $creator->creative_count }}</a></td>
                         <td class="text-right">@credit($creator->usage_count)</td>
-                        <td class="text-center">
-                            <span class="badge {{ $creator->active_keys_count ? 'badge-success' : 'badge-danger' }}">{{ $creator->active_keys_count }}</span>
-                        </td>
                         <td class="text-right">
                             @credit($creator->user->creatorWallet?->pending_balance ?? 0) /
                             @credit($creator->user->creatorWallet?->available_balance ?? 0)

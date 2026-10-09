@@ -18,7 +18,6 @@ class SettingController extends Controller
         'generation.default_max_outputs' => ['default_max_outputs', 'Số ảnh tối đa mặc định / lần tạo', 'Giá trị mặc định khi Creator tạo Creative mới.', ['required', 'integer', 'min:1', 'max:10']],
         'generation.max_outputs_limit' => ['max_outputs_limit', 'Giới hạn số ảnh / lần tạo', 'Creator không được cấu hình vượt quá số này (tối đa 10).', ['required', 'integer', 'min:1', 'max:10']],
         'generation.input_max_size_kb' => ['input_max_size_kb', 'Dung lượng ảnh đầu vào tối đa (KB)', '10240 KB = 10 MB.', ['required', 'integer', 'min:512', 'max:20480']],
-        'api_key.cooldown_minutes' => ['cooldown_minutes', 'Thời gian tạm nghỉ key khi bị 429 (phút)', 'Key hết quota/rate limit sẽ được bỏ qua trong khoảng này.', ['required', 'integer', 'min:1', 'max:1440']],
     ];
 
     public function __construct(private SettingService $settings) {}

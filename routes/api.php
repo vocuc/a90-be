@@ -3,7 +3,6 @@
 use App\Http\Controllers\Api\V1\Admin\CreditController as AdminCreditController;
 use App\Http\Controllers\Api\V1\AiModelController;
 use App\Http\Controllers\Api\V1\AuthController;
-use App\Http\Controllers\Api\V1\Creator\ApiKeyController;
 use App\Http\Controllers\Api\V1\Creator\CreativeController;
 use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\DashboardController;
@@ -11,6 +10,7 @@ use App\Http\Controllers\Api\V1\Creator\ProfileController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\MarketplaceController;
+use App\Http\Controllers\Api\V1\WorkerJobController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->middleware('throttle:api')->group(function () {
@@ -26,6 +26,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     });
 
     // Marketplace (công khai)
+    Route::get('banners', [MarketplaceController::class, 'banners']);
     Route::get('categories', [MarketplaceController::class, 'categories']);
     Route::get('creatives', [MarketplaceController::class, 'creatives']);
     Route::get('creatives/{slug}', [MarketplaceController::class, 'creative']);
@@ -55,11 +56,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('profile/avatar', [ProfileController::class, 'uploadAvatar']);
             Route::post('profile/cover', [ProfileController::class, 'uploadCover']);
 
-            Route::get('api-keys', [ApiKeyController::class, 'index']);
-            Route::post('api-keys', [ApiKeyController::class, 'store']);
-            Route::patch('api-keys/{apiKey}', [ApiKeyController::class, 'update']);
-            Route::delete('api-keys/{apiKey}', [ApiKeyController::class, 'destroy']);
-
             Route::get('creatives', [CreativeController::class, 'index']);
             Route::post('creatives', [CreativeController::class, 'store']);
             Route::get('creatives/{creative}', [CreativeController::class, 'show']);
@@ -67,7 +63,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::delete('creatives/{creative}', [CreativeController::class, 'destroy']);
             Route::post('creatives/{creative}/publish', [CreativeController::class, 'publish']);
             Route::post('creatives/{creative}/pause', [CreativeController::class, 'pause']);
-            Route::post('creatives/{creative}/archive', [CreativeController::class, 'archive']);
             Route::post('creatives/{creative}/test', [CreativeController::class, 'test'])->middleware('throttle:generations');
 
             Route::post('creatives/{creative}/images', [CreativeImageController::class, 'store']);
@@ -84,4 +79,10 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('users/{user}/credits', [AdminCreditController::class, 'topup']);
         });
     });
+});
+
+// Worker tạo ảnh nội bộ (xác thực bằng token worker, không giới hạn theo user).
+Route::prefix('v1/jobs')->middleware('worker')->group(function () {
+    Route::get('/', [WorkerJobController::class, 'next']);
+    Route::post('{id}', [WorkerJobController::class, 'submit'])->whereNumber('id');
 });

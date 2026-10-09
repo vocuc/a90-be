@@ -1,6 +1,6 @@
 # AI90 — Thiết kế kỹ thuật MVP (Backend API)
 
-> Nguồn: `AI90_Dac_Ta_Nghiep_Vu_Backend_Unicode.pdf` + các câu trả lời trong `note/111.text`, `112.text`, `113.text`.
+> Nguồn: `AI90_Dac_Ta_Nghiep_Vu_Backend_Unicode.pdf` + các câu trả lời trong `note/111.text`, `112.text`, `113.text`, `nghie-vu-tao-anh.txt` (tạo ảnh qua worker).
 > Trạng thái: **đã triển khai** (code trong repo, 24 feature test pass). Mục 9 đang dùng phương án đề xuất.
 
 ---
@@ -9,9 +9,9 @@
 
 **Có trong MVP**
 - Đăng ký, đăng nhập (email + mật khẩu, Sanctum token).
-- Creator: tạo Creator Profile, quản lý key Gemini, tạo/sửa/tạo thử/đăng/tạm dừng/lưu trữ Creative.
+- Creator: tạo Creator Profile, tạo/sửa/tạo thử/đăng/tạm dừng Creative.
 - Marketplace công khai: danh sách, chi tiết Creative, trang Creator.
-- Người mua: tải ảnh, chọn số lượng và tỉ lệ khung hình, tạo ảnh (bất đồng bộ), xem trạng thái, tải kết quả, retry từng ảnh.
+- Người mua: tải ảnh, chọn số lượng và tỉ lệ khung hình, tạo ảnh (bất đồng bộ, do worker nội bộ xử lý), xem trạng thái, tải kết quả, retry từng ảnh.
 - Credit: ví, sổ cái (ledger), trừ và hoàn Credit tự động.
 - Creator Revenue và ví Creator (pending sau 7 ngày chuyển sang available).
 - Admin: **chỉ** API cộng Credit cho user.
@@ -29,11 +29,11 @@ Rút tiền, cổng thanh toán, Collection, Rating, Follow, thông báo cho Cre
 | Framework | Laravel 12, PHP 8.3 |
 | Database | MySQL 8.0 (InnoDB, utf8mb4) |
 | Xác thực | Laravel Sanctum (personal access token, header `Authorization: Bearer`) |
-| Queue | Driver `database` (bảng `jobs`), chạy `php artisan queue:work`. Có thể đổi sang Redis sau (PHP trên OSPanel chưa có ext `redis`). |
+| Hàng đợi tạo ảnh | Lưu trong DB (`generation_outputs.status = queued`). Worker nội bộ kéo việc qua `GET /api/v1/jobs` (mục 5.2), không dùng Laravel queue. |
 | Lưu file | AWS S3, bucket private, trả ảnh qua **signed URL** có hạn 15 phút |
 | Xóa ảnh sau 1 năm | S3 Lifecycle Rule cho prefix `generations/` |
 | Lịch chạy | Laravel Scheduler (`schedule:run` mỗi phút) |
-| AI | Google Gemini (model tạo ảnh, ví dụ `gemini-2.5-flash-image`) |
+| AI | Worker nội bộ tự gọi model (ví dụ `gemini-2.5-flash-image`). Backend không giữ API key AI nào. |
 
 ---
 
@@ -45,10 +45,10 @@ Rút tiền, cổng thanh toán, Collection, Rating, Follow, thông báo cho Cre
 4. `idempotency_key` là duy nhất theo user, nên gửi lại cùng một request không bị trừ tiền 2 lần.
 5. Frontend **không** gửi giá, model, prompt, phí. Backend đọc tất cả từ database.
 6. Transaction lưu **snapshot** gồm giá, phí, model, Creator tại thời điểm tạo.
-7. Creative đã có Transaction thì không được xóa cứng, chỉ chuyển sang `archived`.
+7. Creative đã có Transaction thì không được xóa cứng, chỉ tạm dừng (`paused`).
 8. Chỉ ảnh tạo thành công mới tăng `usage_count`.
-9. Key API của Creator được mã hóa (`encrypted` cast, dùng `APP_KEY`) và không bao giờ trả về trong response.
-10. Job chỉ được đưa vào queue **sau khi** database transaction đã commit (`afterCommit`).
+9. Mỗi ảnh chỉ được giao cho 1 worker tại một thời điểm (`SELECT ... FOR UPDATE SKIP LOCKED`), và chỉ worker đang giữ ảnh mới được trả kết quả.
+10. Token worker chỉ lưu dạng hash sha256, không bao giờ trả về sau lúc tạo.
 
 ---
 
@@ -92,7 +92,7 @@ Quy ước: mọi bảng có `id BIGINT UNSIGNED` và `created_at`, `updated_at`
 | `generation.max_outputs_limit` | `10` |
 | `generation.input_max_size_kb` | `10240` |
 
-### 4.2 AI Provider, Model, Key
+### 4.2 AI Provider, Model, Worker
 
 **ai_providers**: dev seed.
 | Cột | Kiểu |
@@ -110,19 +110,15 @@ Quy ước: mọi bảng có `id BIGINT UNSIGNED` và `created_at`, `updated_at`
 | supported_aspect_ratios | json | ví dụ `["1:1","3:4","4:3","9:16","16:9",...]` |
 | is_active | bool | |
 
-**creator_api_keys**: mỗi Creator có thể có nhiều key cho mỗi Provider.
+**workers**: máy tạo ảnh nội bộ. Tạo bằng `php artisan workers:create {name}` (in token 1 lần).
 | Cột | Kiểu | Ghi chú |
 |---|---|---|
-| user_id | FK users | |
-| provider_id | FK ai_providers | |
-| label | varchar(100) | tên do Creator đặt |
-| api_key | text | **mã hóa** |
-| key_hint | varchar(10) | 4 ký tự cuối, chỉ để hiển thị |
-| status | enum(`active`,`invalid`,`quota_exceeded`,`disabled`) | |
-| cooldown_until | timestamp null | bị 429 thì tạm bỏ qua key đến thời điểm này |
-| last_used_at | timestamp null | dùng để xoay vòng key |
-| last_error | varchar null | |
-| index | (user_id, provider_id, status) | |
+| name | varchar(100) | unique |
+| token_hash | char(64) | unique, sha256 của token |
+| is_active | bool | tắt thì token bị từ chối (401) |
+| last_seen_at | timestamp null | lần gọi API gần nhất |
+
+(Bảng `creator_api_keys` và cơ chế Creator tự mang key đã bỏ theo `note/nghie-vu-tao-anh.txt`.)
 
 ### 4.3 AI Creative
 
@@ -138,8 +134,7 @@ Quy ước: mọi bảng có `id BIGINT UNSIGNED` và `created_at`, `updated_at`
 | slug | varchar(191) | unique |
 | description | text null | |
 | price_per_image | int unsigned | Credit cho mỗi ảnh |
-| status | enum(`draft`,`pending_review`,`published`,`rejected`,`paused`,`archived`) | MVP chỉ dùng draft/published/paused/archived |
-| pause_reason | enum(`manual`,`no_valid_api_key`) null | |
+| status | enum(`draft`,`pending_review`,`published`,`rejected`,`paused`) | MVP chỉ dùng draft/published/paused (đã bỏ `archived`) |
 | hidden_at | timestamp null | Admin ẩn khỏi sàn (sau MVP, tạo cột sẵn) |
 | usage_count | int unsigned | số ảnh tạo thành công |
 | rating_avg, rating_count | | sau MVP |
@@ -192,8 +187,10 @@ Quy tắc trạng thái Generation: khi mọi output đã xong, nếu có ít nh
 | position | tinyint | thứ tự ảnh 1..N |
 | retry_of_output_id | FK null | ảnh này là retry của ảnh nào |
 | transaction_id | FK null | null khi type là `owner` hoặc `test` |
-| api_key_id | FK creator_api_keys null | key đã dùng |
+| worker_id | FK workers null | worker đang/đã giữ ảnh |
 | status | enum(`queued`,`processing`,`completed`,`failed`) | |
+| attempts | tinyint | số lần đã giao cho worker (tối đa 3) |
+| lease_expires_at | timestamp null | worker phải trả kết quả trước thời điểm này (15 phút) |
 | image_path | varchar null | S3 |
 | mime, width, height, size_bytes | | |
 | error_code, error_message | null | |
@@ -236,7 +233,7 @@ Cách chia tiền: `creator_amount = floor(amount × (100 − fee%) / 100)`, `pl
 | created_by | FK users null | admin thực hiện |
 | created_at | timestamp | |
 
-Khóa `refund:tx:{id}` là unique, nên mỗi Transaction chỉ hoàn tiền được 1 lần, kể cả khi job chạy lặp.
+Khóa `refund:tx:{id}` là unique, nên mỗi Transaction chỉ hoàn tiền được 1 lần, kể cả khi worker gửi lặp hay lệnh sweep chạy lặp.
 
 ### 4.6 Doanh thu Creator
 
@@ -261,7 +258,7 @@ Khóa `refund:tx:{id}` là unique, nên mỗi Transaction chỉ hoàn tiền đ�
 ### 4.7 Audit log
 
 **audit_logs**: `user_id` null, `action`, `resource_type`, `resource_id`, `metadata` json, `ip`, `user_agent`, `created_at`.
-Các action ghi trong MVP: `auth.login`, `creative.create`, `creative.update`, `creative.publish`, `creative.pause`, `creative.archive`, `creative.auto_paused`, `api_key.create`, `api_key.delete`, `generation.create`, `credit.charge`, `credit.refund`, `credit.admin_topup`, `revenue.create`, `revenue.release`.
+Các action ghi trong MVP: `auth.login`, `creative.create`, `creative.update`, `creative.publish`, `creative.pause`, `generation.create`, `credit.charge`, `credit.refund`, `credit.admin_topup`, `revenue.create`, `revenue.release`.
 
 ---
 
@@ -276,8 +273,8 @@ Các action ghi trong MVP: `auth.login`, `creative.create`, `creative.update`, `
 2. Nếu đã có Generation với cùng `(user_id, idempotency_key)`, trả lại Generation đó (HTTP 200). Nếu `creative_id` khác thì trả lỗi 409 `IDEMPOTENCY_CONFLICT`.
 3. Tải Creative cùng config. Creative phải ở trạng thái `published` và `hidden_at` phải null, nếu không thì trả `CREATIVE_NOT_AVAILABLE`.
 4. Kiểm tra `1 ≤ quantity ≤ config.max_outputs`, và `aspect_ratio` nằm trong danh sách cho phép.
-5. Kiểm tra Creator còn ít nhất 1 key `active` cho Provider của model. Nếu không còn thì trả `CREATIVE_TEMPORARILY_UNAVAILABLE`.
-6. Upload ảnh đầu vào lên S3 (`generations/{yyyy}/{mm}/{uuid}/input.ext`).
+5. Kiểm tra model của Creative còn hoạt động. Nếu không thì trả `CREATIVE_TEMPORARILY_UNAVAILABLE`.
+6. Upload ảnh đầu vào lên S3 (`generations/inputs/{yyyy}/{mm}/{uuid}.ext`), đường dẫn lưu ở `generations.input_image_path`.
 7. Xác định `type`: là `owner` nếu `user_id == creator_id`, còn lại là `paid`.
 8. **Database transaction:**
    - Nếu `paid`: `SELECT credit_wallet FOR UPDATE`, tính `total = price_per_image × quantity`. Không đủ số dư thì rollback và trả 402 `INSUFFICIENT_CREDIT`.
@@ -287,39 +284,41 @@ Các action ghi trong MVP: `auth.login`, `creative.create`, `creative.update`, `
      - nếu `paid`: tạo `transaction` (status `processing`, snapshot phí) và 1 dòng `credit_ledger` loại `generation_charge` với khóa `charge:tx:{id}`.
    - Nếu `paid`: trừ `wallet.balance -= total`.
    - Ghi audit log.
-9. Sau khi commit, đưa N job `ProcessGenerationOutput` vào queue, mỗi ảnh một job.
+9. Không gọi AI, không đưa job vào queue: các output nằm trong DB ở trạng thái `queued` chờ worker (mục 5.2).
 10. Trả HTTP 202 kèm Generation và danh sách output ở trạng thái `queued`.
 
 Nếu bước 8 thất bại sau khi đã upload ảnh ở bước 6, file trên S3 sẽ bị thừa. Chấp nhận điều này vì lifecycle rule sẽ tự xóa.
 
-### 5.2 Job `ProcessGenerationOutput` (mỗi ảnh)
+### 5.2 Worker xử lý ảnh: `GET /jobs`, `POST /jobs/{id}`
 
-1. Khóa output. Nếu status không còn là `queued` thì thoát, để tránh xử lý trùng.
-2. Chuyển output sang `processing` và generation sang `processing`.
-3. `ModelService` chọn Provider adapter theo `model.provider.code`, ở MVP là `GeminiImageProvider`.
-4. **Chọn key (xoay vòng):** lấy các key `active` của Creator có `cooldown_until` null hoặc đã qua, sắp xếp theo `last_used_at` tăng dần, chọn key đầu tiên.
-5. Gọi Gemini với: model code, prompt đã gộp, ảnh đầu vào và `aspect_ratio`.
-6. Xử lý lỗi:
-   | Lỗi | Hành động |
-   |---|---|
-   | 401/403, key sai | đánh dấu key `invalid` rồi **thử ngay key tiếp theo** |
-   | 429, hết quota hoặc rate limit | đặt `cooldown_until = now + 10 phút` rồi thử key tiếp theo |
-   | 5xx, timeout | thử lại tối đa 3 lần với backoff 10s, 30s, 60s |
-   | Bị chặn vì safety, prompt hoặc ảnh không hợp lệ | thất bại luôn, không thử lại |
-   | Hết key để thử | thất bại |
-7. **Thành công**, trong database transaction:
-   - upload ảnh kết quả lên S3, cập nhật output thành `completed`;
-   - Transaction chuyển sang `completed`;
-   - tạo `creator_revenue` (status `pending`, `available_at = now + 7 ngày`), cộng `creator_wallets.pending_balance` và `total_earned`;
-   - tăng `ai_creatives.usage_count`, `creator_profiles.usage_count`, `generations.success_count`.
-8. **Thất bại**, trong database transaction:
-   - output chuyển sang `failed`;
-   - nếu là `paid`: Transaction chuyển sang `refunded`, cộng lại Credit và ghi ledger `generation_refund` với khóa `refund:tx:{id}`;
-   - tăng `generations.failed_count`.
-9. Khi `success_count + failed_count == quantity` thì chốt trạng thái Generation.
-10. **Tự tạm dừng Creative:** sau khi đánh dấu một key là `invalid`, nếu Creator không còn key nào `active` cho Provider đó thì chuyển Creative sang `paused` với `pause_reason = no_valid_api_key` và ghi audit log. Key chỉ bị cooldown 429 thì **không** pause.
+Worker là máy nội bộ, xác thực bằng header `Authorization: Bearer <worker token>`. Mỗi job là **1 ảnh** (`generation_output`), id job = id output.
 
-**Lưới an toàn:** scheduler chạy mỗi 5 phút, tìm output ở trạng thái `processing` quá 15 phút hoặc `queued` quá 30 phút, rồi đánh dấu thất bại và hoàn Credit theo bước 8.
+**Nhận việc `GET /api/v1/jobs`** (mỗi lần 1 job):
+1. Trong database transaction, lấy output `queued` cũ nhất bằng `SELECT ... FOR UPDATE SKIP LOCKED` để nhiều worker gọi cùng lúc không nhận trùng.
+2. Output chuyển sang `processing`, ghi `worker_id`, `attempts + 1`, `lease_expires_at = now + 15 phút`, `started_at` (lần đầu). Generation `queued` chuyển sang `processing`.
+3. Trả 200 `{ id, prompt, aspect_ratio, input_image_url (signed URL), input_mime, model, extra_params, attempt, lease_expires_at }`. Không có việc thì trả 204.
+
+**Trả kết quả `POST /api/v1/jobs/{id}`** (multipart):
+- Thành công: `status=completed`, `image` (jpg/png/webp, tối đa 20MB).
+- Thất bại: `status=failed`, `error_code` (chữ hoa, số, `_`, ví dụ `CONTENT_BLOCKED`, `NO_IMAGE_RETURNED`), `error_message` (tùy chọn).
+- Output phải đang `processing` và `worker_id` là worker gọi API, nếu không trả 409 `JOB_NOT_ASSIGNED` (job đã hết hạn và giao cho worker khác, hoặc đã chốt). Ảnh được lưu lên S3 trước, nếu bị từ chối thì xóa.
+
+**Thành công**, trong database transaction (`GenerationFinalizer::complete`):
+- lưu ảnh kết quả ở `generations/outputs/{yyyy}/{mm}/...`, cập nhật output thành `completed`;
+- Transaction chuyển sang `completed`;
+- tạo `creator_revenue` (status `pending`, `available_at = now + 7 ngày`), cộng `creator_wallets.pending_balance` và `total_earned`;
+- tăng `ai_creatives.usage_count`, `creator_profiles.usage_count` (chỉ `paid`), `generations.success_count`.
+
+**Thất bại**, trong database transaction (`GenerationFinalizer::fail`):
+- output chuyển sang `failed`;
+- nếu là `paid`: Transaction chuyển sang `refunded`, cộng lại Credit và ghi ledger `generation_refund` với khóa `refund:tx:{id}`;
+- tăng `generations.failed_count`.
+
+Khi `success_count + failed_count == quantity` thì chốt trạng thái Generation.
+
+**Lưới an toàn** (`generations:sweep-stuck`, scheduler mỗi phút):
+- Output `processing` đã quá `lease_expires_at`: nếu `attempts < 3` thì trả về `queued` (bỏ `worker_id`) để worker khác nhận; nếu đã 3 lần thì thất bại `TIMEOUT` và hoàn Credit.
+- Output `queued` quá 30 phút kể từ lần vào hàng đợi gần nhất (`updated_at`: lúc tạo hoặc lúc được giao lại) thì thất bại `TIMEOUT` và hoàn Credit.
 
 ### 5.3 Retry: `POST /generations/{id}/retry`
 
@@ -332,7 +331,7 @@ Nếu bước 8 thất bại sau khi đã upload ảnh ở bước 6, file trên
 
 - Dùng được cả khi Creative đang `draft`. Creator tải ảnh đầu vào lên, chọn số lượng và tỉ lệ khung hình.
 - Tạo Generation với `type = test`: không có Transaction, không trừ Credit, không tạo doanh thu, không tăng `usage_count`.
-- Gọi AI bằng key của chính Creator, dùng chung job ở mục 5.2.
+- Ảnh do worker xử lý giống lượt tạo thường (mục 5.2).
 
 ### 5.5 Giải phóng doanh thu (scheduler, mỗi giờ)
 
@@ -349,14 +348,12 @@ Với mỗi `creator_revenue` có `status = pending` và `available_at ≤ now`,
 
 ```
 draft ──publish──> published ──pause──> paused ──publish──> published
-  │                    │                   │
-  └────archive─────────┴──────archive──────┴──> archived
 ```
-- Điều kiện **publish**: có title, model, config gồm `creative_prompt` và `max_outputs`, có ít nhất 1 ảnh mẫu, và Creator có ít nhất 1 key `active` cho Provider của model.
-- **Xóa:** chỉ xóa được Creative `draft` chưa có Generation nào. Các trường hợp khác phải dùng archive.
+- Điều kiện **publish**: có title, model đang hoạt động, config gồm `creative_prompt` và `max_outputs`, có ít nhất 1 ảnh mẫu.
+- **Xóa:** chỉ xóa được Creative `draft` chưa có Generation nào. Creative đã bán thì tạm dừng (không còn trạng thái lưu trữ).
 - Sửa Creative đang `published` vẫn được và có hiệu lực ngay. Các Transaction cũ không đổi vì đã lưu snapshot.
 
-### 5.8 Gộp prompt gửi sang Gemini
+### 5.8 Gộp prompt gửi cho worker
 
 ```
 {system_prompt}
@@ -365,7 +362,7 @@ draft ──publish──> published ──pause──> paused ──publish─�
 
 Avoid: {negative_prompt}
 ```
-Phần nào trống thì bỏ qua. `{creative_prompt}` là các câu lệnh ghép lại, mỗi câu một dòng `label: value`. Ảnh đầu vào gửi dạng `inlineData`, tỉ lệ khung hình gửi qua `generationConfig.imageConfig.aspectRatio`. Mỗi lần gọi API tạo 1 ảnh.
+Phần nào trống thì bỏ qua. `{creative_prompt}` là các câu lệnh ghép lại, mỗi câu một dòng `label: value` (`PromptBuilder::build`). Prompt được chụp vào `generations.prompt_snapshot` lúc tạo; worker nhận prompt này cùng link ảnh đầu vào và tỉ lệ khung hình. Mỗi job tạo 1 ảnh.
 
 ---
 
@@ -412,10 +409,6 @@ Tiền tố: `/api/v1`. Response JSON dạng `{ "data": ..., "meta": ... }`. L�
 | GET / PUT | /creator/profile | xem và sửa profile |
 | POST | /creator/profile/avatar, /creator/profile/cover | upload ảnh |
 | GET | /ai-models | danh sách model đang hoạt động |
-| GET | /creator/api-keys | danh sách key (chỉ có label, key_hint, status) |
-| POST | /creator/api-keys | provider_id, label, api_key; **gọi thử Gemini để kiểm tra key** trước khi lưu |
-| PATCH | /creator/api-keys/{id} | đổi label, bật hoặc tắt key |
-| DELETE | /creator/api-keys/{id} | xóa mềm (dữ liệu cũ vẫn trỏ được tới key) |
 | GET | /creator/creatives | Creative của tôi, mọi trạng thái |
 | POST | /creator/creatives | tạo bản nháp |
 | GET | /creator/creatives/{id} | chi tiết, **có** config và prompt |
@@ -427,7 +420,6 @@ Tiền tố: `/api/v1`. Response JSON dạng `{ "data": ..., "meta": ... }`. L�
 | POST | /creator/creatives/{id}/test | tạo thử (mục 5.4) |
 | POST | /creator/creatives/{id}/publish | đăng hoặc đăng lại sau khi pause |
 | POST | /creator/creatives/{id}/pause | tạm dừng |
-| POST | /creator/creatives/{id}/archive | lưu trữ |
 | GET | /creator/dashboard | tổng số lượt dùng, doanh thu hôm nay/tháng này, số Creative theo trạng thái |
 | GET | /creator/wallet | pending, available, withdrawable, total_earned |
 | GET | /creator/wallet/transactions | danh sách creator_revenues, có phân trang |
@@ -437,17 +429,24 @@ Tiền tố: `/api/v1`. Response JSON dạng `{ "data": ..., "meta": ... }`. L�
 |---|---|---|
 | POST | /admin/users/{id}/credits | cộng Credit (mục 5.6) |
 
-### 6.7 Mã lỗi nghiệp vụ
+### 6.7 Worker (token worker, không theo user)
+| Method | Path | Mô tả |
+|---|---|---|
+| GET | /jobs | nhận 1 job (mục 5.2), 204 khi không có việc |
+| POST | /jobs/{id} | trả kết quả: `status=completed` + `image`, hoặc `status=failed` + `error_code` |
+
+### 6.8 Mã lỗi nghiệp vụ
 | Code | HTTP | Ý nghĩa |
 |---|---|---|
 | `INSUFFICIENT_CREDIT` | 402 | không đủ Credit |
 | `CREATIVE_NOT_AVAILABLE` | 404 | Creative không ở trạng thái published hoặc đã bị ẩn |
-| `CREATIVE_TEMPORARILY_UNAVAILABLE` | 409 | Creator không còn key hoạt động |
+| `CREATIVE_TEMPORARILY_UNAVAILABLE` | 409 | model của Creative không còn hoạt động |
 | `QUANTITY_EXCEEDED` | 422 | số lượng vượt `max_outputs` |
 | `ASPECT_RATIO_NOT_ALLOWED` | 422 | tỉ lệ không được phép |
 | `IDEMPOTENCY_CONFLICT` | 409 | trùng key nhưng nội dung khác |
 | `CREATIVE_NOT_PUBLISHABLE` | 422 | thiếu điều kiện để publish |
-| `API_KEY_INVALID` | 422 | key Gemini không hợp lệ khi lưu |
+| `WORKER_UNAUTHORIZED` | 401 | token worker sai hoặc worker đã tắt |
+| `JOB_NOT_ASSIGNED` | 409 | job không còn giao cho worker này |
 | `CREATOR_PROFILE_REQUIRED` | 403 | chưa tạo Creator Profile |
 
 ---
@@ -460,8 +459,8 @@ app/
   Http/
     Controllers/Api/V1/       # Auth, Marketplace, Generation, CreditWallet, Creator/*, Admin/*
     Requests/                 # FormRequest validate từng API
-    Resources/                # API Resource (ẩn prompt, ẩn api_key)
-    Middleware/EnsureAdmin.php, EnsureCreatorProfile.php
+    Resources/                # API Resource (ẩn prompt)
+    Middleware/EnsureAdmin.php, EnsureCreatorProfile.php, AuthenticateWorker.php
   Models/
   Policies/                   # chỉ chủ sở hữu mới xem/sửa Creative, Generation
   Services/
@@ -469,15 +468,11 @@ app/
     GenerationService.php     # create(), retry(), test()
     RevenueService.php        # record(), release()
     PlatformFeeService.php    # lấy fee% của Creator hoặc mặc định
-    CreativeService.php       # publish/pause/archive và điều kiện chuyển trạng thái
-    AI/
-      ModelService.php        # chọn provider adapter theo model
-      ApiKeyRotator.php       # chọn key, đánh dấu invalid/cooldown
-      Contracts/ImageProvider.php
-      Providers/GeminiImageProvider.php
-      Exceptions/             # InvalidKey, RateLimited, Transient, ContentBlocked
-  Jobs/ProcessGenerationOutput.php
-  Console/                    # ReleaseCreatorRevenue, SweepStuckGenerations
+    CreativeService.php       # publish/pause và điều kiện chuyển trạng thái
+    WorkerJobService.php      # giao job cho worker, nhận kết quả, giao lại job quá hạn
+    GenerationFinalizer.php   # chốt từng ảnh: complete() / fail() + hoàn Credit
+    PromptBuilder.php         # gộp System / Creative / Negative prompt
+  Console/                    # ReleaseCreatorRevenue, SweepStuckGenerations, CreateWorker
 ```
 
 ---
@@ -489,12 +484,12 @@ app/
 3. Gửi lại cùng `idempotency_key`: không bị trừ tiền lần 2.
 4. 2 request đồng thời mà số dư chỉ đủ cho 1: chỉ 1 request thành công.
 5. Lỗi 1/4 ảnh: hoàn đúng tiền 1 ảnh, 3 doanh thu ở trạng thái pending, `usage_count += 3`.
-6. Job chạy lại 2 lần trên cùng output: chỉ hoàn tiền 1 lần.
-7. Key 1 bị 401 thì dùng key 2 và thành công. Mọi key đều 401 thì Creative bị auto-pause.
+6. Worker gửi kết quả 2 lần trên cùng output: chỉ hoàn tiền 1 lần, lần sau trả 409.
+7. Hai worker không nhận trùng job; worker giữ quá 15 phút thì job được giao lại, quá 3 lần thì thất bại và hoàn Credit.
 8. Creator tự dùng Creative của mình: không trừ Credit, không có Transaction, không có doanh thu.
 9. Frontend gửi thêm `price`, `model_id`, `prompt`: các trường này bị bỏ qua.
 10. Sau 7 ngày, doanh thu chuyển từ pending sang available và số dư ví Creator đúng.
-11. API public không bao giờ trả prompt hoặc api_key.
+11. API public không bao giờ trả prompt.
 12. Tổng `credit_ledger.amount` theo user luôn bằng `credit_wallets.balance`.
 
 ---
@@ -503,9 +498,8 @@ app/
 
 1. **Giá bằng 0:** tài liệu nói không có giá tối thiểu. Có cho Creator đặt giá **0 Credit** (miễn phí) không? Nếu có thì vẫn tạo Transaction 0đ và không có doanh thu.
 2. **Retry dùng giá mới hay giá cũ:** khi Creator đổi giá giữa chừng, retry tính theo **giá hiện tại** (đề xuất) hay giá của lần tạo gốc?
-3. **Thời gian cooldown khi key bị 429:** đề xuất 10 phút.
-4. **Bỏ `POST /auth/refresh`:** Sanctum không cần refresh token. Token đặt hạn 30 ngày được không?
-5. **Giới hạn tần suất (rate limit):** đề xuất tối đa 10 request `POST /generations` mỗi phút cho mỗi user.
+3. **Bỏ `POST /auth/refresh`:** Sanctum không cần refresh token. Token đặt hạn 30 ngày được không?
+4. **Giới hạn tần suất (rate limit):** đề xuất tối đa 10 request `POST /generations` mỗi phút cho mỗi user.
 
 ---
 
@@ -514,5 +508,5 @@ app/
 - Chỉ ảnh của **người mua** (`type = paid`) mới tăng `usage_count`. Ảnh `owner` và `test` không tính.
 - Giá 0 Credit hiện được phép: vẫn tạo Transaction 0đ, không ghi ledger, không tạo doanh thu.
 - Lần tạo `owner`/`test` không có Transaction (`generation_outputs.transaction_id = null`).
-- Response 202 của `POST /generations` luôn trả trạng thái lúc vừa đưa vào queue. Frontend cần polling `GET /generations/{id}/status`.
+- Response 202 của `POST /generations` luôn trả trạng thái lúc vừa tạo (`queued`, chờ worker). Frontend cần polling `GET /generations/{id}/status`.
 - Media disk: local dùng disk `media` (`storage/app/media`, URL ký số qua `/media/...`). Production đặt `MEDIA_DISK=s3` và cấu hình `AWS_*`.

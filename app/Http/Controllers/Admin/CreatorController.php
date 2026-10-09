@@ -23,7 +23,6 @@ class CreatorController extends Controller
 
         $creators = CreatorProfile::query()
             ->with(['user', 'user.creatorWallet'])
-            ->withCount(['apiKeys as active_keys_count' => fn ($q) => $q->where('status', 'active')])
             ->when($filters['q'] ?? null, fn ($q, $term) => $q->where(fn ($q) => $q
                 ->where('username', 'like', "%{$term}%")
                 ->orWhere('shop_name', 'like', "%{$term}%")

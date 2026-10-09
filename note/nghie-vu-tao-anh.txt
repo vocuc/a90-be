@@ -1,0 +1,109 @@
+YÊU CẦU 114: TẠO ẢNH QUA WORKER (THAY CHO QUEUE GỌI GOOGLE)
+===========================================================
+
+1. YÊU CẦU
+----------
+Hiện tại: bấm tạo ảnh -> đưa job vào queue Laravel -> job dùng API key của Creator gọi Google Gemini.
+Thay bằng:
+- Bấm tạo ảnh: chỉ lưu vào DB (trạng thái chờ), không gọi AI.
+- Các worker (máy do bên mình quản lý) gọi GET /api/v1/jobs để nhận việc:
+  ảnh người dùng tải lên, câu lệnh (prompt), tỉ lệ khung hình.
+- Worker làm xong gửi ảnh kết quả lên POST /api/v1/jobs/{id}.
+
+Các quyết định đã chốt:
+| # | Câu hỏi                         | Quyết định                                                    |
+|---|---------------------------------|---------------------------------------------------------------|
+| 1 | Worker có cần API key Creator?  | Không. Bỏ hẳn cơ chế Creator tự mang key (BYOK), xoay key,     |
+|   |                                 | tự tạm dừng Creative khi key lỗi. Xóa sạch code liên quan.    |
+| 2 | Ai quản lý worker?              | Bên mình (worker nội bộ, xác thực bằng token riêng).          |
+| 3 | Đơn vị 1 job                    | 1 job = 1 ảnh (1 generation_output, 1 Transaction).           |
+| 4 | GET /jobs trả bao nhiêu job     | 1 job mỗi lần gọi.                                            |
+| 5 | Gửi ảnh input cho worker        | Link S3 tạm thời (signed URL).                                |
+| 6 | Thời gian giữ job / số lần thử  | Giữ tối đa 15 phút (ban đầu 5, tăng vì Flow chạy lâu),         |
+|   |                                 | tối đa 3 lần nhận.                                            |
+| 7 | Code Gemini cũ                  | Xóa hẳn.                                                      |
+| 8 | Creator tạo thử (/test)         | Cũng đi qua worker.                                           |
+
+
+2. LUỒNG NGHIỆP VỤ CHI TIẾT
+---------------------------
+
+2.1 Người dùng bấm tạo ảnh: POST /api/v1/generations (và POST /creator/creatives/{id}/test)
+  Giữ nguyên như cũ, chỉ bỏ phần gọi AI:
+  1. Kiểm tra Creative đang bán (test thì không cần), số lượng, tỉ lệ khung hình, model còn hoạt động.
+     (Bỏ bước kiểm tra "Creator còn key active".)
+  2. Lưu ảnh input lên S3: generations/inputs/{YYYY}/{MM}/{uuid}.{ext}.
+  3. Trong 1 DB transaction: trừ Credit, tạo generations (status queued, prompt_snapshot,
+     aspect_ratio, input_image_path), tạo N generation_outputs (status queued), mỗi ảnh 1 Transaction.
+  4. KHÔNG dispatch job nào nữa. Trả 202. Frontend polling GET /generations/{id}/status như cũ.
+
+2.2 Worker nhận việc: GET /api/v1/jobs
+  Xác thực: header "Authorization: Bearer <worker token>" (token tạo bằng lệnh
+  php artisan workers:create {name}, chỉ hiện 1 lần; DB lưu sha256 của token).
+  Worker bị tắt (is_active = 0) hoặc sai token -> 401.
+
+  Server:
+  1. Trong DB transaction, lấy generation_output status = queued cũ nhất
+     (SELECT ... FOR UPDATE SKIP LOCKED) -> nhiều worker gọi cùng lúc không nhận trùng job.
+  2. Cập nhật output: status = processing, worker_id = worker này, attempts + 1,
+     lease_expires_at = now + 15 phút, started_at (lần đầu).
+     Generation đang queued -> processing.
+  3. Ghi last_seen_at cho worker.
+  4. Trả 200:
+     {
+       "data": {
+         "id": 123,                       // id job = id generation_output
+         "prompt": "....",                // prompt đã gộp System/Creative/Negative
+         "aspect_ratio": "16:9",
+         "input_image_url": "https://...", // link S3 tạm thời
+         "input_mime": "image/jpeg",
+         "model": "gemini-2.5-flash-image", // model Creator chọn (để worker biết dùng gì)
+         "extra_params": {},              // tham số thêm Creator cấu hình (nếu có)
+         "attempt": 1,
+         "lease_expires_at": "2026-10-09T10:05:00+07:00"
+       }
+     }
+     Không có việc -> 204 No Content (worker nghỉ vài giây rồi gọi lại).
+
+2.3 Worker gửi kết quả: POST /api/v1/jobs/{id}   (multipart/form-data)
+  Thành công: status=completed, image=<file png/jpg/webp>
+  Thất bại:   status=failed, error_code=<mã, vd CONTENT_BLOCKED, NO_IMAGE_RETURNED>, error_message=<tùy chọn>
+
+  Server:
+  1. Job phải đang processing và đang được giao cho đúng worker này,
+     nếu không -> 409 JOB_NOT_ASSIGNED (job đã hết hạn và giao cho worker khác, hoặc đã chốt).
+  2. completed: lưu ảnh lên S3 generations/outputs/{YYYY}/{MM}/..., output -> completed,
+     Transaction -> completed, ghi doanh thu Creator, tăng usage_count (như cũ).
+  3. failed: output -> failed, hoàn Credit cho ảnh đó (như cũ).
+  4. Khi mọi output đã chốt -> Generation completed / failed (như cũ).
+  5. Trả 200 { "data": { "id": 123, "status": "completed" } }.
+
+2.4 Job bị kẹt (lệnh generations:sweep-stuck, chạy mỗi phút)
+  - Output processing đã quá lease_expires_at (worker chết / quá 15 phút):
+      + attempts < 3  -> trả về queued (bỏ worker_id) để worker khác nhận.
+      + attempts >= 3 -> failed, mã TIMEOUT, hoàn Credit.
+  - Output queued quá 30 phút kể từ lần vào hàng đợi gần nhất (lúc tạo hoặc lúc được giao lại),
+    không có worker nào nhận -> failed TIMEOUT, hoàn Credit.
+
+2.5 Retry của người dùng: không đổi (tạo Generation mới, trừ tiền mới, outputs queued chờ worker).
+
+
+3. THAY ĐỔI DỮ LIỆU
+-------------------
+- Bảng mới workers: id, name (unique), token_hash (unique), is_active, last_seen_at, timestamps.
+- generation_outputs: thêm worker_id (FK workers), attempts, lease_expires_at; bỏ api_key_id.
+- Xóa bảng creator_api_keys, ai_provider_calls.
+- ai_creatives: bỏ cột pause_reason (chỉ còn tạm dừng thủ công).
+- settings: xóa api_key.cooldown_minutes.
+- Giữ ai_providers, ai_models: Creator vẫn chọn model, worker nhận model trong job.
+
+
+4. XÓA CODE
+-----------
+- API /creator/api-keys (ApiKeyController, ApiKeyResource), model CreatorApiKey, enum ApiKeyStatus.
+- Job ProcessGenerationOutput, thư mục app/Services/AI (trừ ModelService::buildPrompt),
+  GeminiImageProvider, ApiKeyRotator, ProviderCallLogger, AiProviderCall.
+- Enum CreativePauseReason, CreativeService::pauseIfNoActiveKey, điều kiện publish "phải có key".
+- Admin: cột "Key hoạt động" (Creator), ô "Key lỗi" (Dashboard), "Key" ở chi tiết lượt tạo
+  (thay bằng tên worker), cấu hình cooldown key, badge auto-pause.
+- Config ai90.providers (Gemini), lỗi API_KEY_INVALID.

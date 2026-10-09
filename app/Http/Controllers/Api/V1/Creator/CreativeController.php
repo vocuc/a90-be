@@ -24,7 +24,7 @@ class CreativeController extends Controller
     public function index(Request $request): AnonymousResourceCollection
     {
         $filters = $request->validate([
-            'status' => ['nullable', Rule::in(['draft', 'published', 'paused', 'archived'])],
+            'status' => ['nullable', Rule::in(['draft', 'published', 'paused'])],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
 
@@ -82,14 +82,7 @@ class CreativeController extends Controller
         return new CreatorCreativeResource($this->creatives->pause($creative)->load(self::DETAIL_RELATIONS));
     }
 
-    public function archive(Request $request, AiCreative $creative): CreatorCreativeResource
-    {
-        $this->authorizeOwner($request, $creative);
-
-        return new CreatorCreativeResource($this->creatives->archive($creative)->load(self::DETAIL_RELATIONS));
-    }
-
-    /** Tạo thử bằng key của Creator, không trừ Credit. */
+    /** Tạo thử (kể cả bản nháp), không trừ Credit. Ảnh do worker tạo như lượt tạo thường. */
     public function test(Request $request, AiCreative $creative, GenerationService $generations, SettingService $settings): JsonResponse
     {
         $this->authorizeOwner($request, $creative);

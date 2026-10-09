@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\AuthenticateWorker;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureAdminSession;
 use App\Http\Middleware\EnsureCreatorProfile;
@@ -22,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => EnsureAdmin::class,
             'admin.session' => EnsureAdminSession::class,
             'creator' => EnsureCreatorProfile::class,
+            'worker' => AuthenticateWorker::class,
         ]);
 
         // API không chuyển hướng; trang quản trị chuyển về form đăng nhập admin.

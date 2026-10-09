@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\BannerResource;
 use App\Http\Resources\CategoryResource;
 use App\Http\Resources\CreativeCardResource;
 use App\Http\Resources\CreativeDetailResource;
 use App\Http\Resources\CreatorProfileResource;
 use App\Models\AiCreative;
+use App\Models\Banner;
 use App\Models\Category;
 use App\Models\CreatorProfile;
 use Illuminate\Database\Eloquent\Builder;
@@ -19,6 +21,13 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 class MarketplaceController extends Controller
 {
     private const CARD_RELATIONS = ['images', 'category', 'creator.creatorProfile'];
+
+    public function banners(): AnonymousResourceCollection
+    {
+        return BannerResource::collection(
+            Banner::query()->where('is_active', true)->orderBy('sort_order')->orderByDesc('id')->get()
+        );
+    }
 
     public function categories(): AnonymousResourceCollection
     {

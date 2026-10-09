@@ -8,7 +8,6 @@
         'published' => ['success', 'Đã xuất bản'],
         'rejected' => ['danger', 'Từ chối'],
         'paused' => ['warning', 'Tạm dừng'],
-        'archived' => ['dark', 'Lưu trữ'],
         // Generation / Output / Transaction
         'queued' => ['secondary', 'Chờ xử lý'],
         'processing' => ['info', 'Đang xử lý'],

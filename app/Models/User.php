@@ -68,11 +68,6 @@ class User extends Authenticatable
         return $this->hasOne(CreatorWallet::class);
     }
 
-    public function apiKeys(): HasMany
-    {
-        return $this->hasMany(CreatorApiKey::class);
-    }
-
     public function creatives(): HasMany
     {
         return $this->hasMany(AiCreative::class, 'creator_id');

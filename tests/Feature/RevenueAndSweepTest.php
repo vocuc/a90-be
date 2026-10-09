@@ -9,8 +9,6 @@ use App\Models\CreatorRevenue;
 use App\Models\CreatorWallet;
 use App\Models\GenerationOutput;
 use App\Models\Transaction;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class RevenueAndSweepTest extends TestCase
@@ -19,8 +17,8 @@ class RevenueAndSweepTest extends TestCase
     {
         $creator = $this->creator();
         $creative = $this->publishedCreative($creator, price: 1000);
-        $this->fakeGemini([Http::response(self::geminiImage())]);
         $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
+        $this->runWorker([null]);
 
         $this->artisan('revenue:release')->assertSuccessful();
         $this->assertSame(RevenueStatus::Pending, CreatorRevenue::query()->firstOrFail()->status);
@@ -37,20 +35,73 @@ class RevenueAndSweepTest extends TestCase
         $this->assertSame(900, $wallet->total_earned);
     }
 
-    public function test_stuck_outputs_are_failed_and_refunded(): void
+    public function test_images_no_worker_claims_are_failed_and_refunded(): void
     {
-        Queue::fake(); // worker "chết": job không bao giờ chạy
         $creative = $this->publishedCreative($this->creator(), price: 1000);
         $buyer = $this->buyer(credit: 5000);
 
         $this->generate($buyer, $creative, quantity: 2)->assertStatus(202);
         $this->assertSame(3000, $this->balance($buyer));
 
-        $this->travel(31)->minutes();
+        $this->travel(29)->minutes();
+        $this->artisan('generations:sweep-stuck')->assertSuccessful();
+        $this->assertSame(2, GenerationOutput::query()->where('status', OutputStatus::Queued)->count());
+
+        $this->travel(2)->minutes();
         $this->artisan('generations:sweep-stuck')->assertSuccessful();
 
         $this->assertSame(2, GenerationOutput::query()->where('status', OutputStatus::Failed)->where('error_code', 'TIMEOUT')->count());
         $this->assertSame(2, Transaction::query()->where('status', TransactionStatus::Refunded)->count());
+        $this->assertSame(5000, $this->balance($buyer));
+        $this->assertLedgerMatchesBalance($buyer);
+    }
+
+    public function test_expired_lease_goes_back_to_queue_for_another_worker(): void
+    {
+        $creative = $this->publishedCreative($this->creator(), price: 1000);
+        $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
+        $dead = $this->workerToken('dead');
+        $alive = $this->workerToken('alive');
+
+        $jobId = $this->claimJob($dead)->json('data.id');
+
+        // Còn trong 15 phút: chưa giao lại.
+        $this->travel(14)->minutes();
+        $this->artisan('generations:sweep-stuck')->assertSuccessful();
+        $this->claimJob($alive)->assertNoContent();
+
+        $this->travel(2)->minutes();
+        $this->artisan('generations:sweep-stuck')->assertSuccessful();
+        $output = GenerationOutput::query()->findOrFail($jobId);
+        $this->assertSame(OutputStatus::Queued, $output->status);
+        $this->assertNull($output->worker_id);
+
+        $this->claimJob($alive)->assertOk()->assertJsonPath('data.id', $jobId)->assertJsonPath('data.attempt', 2);
+
+        // Worker cũ gửi kết quả muộn: bị từ chối, worker mới vẫn hoàn thành bình thường.
+        $this->completeJob($dead, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
+        $this->completeJob($alive, $jobId)->assertOk();
+        $this->assertSame(TransactionStatus::Completed, Transaction::query()->firstOrFail()->status);
+    }
+
+    public function test_image_fails_and_refunds_after_three_expired_leases(): void
+    {
+        $creative = $this->publishedCreative($this->creator(), price: 1000);
+        $buyer = $this->buyer(credit: 5000);
+        $this->generate($buyer, $creative)->assertStatus(202);
+        $token = $this->workerToken();
+
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $this->claimJob($token)->assertOk()->assertJsonPath('data.attempt', $attempt);
+            $this->travel(16)->minutes();
+            $this->artisan('generations:sweep-stuck')->assertSuccessful();
+        }
+
+        $output = GenerationOutput::query()->firstOrFail();
+        $this->assertSame(OutputStatus::Failed, $output->status);
+        $this->assertSame('TIMEOUT', $output->error_code);
+        $this->assertSame(3, $output->attempts);
+        $this->claimJob($token)->assertNoContent();
         $this->assertSame(5000, $this->balance($buyer));
         $this->assertLedgerMatchesBalance($buyer);
     }

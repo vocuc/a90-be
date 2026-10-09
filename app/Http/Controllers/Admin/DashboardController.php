@@ -7,7 +7,6 @@ use App\Enums\LedgerType;
 use App\Enums\TransactionStatus;
 use App\Http\Controllers\Controller;
 use App\Models\AiCreative;
-use App\Models\CreatorApiKey;
 use App\Models\CreatorProfile;
 use App\Models\CreditLedger;
 use App\Models\Generation;
@@ -41,8 +40,8 @@ class DashboardController extends Controller
             'fee_month' => (int) $completed($month)->sum('platform_fee_amount'),
             'topup_month' => (int) CreditLedger::query()
                 ->where('type', LedgerType::AdminTopup)->where('created_at', '>=', $month)->sum('amount'),
-            'processing' => GenerationOutput::query()->whereIn('status', ['queued', 'processing'])->count(),
-            'invalid_keys' => CreatorApiKey::query()->where('status', 'invalid')->count(),
+            'queued' => GenerationOutput::query()->where('status', 'queued')->count(),
+            'processing' => GenerationOutput::query()->where('status', 'processing')->count(),
         ];
 
         $recentGenerations = Generation::query()

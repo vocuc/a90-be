@@ -9,5 +9,4 @@ enum CreativeStatus: string
     case Published = 'published';
     case Rejected = 'rejected';
     case Paused = 'paused';
-    case Archived = 'archived';
 }
