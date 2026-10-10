@@ -28,6 +28,11 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    // Đăng nhập bằng Google: OAuth Client ID (loại Web application), nhiều ID cách nhau bằng dấu phẩy
+    'google' => [
+        'client_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('GOOGLE_CLIENT_ID', ''))))),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

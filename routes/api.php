@@ -19,6 +19,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     Route::prefix('auth')->group(function () {
         Route::post('register', [AuthController::class, 'register'])->middleware('throttle:auth');
         Route::post('login', [AuthController::class, 'login'])->middleware('throttle:auth');
+        Route::post('google', [AuthController::class, 'google'])->middleware('throttle:auth');
         Route::middleware(['auth:sanctum', 'active'])->group(function () {
             Route::post('logout', [AuthController::class, 'logout']);
             Route::get('me', [AuthController::class, 'me']);

@@ -58,6 +58,11 @@ class User extends Authenticatable
         return $this->hasOne(CreatorProfile::class);
     }
 
+    public function socialAccounts(): HasMany
+    {
+        return $this->hasMany(SocialAccount::class);
+    }
+
     public function creditWallet(): HasOne
     {
         return $this->hasOne(CreditWallet::class);
