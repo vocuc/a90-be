@@ -15,7 +15,7 @@ class Transaction extends Model
     {
         return [
             'status' => TransactionStatus::class,
-            'platform_fee_percent' => 'decimal:2',
+            'creator_share_percent' => 'decimal:2',
             'completed_at' => 'datetime',
             'refunded_at' => 'datetime',
         ];

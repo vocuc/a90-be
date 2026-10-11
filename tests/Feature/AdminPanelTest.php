@@ -70,7 +70,7 @@ class AdminPanelTest extends TestCase
             '/admin/transactions' => 'refunded',
             '/admin/credit-ledger' => 'generation_refund',
             '/admin/revenues' => 'Doanh thu Creator',
-            '/admin/settings' => 'Phí nền tảng mặc định',
+            '/admin/settings' => 'Creator nhận mặc định',
             '/admin/audit-logs' => 'generation.create',
         ];
 
@@ -115,26 +115,26 @@ class AdminPanelTest extends TestCase
         $this->getJson("/api/v1/creatives/{$creative->slug}")->assertOk();
     }
 
-    public function test_admin_sets_verified_and_custom_platform_fee(): void
+    public function test_admin_sets_verified_and_custom_creator_share(): void
     {
         $creator = $this->creator();
         $creative = $this->publishedCreative($creator, price: 1000);
         $profile = CreatorProfile::query()->where('user_id', $creator->id)->firstOrFail();
         $this->actingAs($this->admin());
 
-        $this->put("/admin/creators/{$profile->id}", ['verified' => 1, 'platform_fee_percent' => 25])->assertSessionHas('success');
+        $this->put("/admin/creators/{$profile->id}", ['verified' => 1, 'creator_share_percent' => 25])->assertSessionHas('success');
         $profile->refresh();
         $this->assertTrue($profile->verified);
-        $this->assertSame('25.00', $profile->platform_fee_percent);
+        $this->assertSame('25.00', $profile->creator_share_percent);
 
-        // Phí riêng được áp dụng cho Transaction mới.
+        // Mức riêng được áp dụng cho Transaction mới: Creator nhận 25%.
         $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
-        $this->assertDatabaseHas('transactions', ['platform_fee_amount' => 250, 'creator_amount' => 750]);
+        $this->assertDatabaseHas('transactions', ['creator_share_percent' => 25, 'platform_fee_amount' => 750, 'creator_amount' => 250]);
 
         // Để trống = quay về mức mặc định.
         $this->actingAs(User::query()->where('role', 'admin')->firstOrFail());
-        $this->put("/admin/creators/{$profile->id}", ['verified' => 0, 'platform_fee_percent' => ''])->assertSessionHas('success');
-        $this->assertNull($profile->fresh()->platform_fee_percent);
+        $this->put("/admin/creators/{$profile->id}", ['verified' => 0, 'creator_share_percent' => ''])->assertSessionHas('success');
+        $this->assertNull($profile->fresh()->creator_share_percent);
     }
 
     public function test_admin_updates_settings(): void
@@ -142,13 +142,13 @@ class AdminPanelTest extends TestCase
         $this->actingAs($this->admin());
 
         $payload = [
-            'platform_fee_percent' => 15, 'revenue_hold_days' => 3, 'default_max_outputs' => 4,
+            'creator_share_percent' => 15, 'revenue_hold_days' => 3, 'default_max_outputs' => 4,
             'max_outputs_limit' => 8, 'input_max_size_kb' => 5120,
         ];
         $this->put('/admin/settings', $payload)->assertSessionHas('success');
 
         $settings = app(SettingService::class);
-        $this->assertSame('15', $settings->get('platform_fee_percent'));
+        $this->assertSame('15', $settings->get('creator_share_percent'));
         $this->assertSame(8, $settings->int('generation.max_outputs_limit'));
         $this->assertDatabaseHas('audit_logs', ['action' => 'admin.settings.update']);
 

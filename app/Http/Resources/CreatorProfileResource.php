@@ -31,8 +31,8 @@ class CreatorProfileResource extends JsonResource
             'rating_avg' => (float) $this->rating_avg,
             'rating_count' => $this->rating_count,
             $this->mergeWhen($isOwner, fn () => [
-                'platform_fee_percent' => (float) ($this->platform_fee_percent
-                    ?? app(SettingService::class)->get('platform_fee_percent')),
+                'creator_share_percent' => (float) ($this->creator_share_percent
+                    ?? app(SettingService::class)->get('creator_share_percent')),
             ]),
         ];
     }

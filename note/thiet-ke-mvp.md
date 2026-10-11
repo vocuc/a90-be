@@ -78,7 +78,7 @@ Quy ước: mọi bảng có `id BIGINT UNSIGNED` và `created_at`, `updated_at`
 | website | varchar null | |
 | social_links | json null | |
 | verified | bool | mặc định false, Admin cấp (sau MVP) |
-| platform_fee_percent | decimal(5,2) null | **null thì dùng mức mặc định** trong `settings` |
+| creator_share_percent | decimal(5,2) null | % giá mỗi ảnh Creator nhận; **null thì dùng mức mặc định** trong `settings` |
 | followers_count, creative_count, usage_count | int unsigned | bộ đếm |
 | rating_avg | decimal(3,2) | mặc định 0 |
 | rating_count | int unsigned | |
@@ -86,7 +86,7 @@ Quy ước: mọi bảng có `id BIGINT UNSIGNED` và `created_at`, `updated_at`
 **settings**: cấu hình hệ thống dạng key-value.
 | key | Giá trị mặc định |
 |---|---|
-| `platform_fee_percent` | `10` |
+| `creator_share_percent` | `10` |
 | `revenue_hold_days` | `7` |
 | `generation.default_max_outputs` | `5` |
 | `generation.max_outputs_limit` | `10` |
@@ -207,14 +207,14 @@ Quy tắc trạng thái Generation: khi mọi output đã xong, nếu có ít nh
 | generation_output_id | FK | **unique** |
 | model_code | varchar | snapshot |
 | amount | int unsigned | giá 1 ảnh, snapshot |
-| platform_fee_percent | decimal(5,2) | snapshot |
+| creator_share_percent | decimal(5,2) | snapshot % Creator nhận |
 | platform_fee_amount | int unsigned | |
 | creator_amount | int unsigned | |
 | status | enum(`pending`,`processing`,`completed`,`failed`,`refunded`,`cancelled`) | |
 | failure_reason | varchar null | |
 | refunded_at | timestamp null | |
 
-Cách chia tiền: `creator_amount = floor(amount × (100 − fee%) / 100)`, `platform_fee_amount = amount − creator_amount`. Phần lẻ làm tròn có lợi cho nền tảng, và tổng hai phần luôn bằng `amount`.
+Cách chia tiền: `creator_amount = floor(amount × share% / 100)` (ví dụ giá 2000, share 10% thì Creator nhận 200), `platform_fee_amount = amount − creator_amount`. Phần lẻ làm tròn có lợi cho nền tảng, và tổng hai phần luôn bằng `amount`.
 
 ### 4.5 Credit
 
@@ -467,7 +467,7 @@ app/
     CreditService.php         # charge(), refund(), topup(): nơi duy nhất thay đổi số dư Credit
     GenerationService.php     # create(), retry(), test()
     RevenueService.php        # record(), release()
-    PlatformFeeService.php    # lấy fee% của Creator hoặc mặc định
+    RevenueShareService.php   # lấy % Creator nhận (riêng hoặc mặc định), chia tiền
     CreativeService.php       # publish/pause và điều kiện chuyển trạng thái
     WorkerJobService.php      # giao job cho worker, nhận kết quả, giao lại job quá hạn
     GenerationFinalizer.php   # chốt từng ảnh: complete() / fail() + hoàn Credit

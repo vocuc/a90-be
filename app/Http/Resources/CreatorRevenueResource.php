@@ -20,7 +20,7 @@ class CreatorRevenueResource extends JsonResource
             'transaction' => [
                 'code' => $this->transaction->code,
                 'amount' => $this->transaction->amount,
-                'platform_fee_percent' => (float) $this->transaction->platform_fee_percent,
+                'creator_share_percent' => (float) $this->transaction->creator_share_percent,
                 'platform_fee_amount' => $this->transaction->platform_fee_amount,
                 'creative' => [
                     'id' => $this->transaction->creative->id,

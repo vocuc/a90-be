@@ -100,7 +100,7 @@ php artisan migrate --seed
 ```
 
 Seeder tạo sẵn:
-- cấu hình mặc định (phí 10%, giữ doanh thu 7 ngày, tối đa 5 ảnh mỗi lần…);
+- cấu hình mặc định (Creator nhận 10% giá mỗi ảnh, giữ doanh thu 7 ngày, tối đa 5 ảnh mỗi lần…);
 - provider **Google Gemini** và model `gemini-2.5-flash-image`;
 - 7 danh mục;
 - tài khoản admin: **`admin@a90.local` / `password`**. Đổi bằng cách đặt `ADMIN_EMAIL`, `ADMIN_PASSWORD` trong `.env` trước khi seed.
@@ -288,7 +288,7 @@ và **cron** cho scheduler:
 |---|---|
 | Dashboard | Số liệu tổng quan, lượt tạo ảnh gần đây, Creative dùng nhiều nhất |
 | Người dùng | Tìm kiếm, xem chi tiết, **cộng/trừ Credit**, khóa/mở khóa (khóa sẽ thu hồi mọi token API) |
-| Creator | Cấp/thu hồi **verified**, đặt **phí nền tảng riêng** (để trống = dùng mức mặc định) |
+| Creator | Cấp/thu hồi **verified**, đặt **% Creator nhận riêng** (để trống = dùng mức mặc định) |
 | AI Creative | Xem chi tiết kể cả prompt, **ẩn/hiện** trên Marketplace |
 | Danh mục | Thêm/sửa tên, slug, **icon** (Material Symbols), thứ tự; **bật/tắt**; xóa (chỉ khi chưa có Creative) |
 | Lượt tạo ảnh | Xem từng ảnh, lỗi, Transaction, key đã dùng, prompt đã gửi |

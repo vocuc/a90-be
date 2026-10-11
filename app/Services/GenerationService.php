@@ -27,12 +27,12 @@ class GenerationService
 {
     public function __construct(
         private CreditService $credits,
-        private PlatformFeeService $fees,
+        private RevenueShareService $shares,
         private MediaStorage $media,
         private AuditLogger $audit,
     ) {}
 
-    /** Người mua (hoặc chính Creator) tạo ảnh từ Creative đang xuất bản. */
+    /** Người mua (kể cả chính Creator) tạo ảnh từ Creative đang xuất bản: luôn trừ Credit. */
     public function create(User $user, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey): Generation
     {
         if ($existing = $this->findExisting($user, $idempotencyKey, $creative->id)) {
@@ -40,9 +40,9 @@ class GenerationService
         }
 
         $this->assertListed($creative);
-        $type = $user->id === $creative->creator_id ? GenerationType::Owner : GenerationType::Paid;
 
-        return $this->start($user, $creative, $type, $quantity, $input->aspectRatio, $idempotencyKey,
+        // Creator tự dùng mẫu của mình cũng bị trừ Credit như người mua (tạo thử miễn phí dùng createTest)
+        return $this->start($user, $creative, GenerationType::Paid, $quantity, $input->aspectRatio, $idempotencyKey,
             fn () => $this->storeInput($input));
     }
 
@@ -81,7 +81,7 @@ class GenerationService
             $type = GenerationType::Test;
         } else {
             $this->assertListed($creative);
-            $type = $user->id === $creative->creator_id ? GenerationType::Owner : GenerationType::Paid;
+            $type = GenerationType::Paid;
         }
 
         return $this->start($user, $creative, $type, $outputs->count(), $original->aspect_ratio, $idempotencyKey,
@@ -122,8 +122,8 @@ class GenerationService
                 if ($paid) {
                     $wallet = $this->credits->lockWallet($user->id);
                     $this->credits->assertSufficient($wallet, $price * $quantity);
-                    $feePercent = $this->fees->percentFor($creative->creator_id);
-                    $split = $this->fees->split($price, $feePercent);
+                    $sharePercent = $this->shares->percentFor($creative->creator_id);
+                    $split = $this->shares->split($price, $sharePercent);
                 }
 
                 $config = $creative->config;
@@ -163,7 +163,7 @@ class GenerationService
                         'generation_output_id' => $output->id,
                         'model_code' => $creative->model->code,
                         'amount' => $price,
-                        'platform_fee_percent' => $feePercent,
+                        'creator_share_percent' => $sharePercent,
                         ...$split,
                         'status' => TransactionStatus::Processing,
                     ]);

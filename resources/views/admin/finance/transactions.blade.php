@@ -27,8 +27,8 @@
                         <td>{{ \Illuminate\Support\Str::limit($tx->creative->title, 28) }}</td>
                         <td class="small">{{ $tx->model_code }}</td>
                         <td class="text-right">@credit($tx->amount)</td>
-                        <td class="text-right">@credit($tx->platform_fee_amount) <small class="text-muted">({{ (float) $tx->platform_fee_percent }}%)</small></td>
-                        <td class="text-right">@credit($tx->creator_amount)</td>
+                        <td class="text-right">@credit($tx->platform_fee_amount)</td>
+                        <td class="text-right">@credit($tx->creator_amount) <small class="text-muted">({{ (float) $tx->creator_share_percent }}%)</small></td>
                         <td>
                             <x-admin.status :value="$tx->status" />
                             @if ($tx->failure_reason)<small class="text-muted d-block">{{ $tx->failure_reason }}</small>@endif

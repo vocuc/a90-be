@@ -28,7 +28,7 @@
         <div class="col-lg-4">
             <div class="callout callout-info">
                 <h5>Lưu ý</h5>
-                <p class="mb-1">Transaction cũ không bị ảnh hưởng vì đã lưu snapshot phí và giá tại thời điểm tạo.</p>
+                <p class="mb-1">Transaction cũ không bị ảnh hưởng vì đã lưu snapshot % Creator nhận và giá tại thời điểm tạo.</p>
                 <p class="mb-0">Mọi thay đổi được ghi vào <a href="{{ route('admin.audit-logs.index', ['action' => 'admin.settings']) }}">Nhật ký hệ thống</a>.</p>
             </div>
         </div>

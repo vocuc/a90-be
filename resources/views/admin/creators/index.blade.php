@@ -14,7 +14,7 @@
                 </select>
                 <button class="btn btn-sm btn-primary mb-1"><i class="fas fa-search"></i> Lọc</button>
             </form>
-            <p class="text-muted small mb-0 mt-2">Phí nền tảng mặc định: <b>{{ rtrim(rtrim(number_format($defaultFee, 2), '0'), '.') }}%</b>. Để trống ô phí để Creator dùng mức mặc định.</p>
+            <p class="text-muted small mb-0 mt-2">Creator nhận mặc định: <b>{{ rtrim(rtrim(number_format($defaultShare, 2), '0'), '.') }}%</b> giá mỗi ảnh, phần còn lại là phí nền tảng. Để trống ô % để Creator dùng mức mặc định.</p>
         </div>
         <div class="card-body p-0 table-responsive">
             <table class="table table-hover table-sm mb-0">
@@ -22,7 +22,7 @@
                 <tr>
                     <th>Creator</th><th>Email</th><th class="text-center">Creative</th><th class="text-right">Lượt dùng</th>
                     <th class="text-right">Ví (pending / available)</th>
-                    <th style="width:330px">Xác minh &amp; phí riêng</th>
+                    <th style="width:330px">Xác minh &amp; % Creator nhận riêng</th>
                 </tr>
                 </thead>
                 <tbody>
@@ -49,9 +49,9 @@
                                     <label class="custom-control-label" for="verified-{{ $creator->id }}">Verified</label>
                                 </div>
                                 <div class="input-group input-group-sm mr-2" style="width:110px">
-                                    <input type="number" name="platform_fee_percent" step="0.01" min="0" max="100"
-                                           value="{{ $creator->platform_fee_percent !== null ? (float) $creator->platform_fee_percent : '' }}"
-                                           class="form-control" placeholder="{{ (float) $defaultFee }}">
+                                    <input type="number" name="creator_share_percent" step="0.01" min="0" max="100"
+                                           value="{{ $creator->creator_share_percent !== null ? (float) $creator->creator_share_percent : '' }}"
+                                           class="form-control" placeholder="{{ (float) $defaultShare }}">
                                     <div class="input-group-append"><span class="input-group-text">%</span></div>
                                 </div>
                                 <button class="btn btn-sm btn-outline-primary">Lưu</button>

@@ -14,7 +14,7 @@ class CreatorProfile extends Model
         return [
             'social_links' => 'array',
             'verified' => 'boolean',
-            'platform_fee_percent' => 'decimal:2',
+            'creator_share_percent' => 'decimal:2',
             'rating_avg' => 'decimal:2',
         ];
     }

@@ -10,7 +10,7 @@ return [
 
     // Giá trị mặc định cho bảng settings (admin sửa được trong DB).
     'defaults' => [
-        'platform_fee_percent' => 10,
+        'creator_share_percent' => 10,
         'revenue_hold_days' => 7,
         'generation.default_max_outputs' => 5,
         'generation.max_outputs_limit' => 10,

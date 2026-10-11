@@ -54,9 +54,9 @@ abstract class TestCase extends BaseTestCase
         return $user;
     }
 
-    protected function creator(): User
+    protected function creator(int $credit = 0): User
     {
-        $user = $this->buyer();
+        $user = $this->buyer($credit);
         $user->creatorProfile()->create(['shop_name' => 'Shop '.$user->id, 'username' => 'creator'.$user->id]);
 
         return $user;

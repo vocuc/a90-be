@@ -110,17 +110,17 @@ class GenerationTest extends TestCase
         $this->actingAs($buyer)->getJson("/api/v1/generations/{$generation->id}/status")
             ->assertJsonPath('data.outputs.0.image_url', "https://media.test/{$output->image_path}");
 
-        // Mỗi ảnh một Transaction, phí 10%: Creator nhận 900 / ảnh.
+        // Mỗi ảnh một Transaction, Creator nhận 10%: 100 / ảnh.
         $transactions = Transaction::query()->where('generation_id', $generation->id)->get();
         $this->assertCount(3, $transactions);
         $this->assertTrue($transactions->every(fn ($tx) => $tx->status === TransactionStatus::Completed
-            && $tx->platform_fee_amount === 100 && $tx->creator_amount === 900));
+            && $tx->platform_fee_amount === 900 && $tx->creator_amount === 100));
 
         $this->assertSame(7000, $this->balance($buyer));
         $this->assertLedgerMatchesBalance($buyer);
 
         $wallet = CreatorWallet::query()->where('user_id', $creator->id)->firstOrFail();
-        $this->assertSame(2700, $wallet->pending_balance);
+        $this->assertSame(300, $wallet->pending_balance);
         $this->assertSame(0, $wallet->available_balance);
         $this->assertSame(3, $creative->fresh()->usage_count);
     }
@@ -236,19 +236,29 @@ class GenerationTest extends TestCase
         $this->assertSame(OutputStatus::Processing, GenerationOutput::query()->findOrFail($jobId)->status);
     }
 
-    public function test_creator_using_own_creative_is_not_charged(): void
+    public function test_creator_using_own_creative_is_charged_like_a_buyer(): void
     {
-        $creator = $this->creator();
+        $creator = $this->creator(credit: 5000);
         $creative = $this->publishedCreative($creator, price: 1000);
 
         $response = $this->generate($creator, $creative)->assertStatus(202);
         $this->runWorker([null]);
 
-        $this->assertSame('owner', $response->json('data.type'));
+        $this->assertSame('paid', $response->json('data.type'));
         $this->assertSame('completed', $this->latestStatus($response)['status']);
-        $this->assertSame(0, Transaction::query()->count());
-        $this->assertSame(0, CreatorRevenue::query()->count());
-        $this->assertSame(0, $creative->fresh()->usage_count);
+        $this->assertSame(1, Transaction::query()->where('user_id', $creator->id)->count());
+        $this->assertSame(4000, $this->balance($creator));
+        $this->assertLedgerMatchesBalance($creator);
+        $this->assertSame(1, $creative->fresh()->usage_count);
+    }
+
+    public function test_creator_without_credit_cannot_use_own_creative(): void
+    {
+        $creator = $this->creator();
+        $creative = $this->publishedCreative($creator, price: 1000);
+
+        $this->generate($creator, $creative)->assertStatus(402);
+        $this->assertSame(0, Generation::query()->count());
     }
 
     public function test_client_supplied_price_model_and_prompt_are_ignored(): void

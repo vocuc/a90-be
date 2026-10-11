@@ -31,8 +31,8 @@ class RevenueAndSweepTest extends TestCase
         $this->assertSame(RevenueStatus::Available, CreatorRevenue::query()->firstOrFail()->status);
         $wallet = CreatorWallet::query()->where('user_id', $creator->id)->firstOrFail();
         $this->assertSame(0, $wallet->pending_balance);
-        $this->assertSame(900, $wallet->available_balance);
-        $this->assertSame(900, $wallet->total_earned);
+        $this->assertSame(100, $wallet->available_balance);
+        $this->assertSame(100, $wallet->total_earned);
     }
 
     public function test_images_no_worker_claims_are_failed_and_refunded(): void

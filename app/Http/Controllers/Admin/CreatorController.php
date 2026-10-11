@@ -32,20 +32,20 @@ class CreatorController extends Controller
             ->paginate(20)
             ->withQueryString();
 
-        $defaultFee = (float) $settings->get('platform_fee_percent');
+        $defaultShare = (float) $settings->get('creator_share_percent');
 
-        return view('admin.creators.index', compact('creators', 'filters', 'defaultFee'));
+        return view('admin.creators.index', compact('creators', 'filters', 'defaultShare'));
     }
 
-    /** Cấp/thu hồi tick verified và đặt mức phí riêng (để trống = dùng mức mặc định). */
+    /** Cấp/thu hồi tick verified và đặt % Creator nhận riêng (để trống = dùng mức mặc định). */
     public function update(Request $request, CreatorProfile $creator): RedirectResponse
     {
         $data = $request->validate([
             'verified' => ['required', 'boolean'],
-            'platform_fee_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'creator_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
-        $before = $creator->only(['verified', 'platform_fee_percent']);
+        $before = $creator->only(['verified', 'creator_share_percent']);
         $creator->update($data);
         $this->audit->log('admin.creator.update', $creator, ['before' => $before, 'after' => $data]);
 
