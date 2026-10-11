@@ -76,7 +76,8 @@ class RevenueAndSweepTest extends TestCase
         $this->assertSame(OutputStatus::Queued, $output->status);
         $this->assertNull($output->worker_id);
 
-        $this->claimJob($alive)->assertOk()->assertJsonPath('data.id', $jobId)->assertJsonPath('data.attempt', 2);
+        $this->claimJob($alive)->assertOk()->assertJsonPath('data.id', $jobId);
+        $this->assertSame(2, $output->fresh()->attempts);
 
         // Worker cũ gửi kết quả muộn: bị từ chối, worker mới vẫn hoàn thành bình thường.
         $this->completeJob($dead, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
@@ -92,7 +93,8 @@ class RevenueAndSweepTest extends TestCase
         $token = $this->workerToken();
 
         for ($attempt = 1; $attempt <= 3; $attempt++) {
-            $this->claimJob($token)->assertOk()->assertJsonPath('data.attempt', $attempt);
+            $jobId = $this->claimJob($token)->assertOk()->json('data.id');
+            $this->assertSame($attempt, GenerationOutput::query()->findOrFail($jobId)->attempts);
             $this->travel(16)->minutes();
             $this->artisan('generations:sweep-stuck')->assertSuccessful();
         }

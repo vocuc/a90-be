@@ -77,14 +77,20 @@
                 <div class="card-header"><h3 class="card-title"><i class="fas fa-lock"></i> Cấu hình nội bộ</h3></div>
                 <div class="card-body">
                     <dl class="mb-0">
-                        <dt>System Prompt</dt><dd class="pre-wrap">{{ $creative->config?->system_prompt ?: '—' }}</dd>
-                        <dt>Creative Prompt</dt><dd class="pre-wrap">{{ \App\Services\PromptBuilder::formatCreativePrompt($creative->config?->creative_prompt) ?: '—' }}</dd>
-                        <dt>Negative Prompt</dt><dd class="pre-wrap">{{ $creative->config?->negative_prompt ?: '—' }}</dd>
+                        <dt>Prompt Template</dt><dd class="pre-wrap">{{ $creative->config?->prompt_template ?: '—' }}</dd>
+                        <dt>Form người mua</dt>
+                        <dd>
+                            @forelse ($creative->config?->input_schema ?? [] as $field)
+                                <div><code>{{ $field['key'] }}</code> · {{ $field['label'] }} ({{ $field['type'] }}){{ $field['required'] ? ' · bắt buộc' : '' }}</div>
+                            @empty
+                                —
+                            @endforelse
+                        </dd>
                         <dt>Số ảnh tối đa / lần</dt><dd>{{ $creative->config?->max_outputs }}</dd>
                         <dt>Tỉ lệ khung hình</dt>
-                        <dd>{{ $creative->config?->allowed_aspect_ratios ? implode(', ', $creative->config->allowed_aspect_ratios) : 'Tất cả tỉ lệ model hỗ trợ' }} (mặc định {{ $creative->config?->default_aspect_ratio }})</dd>
-                        @if ($creative->config?->extra_params)
-                            <dt>Tham số thêm</dt><dd><code>{{ json_encode($creative->config->extra_params) }}</code></dd>
+                        <dd>Tất cả tỉ lệ model hỗ trợ (mặc định {{ $creative->config?->default_aspect_ratio }})</dd>
+                        @if ($creative->video_url)
+                            <dt>Video hướng dẫn</dt><dd><a href="{{ $creative->video_url }}" target="_blank" rel="noopener noreferrer">{{ $creative->video_url }}</a></dd>
                         @endif
                     </dl>
                 </div>

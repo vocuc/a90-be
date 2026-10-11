@@ -24,10 +24,10 @@ return new class extends Migration
             $table->foreignId('model_id')->constrained('ai_models');
             $table->string('title', 150);
             $table->string('slug', 191)->unique();
-            $table->text('description')->nullable();
+            $table->text('description')->nullable(); // Template Builder: "Hướng dẫn sử dụng mẫu"
+            $table->string('video_url', 500)->nullable(); // video hướng dẫn trên TikTok
             $table->unsignedInteger('price_per_image')->default(0);
             $table->string('status', 20)->default('draft');
-            $table->string('pause_reason', 30)->nullable();
             $table->timestamp('hidden_at')->nullable();
             $table->unsignedBigInteger('usage_count')->default(0);
             $table->decimal('rating_avg', 3, 2)->default(0);
@@ -50,13 +50,13 @@ return new class extends Migration
         Schema::create('ai_creative_configs', function (Blueprint $table) {
             $table->id();
             $table->foreignId('creative_id')->unique()->constrained('ai_creatives')->cascadeOnDelete();
-            $table->text('system_prompt')->nullable();
-            $table->text('creative_prompt')->nullable();
-            $table->text('negative_prompt')->nullable();
+            // Form người mua: [{ key, label, type, required, validation, options?, default_value? }] (CreativeTemplate)
+            $table->json('input_schema');
+            // Prompt có {{key}}, thay bằng giá trị người mua nhập khi tạo ảnh
+            $table->text('prompt_template');
             $table->unsignedTinyInteger('max_outputs')->default(5);
-            $table->json('allowed_aspect_ratios')->nullable(); // null = mọi tỉ lệ model hỗ trợ
+            // Lấy từ trường tỉ lệ khung hình; người mua đổi được sang mọi tỉ lệ model hỗ trợ
             $table->string('default_aspect_ratio', 10)->default('1:1');
-            $table->json('extra_params')->nullable();
             $table->timestamps();
         });
     }

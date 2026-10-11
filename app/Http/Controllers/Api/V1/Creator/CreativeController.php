@@ -8,6 +8,7 @@ use App\Http\Resources\CreatorCreativeResource;
 use App\Http\Resources\GenerationResource;
 use App\Models\AiCreative;
 use App\Services\CreativeService;
+use App\Services\GenerationInput;
 use App\Services\GenerationService;
 use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
@@ -88,14 +89,13 @@ class CreativeController extends Controller
         $this->authorizeOwner($request, $creative);
 
         $data = $request->validate([
-            'input_image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:'.$settings->int('generation.input_max_size_kb')],
             'quantity' => ['required', 'integer', 'min:1', 'max:'.$settings->int('generation.max_outputs_limit')],
-            'aspect_ratio' => ['required', 'string', 'max:10'],
             'idempotency_key' => ['required', 'string', 'max:100'],
         ]);
+        $input = GenerationInput::fromRequest($request, $creative, $settings->int('generation.input_max_size_kb'));
 
         $generation = $generations->createTest(
-            $request->user(), $creative, $data['input_image'], $data['quantity'], $data['aspect_ratio'], $data['idempotency_key'],
+            $request->user(), $creative, $input, $data['quantity'], $data['idempotency_key'],
         );
 
         return (new GenerationResource($generation->load('creative')))->response()->setStatusCode(202);

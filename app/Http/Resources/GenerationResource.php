@@ -38,7 +38,8 @@ class GenerationResource extends JsonResource
             'total_charged' => $this->price_per_image * $this->quantity,
             'success_count' => $this->success_count,
             'failed_count' => $this->failed_count,
-            'input_image_url' => $media->url($this->input_image_path),
+            // Ảnh đầu vào theo tên trường
+            'input_images' => array_map(fn ($path) => $media->url($path), $this->input_paths ?? []),
             'outputs' => $this->whenLoaded('outputs', fn () => $this->outputs->map(fn ($output) => [
                 'id' => $output->id,
                 'position' => $output->position,

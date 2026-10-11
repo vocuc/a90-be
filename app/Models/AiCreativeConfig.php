@@ -12,9 +12,7 @@ class AiCreativeConfig extends Model
     protected function casts(): array
     {
         return [
-            'creative_prompt' => 'array',
-            'allowed_aspect_ratios' => 'array',
-            'extra_params' => 'array',
+            'input_schema' => 'array',
         ];
     }
 

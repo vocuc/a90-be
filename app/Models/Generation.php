@@ -20,6 +20,8 @@ class Generation extends Model
             'type' => GenerationType::class,
             'status' => GenerationStatus::class,
             'completed_at' => 'datetime',
+            'input_paths' => 'array',
+            'input_values' => 'array',
         ];
     }
 

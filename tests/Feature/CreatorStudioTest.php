@@ -22,20 +22,22 @@ class CreatorStudioTest extends TestCase
             'title' => 'Ảnh mỹ phẩm',
             'model_id' => AiModel::query()->firstOrFail()->id,
             'price_per_image' => 2000,
-            'creative_prompt' => [['label' => 'Phong cách', 'value' => 'Luxury cosmetic shot']],
             'max_outputs' => 4,
-            'allowed_aspect_ratios' => ['1:1', '4:5'],
+            'input_schema' => [
+                ['key' => 'product_image', 'label' => 'Ảnh mỹ phẩm', 'type' => 'image', 'required' => true],
+                ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '4:5'],
+            ],
+            'prompt_template' => 'Luxury cosmetic shot',
         ])->assertCreated()->assertJsonPath('data.status', 'draft')->json('data.id');
 
-        // creative_prompt lưu và trả về dạng mảng, không phải chuỗi.
         $this->getJson("/api/v1/creator/creatives/{$creativeId}")->assertOk()
-            ->assertJsonPath('data.config.creative_prompt', [['label' => 'Phong cách', 'value' => 'Luxury cosmetic shot']]);
+            ->assertJsonPath('data.config.prompt_template', 'Luxury cosmetic shot')
+            ->assertJsonPath('data.config.default_aspect_ratio', '4:5');
 
-        // Chuỗi thường và câu lệnh thiếu nội dung bị từ chối.
-        $this->putJson("/api/v1/creator/creatives/{$creativeId}", ['creative_prompt' => 'Luxury cosmetic shot'])
-            ->assertStatus(422)->assertJsonValidationErrors('creative_prompt');
-        $this->putJson("/api/v1/creator/creatives/{$creativeId}", ['creative_prompt' => [['label' => 'Phong cách']]])
-            ->assertStatus(422)->assertJsonValidationErrors('creative_prompt.0.value');
+        // Tạo mới bắt buộc có form người mua và prompt
+        $this->postJson('/api/v1/creator/creatives', [
+            'title' => 'Thiếu template', 'model_id' => AiModel::query()->firstOrFail()->id, 'price_per_image' => 0,
+        ])->assertStatus(422)->assertJsonValidationErrors(['input_schema', 'prompt_template']);
 
         // Chưa có ảnh mẫu: chưa đăng được.
         $this->postJson("/api/v1/creator/creatives/{$creativeId}/publish")
@@ -54,7 +56,8 @@ class CreatorStudioTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.price_per_image', 2000)
             ->assertJsonPath('data.options.max_outputs', 4)
-            ->assertJsonPath('data.options.aspect_ratios', ['1:1', '4:5'])
+            ->assertJsonPath('data.options.aspect_ratios', AiModel::query()->firstOrFail()->supported_aspect_ratios)
+            ->assertJsonPath('data.options.default_aspect_ratio', '4:5')
             ->assertJsonPath('data.creator.username', 'shop-a');
         $this->assertStringNotContainsString('Luxury cosmetic shot', $detail->getContent());
 
@@ -74,9 +77,8 @@ class CreatorStudioTest extends TestCase
         $creative->update(['status' => 'draft']);
 
         $response = $this->actingAs($creator)->post("/api/v1/creator/creatives/{$creative->id}/test", [
-            'input_image' => UploadedFile::fake()->image('p.png'),
+            'inputs' => ['product_image' => UploadedFile::fake()->image('p.png'), 'aspectRatio' => '1:1'],
             'quantity' => 1,
-            'aspect_ratio' => '1:1',
             'idempotency_key' => (string) Str::uuid(),
         ], ['Accept' => 'application/json'])
             ->assertStatus(202)

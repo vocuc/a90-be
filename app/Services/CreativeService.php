@@ -13,10 +13,7 @@ use Illuminate\Support\Str;
 
 class CreativeService
 {
-    private const CONFIG_FIELDS = [
-        'system_prompt', 'creative_prompt', 'negative_prompt',
-        'max_outputs', 'allowed_aspect_ratios', 'default_aspect_ratio', 'extra_params',
-    ];
+    private const CONFIG_FIELDS = ['input_schema', 'prompt_template', 'max_outputs', 'default_aspect_ratio'];
 
     public function __construct(
         private SettingService $settings,
@@ -26,6 +23,8 @@ class CreativeService
 
     public function create(User $creator, array $data): AiCreative
     {
+        $data = $this->prepareTemplate($data);
+
         return DB::transaction(function () use ($creator, $data) {
             $creative = AiCreative::query()->create([
                 ...Arr::except($data, self::CONFIG_FIELDS),
@@ -48,6 +47,8 @@ class CreativeService
 
     public function update(AiCreative $creative, array $data): AiCreative
     {
+        $data = $this->prepareTemplate($data);
+
         DB::transaction(function () use ($creative, $data) {
             $creative->update(Arr::except($data, self::CONFIG_FIELDS));
 
@@ -71,8 +72,11 @@ class CreativeService
         if (! $creative->model?->is_active) {
             $reasons[] = 'Model AI không còn hoạt động.';
         }
-        if (PromptBuilder::formatCreativePrompt($creative->config?->creative_prompt) === '') {
-            $reasons[] = 'Chưa nhập Creative Prompt.';
+        if (trim((string) $creative->config?->prompt_template) === '') {
+            $reasons[] = 'Chưa viết Prompt Template.';
+        }
+        if (! collect($creative->config?->input_schema ?? [])->contains('type', 'image')) {
+            $reasons[] = 'Template cần ít nhất 1 trường ảnh.';
         }
         if (! $creative->images()->exists()) {
             $reasons[] = 'Cần ít nhất 1 ảnh mẫu.';
@@ -148,6 +152,19 @@ class CreativeService
         }
 
         return $creative;
+    }
+
+    /** Chuẩn hóa input_schema; tỉ lệ mặc định lấy từ trường tỉ lệ khung hình. */
+    private function prepareTemplate(array $data): array
+    {
+        if (empty($data['input_schema'])) {
+            return $data;
+        }
+
+        $data['input_schema'] = CreativeTemplate::normalize($data['input_schema']);
+        $data['default_aspect_ratio'] = CreativeTemplate::aspectField($data['input_schema'])['default_value'];
+
+        return $data;
     }
 
     private function refreshCreatorCount(int $creatorId): void

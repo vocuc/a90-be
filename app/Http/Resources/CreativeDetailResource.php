@@ -21,6 +21,9 @@ class CreativeDetailResource extends CreativeCardResource
         return [
             ...parent::toArray($request),
             'description' => $this->description,
+            'video_url' => $this->video_url,
+            // Form người mua. KHÔNG trả prompt_template.
+            'input_schema' => $this->config?->input_schema,
             'images' => $this->images->map(fn ($image) => [
                 'id' => $image->id,
                 'url' => $media->url($image->path),

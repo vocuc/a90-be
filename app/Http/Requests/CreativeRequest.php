@@ -3,9 +3,12 @@
 namespace App\Http\Requests;
 
 use App\Models\AiModel;
+use App\Services\CreativeTemplate;
 use App\Services\SettingService;
+use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 /**
  * Dữ liệu Creator gửi khi tạo/sửa Creative. Dùng cho cả POST (tạo) và PUT (sửa từng phần).
@@ -20,27 +23,49 @@ class CreativeRequest extends FormRequest
 
         return [
             'title' => [$required, 'string', 'max:150'],
+            // Template Builder hiển thị là "Hướng dẫn sử dụng mẫu"
             'description' => ['nullable', 'string', 'max:5000'],
+            'video_url' => ['nullable', 'string', 'max:500', 'url:http,https', $this->tiktokUrl(...)],
+            // Form người mua + Prompt Template, luôn gửi cùng nhau (kiểm tra chi tiết ở after()).
+            // Tỉ lệ mặc định lấy từ trường tỉ lệ khung hình trong input_schema.
+            'input_schema' => [$required, 'array', 'required_with:prompt_template'],
+            'prompt_template' => [$required, 'string', 'required_with:input_schema'],
             'category_id' => ['nullable', 'integer', Rule::exists('categories', 'id')->where('is_active', true)],
             'model_id' => [$required, 'integer', Rule::exists('ai_models', 'id')->where('is_active', true)],
             'price_per_image' => [$required, 'integer', 'min:0', 'max:100000000'],
-            'system_prompt' => ['nullable', 'string', 'max:10000'],
-            // Danh sách câu lệnh [{label, value}], ghép thành prompt khi gọi model (PromptBuilder::build)
-            'creative_prompt' => ['nullable', 'array', 'max:20'],
-            'creative_prompt.*' => ['array:label,value'],
-            'creative_prompt.*.label' => ['required', 'string', 'max:100'],
-            'creative_prompt.*.value' => ['required', 'string', 'max:5000'],
-            'negative_prompt' => ['nullable', 'string', 'max:5000'],
             'max_outputs' => ['sometimes', 'integer', 'min:1', "max:{$limit}"],
-            'allowed_aspect_ratios' => ['nullable', 'array', 'min:1'],
-            'allowed_aspect_ratios.*' => ['string', 'distinct', Rule::in($ratios)],
-            'default_aspect_ratio' => ['sometimes', 'string', Rule::in($ratios)],
-            'extra_params' => ['nullable', 'array:temperature,topP,topK,seed'],
-            'extra_params.temperature' => ['numeric', 'min:0', 'max:2'],
-            'extra_params.topP' => ['numeric', 'min:0', 'max:1'],
-            'extra_params.topK' => ['integer', 'min:1', 'max:100'],
-            'extra_params.seed' => ['integer'],
         ];
+    }
+
+    /** Kiểm tra chi tiết template sau khi các rule cơ bản đã qua. */
+    public function after(): array
+    {
+        return [
+            function (Validator $validator) {
+                if ($validator->errors()->isNotEmpty() || ! is_array($this->input('input_schema'))) {
+                    return;
+                }
+                $errors = CreativeTemplate::errors(
+                    $this->input('input_schema'),
+                    $this->input('prompt_template'),
+                    $this->supportedRatios(),
+                    app(SettingService::class)->int('generation.input_max_size_kb'),
+                );
+                foreach ($errors as $path => $message) {
+                    $validator->errors()->add($path, $message);
+                }
+            },
+        ];
+    }
+
+    /** Link video hướng dẫn chỉ nhận TikTok (tiktok.com và tên miền con: www., m., vt., vm.). */
+    private function tiktokUrl(string $attribute, mixed $value, Closure $fail): void
+    {
+        $host = strtolower((string) parse_url((string) $value, PHP_URL_HOST));
+        $path = (string) parse_url((string) $value, PHP_URL_PATH);
+        if (! preg_match('/(^|\.)tiktok\.com$/', $host) || strlen($path) <= 1) {
+            $fail('Link video hướng dẫn phải là link TikTok.');
+        }
     }
 
     /** Tỉ lệ khung hình model (mới hoặc hiện tại) hỗ trợ. */
