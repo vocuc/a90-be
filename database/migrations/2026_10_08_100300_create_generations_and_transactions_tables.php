@@ -8,6 +8,16 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Worker tạo ảnh nội bộ, xác thực bằng token
+        Schema::create('workers', function (Blueprint $table) {
+            $table->id();
+            $table->string('name', 100)->unique();
+            $table->char('token_hash', 64)->unique(); // sha256 của token
+            $table->boolean('is_active')->default(true);
+            $table->timestamp('last_seen_at')->nullable();
+            $table->timestamps();
+        });
+
         Schema::create('generations', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained();
@@ -16,7 +26,8 @@ return new class extends Migration
             $table->foreignId('model_id')->constrained('ai_models');
             $table->foreignId('parent_generation_id')->nullable()->constrained('generations');
             $table->string('type', 10); // paid | owner | test
-            $table->string('input_image_path');
+            $table->json('input_paths'); // ảnh đầu vào theo tên trường: { "product_image": "generations/inputs/..." }
+            $table->json('input_values')->nullable(); // giá trị không phải ảnh theo tên trường (gồm aspectRatio)
             $table->string('aspect_ratio', 10);
             $table->unsignedTinyInteger('quantity');
             $table->unsignedInteger('price_per_image');
@@ -61,8 +72,10 @@ return new class extends Migration
             $table->unsignedTinyInteger('position');
             $table->foreignId('retry_of_output_id')->nullable()->constrained('generation_outputs');
             $table->foreignId('transaction_id')->nullable()->unique()->constrained();
-            $table->foreignId('api_key_id')->nullable()->constrained('creator_api_keys');
+            $table->foreignId('worker_id')->nullable()->constrained()->nullOnDelete();
             $table->string('status', 20)->default('queued');
+            $table->unsignedTinyInteger('attempts')->default(0);
+            $table->timestamp('lease_expires_at')->nullable(); // worker phải trả kết quả trước lúc này
             $table->string('image_path')->nullable();
             $table->string('mime', 50)->nullable();
             $table->unsignedInteger('size_bytes')->nullable();
@@ -73,6 +86,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['status', 'updated_at']);
+            $table->index(['status', 'lease_expires_at']);
         });
 
         Schema::table('transactions', function (Blueprint $table) {
@@ -88,5 +102,6 @@ return new class extends Migration
         Schema::dropIfExists('generation_outputs');
         Schema::dropIfExists('transactions');
         Schema::dropIfExists('generations');
+        Schema::dropIfExists('workers');
     }
 };

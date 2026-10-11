@@ -9,6 +9,7 @@ use App\Http\Resources\GenerationResource;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Services\GenerationInput;
 use App\Services\GenerationService;
 use App\Services\MediaStorage;
 use App\Services\SettingService;
@@ -26,19 +27,19 @@ class GenerationController extends Controller
     public function store(Request $request): JsonResponse
     {
         // Chỉ nhận đúng các trường này. Giá, model, prompt... luôn đọc từ database.
+        // Ảnh/giá trị đầu vào kiểm tra theo form của Creative (GenerationInput).
         $data = $request->validate([
             'creative_id' => ['required', 'integer'],
-            'input_image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:'.$this->settings->int('generation.input_max_size_kb')],
             'quantity' => ['required', 'integer', 'min:1', 'max:'.$this->settings->int('generation.max_outputs_limit')],
-            'aspect_ratio' => ['required', 'string', 'max:10'],
             'idempotency_key' => ['required', 'string', 'max:100'],
         ]);
 
         $creative = AiCreative::query()->find($data['creative_id'])
             ?? throw BusinessException::creativeNotAvailable();
+        $input = GenerationInput::fromRequest($request, $creative, $this->settings->int('generation.input_max_size_kb'));
 
         $generation = $this->generations->create(
-            $request->user(), $creative, $data['input_image'], $data['quantity'], $data['aspect_ratio'], $data['idempotency_key'],
+            $request->user(), $creative, $input, $data['quantity'], $data['idempotency_key'],
         );
 
         return (new GenerationResource($generation->load('creative')))->response()->setStatusCode(202);

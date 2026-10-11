@@ -37,19 +37,17 @@ class CreatorCreativeResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
             $this->mergeWhen($detailed, fn () => [
+                'video_url' => $this->video_url,
                 'images' => $this->images->map(fn ($image) => [
                     'id' => $image->id,
                     'url' => $media->url($image->path),
                     'sort_order' => $image->sort_order,
                 ])->values(),
                 'config' => [
-                    'system_prompt' => $this->config?->system_prompt,
-                    'creative_prompt' => $this->config?->creative_prompt,
-                    'negative_prompt' => $this->config?->negative_prompt,
+                    'input_schema' => $this->config?->input_schema,
+                    'prompt_template' => $this->config?->prompt_template,
                     'max_outputs' => $this->config?->max_outputs,
-                    'allowed_aspect_ratios' => $this->config?->allowed_aspect_ratios,
                     'default_aspect_ratio' => $this->config?->default_aspect_ratio,
-                    'extra_params' => $this->config?->extra_params ?? (object) [],
                 ],
                 'available_aspect_ratios' => GenerationService::allowedAspectRatios($this->resource),
             ]),

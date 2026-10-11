@@ -36,24 +36,21 @@ class GenerationTest extends TestCase
 
     public function test_worker_receives_prompt_input_image_and_aspect_ratio(): void
     {
-        $creative = $this->publishedCreative($this->creator(), config: ['extra_params' => ['seed' => 42]]);
-        $response = $this->generate($this->buyer(credit: 5000), $creative, extra: ['aspect_ratio' => '1:1'])->assertStatus(202);
+        $creative = $this->publishedCreative($this->creator());
+        $response = $this->generate($this->buyer(credit: 5000), $creative, inputs: ['aspectRatio' => '4:5'])->assertStatus(202);
         $generation = Generation::query()->with('outputs')->findOrFail($response->json('data.id'));
         $token = $this->workerToken();
 
         $job = $this->claimJob($token)->assertOk()->json('data');
 
         $this->assertSame($generation->outputs[0]->id, $job['id']);
-        $this->assertSame(
-            "You are a product photographer.\n\nBối cảnh: Place the product on a marble table.\n\nAvoid: text, watermark",
-            $job['prompt'],
-        );
-        $this->assertSame('1:1', $job['aspect_ratio']);
-        $this->assertSame("https://media.test/{$generation->input_image_path}", $job['input_image_url']);
-        $this->assertSame('image/png', $job['input_mime']);
-        $this->assertSame('gemini-2.5-flash-image', $job['model']);
-        $this->assertSame(['seed' => 42], $job['extra_params']);
-        $this->assertSame(1, $job['attempt']);
+        $this->assertSame(['id', 'request'], array_keys($job));
+        $this->assertSame([
+            'productImage' => "https://media.test/{$generation->input_paths['product_image']}",
+            'prompt' => 'Place the product on a marble table. Avoid text and watermark.',
+            'aspectRatio' => '4:5',
+            'modelDisplayName' => 'Gemini 2.5 Flash Image',
+        ], $job['request']);
 
         $output = $generation->outputs[0]->fresh();
         $this->assertSame(OutputStatus::Processing, $output->status);
@@ -265,17 +262,18 @@ class GenerationTest extends TestCase
 
         $this->assertSame(4000, $this->balance($buyer));
         $job = $this->claimJob($this->workerToken())->json('data');
-        $this->assertSame('gemini-2.5-flash-image', $job['model']);
-        $this->assertStringNotContainsString('hack', $job['prompt']);
+        $this->assertSame('Gemini 2.5 Flash Image', $job['request']['modelDisplayName']);
+        $this->assertStringNotContainsString('hack', $job['request']['prompt']);
     }
 
     public function test_quantity_and_aspect_ratio_limits(): void
     {
-        $creative = $this->publishedCreative($this->creator(), config: ['max_outputs' => 2, 'allowed_aspect_ratios' => ['1:1', '3:4']]);
+        $creative = $this->publishedCreative($this->creator(), config: ['max_outputs' => 2]);
         $buyer = $this->buyer(credit: 50000);
 
         $this->generate($buyer, $creative, quantity: 3)->assertStatus(422)->assertJsonPath('code', 'QUANTITY_EXCEEDED');
-        $this->generate($buyer, $creative, extra: ['aspect_ratio' => '16:9'])->assertStatus(422)->assertJsonPath('code', 'ASPECT_RATIO_NOT_ALLOWED');
+        // Chỉ nhận tỉ lệ model hỗ trợ
+        $this->generate($buyer, $creative, inputs: ['aspectRatio' => '7:3'])->assertStatus(422)->assertJsonValidationErrors('inputs.aspectRatio');
         $this->assertSame(50000, $this->balance($buyer));
     }
 
@@ -301,7 +299,7 @@ class GenerationTest extends TestCase
         $token = $this->workerToken('retry-worker');
         $job = $this->claimJob($token)->json('data');
         $this->assertSame($retry->json('data.outputs.0.id'), $job['id']);
-        $this->assertSame($original['input_image_url'], $job['input_image_url']);
+        $this->assertSame($original['input_images']['product_image'], $job['request']['productImage']);
         $this->completeJob($token, $job['id'])->assertOk();
 
         $this->assertSame('completed', $this->latestStatus($retry)['status']);

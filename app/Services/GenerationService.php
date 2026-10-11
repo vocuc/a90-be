@@ -14,7 +14,6 @@ use App\Models\GenerationOutput;
 use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -34,7 +33,7 @@ class GenerationService
     ) {}
 
     /** Người mua (hoặc chính Creator) tạo ảnh từ Creative đang xuất bản. */
-    public function create(User $user, AiCreative $creative, UploadedFile $inputImage, int $quantity, string $aspectRatio, string $idempotencyKey): Generation
+    public function create(User $user, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey): Generation
     {
         if ($existing = $this->findExisting($user, $idempotencyKey, $creative->id)) {
             return $existing;
@@ -43,19 +42,19 @@ class GenerationService
         $this->assertListed($creative);
         $type = $user->id === $creative->creator_id ? GenerationType::Owner : GenerationType::Paid;
 
-        return $this->start($user, $creative, $type, $quantity, $aspectRatio, $idempotencyKey,
-            fn () => $this->media->storeUpload($inputImage, MediaStorage::datedDirectory('generations/inputs')));
+        return $this->start($user, $creative, $type, $quantity, $input->aspectRatio, $idempotencyKey,
+            fn () => $this->storeInput($input));
     }
 
     /** Creator tạo thử (kể cả bản nháp): không trừ Credit. */
-    public function createTest(User $creator, AiCreative $creative, UploadedFile $inputImage, int $quantity, string $aspectRatio, string $idempotencyKey): Generation
+    public function createTest(User $creator, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey): Generation
     {
         if ($existing = $this->findExisting($creator, $idempotencyKey, $creative->id)) {
             return $existing;
         }
 
-        return $this->start($creator, $creative, GenerationType::Test, $quantity, $aspectRatio, $idempotencyKey,
-            fn () => $this->media->storeUpload($inputImage, MediaStorage::datedDirectory('generations/inputs')));
+        return $this->start($creator, $creative, GenerationType::Test, $quantity, $input->aspectRatio, $idempotencyKey,
+            fn () => $this->storeInput($input));
     }
 
     /**
@@ -86,11 +85,12 @@ class GenerationService
         }
 
         return $this->start($user, $creative, $type, $outputs->count(), $original->aspect_ratio, $idempotencyKey,
-            fn () => $original->input_image_path, $original, $outputs->pluck('id')->all());
+            fn () => ['input_paths' => $original->input_paths, 'input_values' => $original->input_values],
+            $original, $outputs->pluck('id')->all());
     }
 
     /**
-     * @param  callable(): string  $resolveInputPath
+     * @param  callable(): array{input_paths: array, input_values: ?array}  $resolveInput
      * @param  int[]  $retryOfOutputIds
      */
     private function start(
@@ -100,7 +100,7 @@ class GenerationService
         int $quantity,
         string $aspectRatio,
         string $idempotencyKey,
-        callable $resolveInputPath,
+        callable $resolveInput,
         ?Generation $parent = null,
         array $retryOfOutputIds = [],
     ): Generation {
@@ -111,10 +111,10 @@ class GenerationService
             throw BusinessException::creativeTemporarilyUnavailable();
         }
 
-        $inputPath = $resolveInputPath();
+        $input = $resolveInput();
 
         try {
-            $generation = DB::transaction(function () use ($user, $creative, $type, $quantity, $aspectRatio, $idempotencyKey, $inputPath, $parent, $retryOfOutputIds) {
+            $generation = DB::transaction(function () use ($user, $creative, $type, $quantity, $aspectRatio, $idempotencyKey, $input, $parent, $retryOfOutputIds) {
                 $paid = $type === GenerationType::Paid;
                 $price = $creative->price_per_image;
                 $wallet = null;
@@ -134,11 +134,11 @@ class GenerationService
                     'model_id' => $creative->model_id,
                     'parent_generation_id' => $parent?->id,
                     'type' => $type,
-                    'input_image_path' => $inputPath,
+                    ...$input,
                     'aspect_ratio' => $aspectRatio,
                     'quantity' => $quantity,
                     'price_per_image' => $paid ? $price : 0,
-                    'prompt_snapshot' => PromptBuilder::build($config->system_prompt, $config->creative_prompt, $config->negative_prompt),
+                    'prompt_snapshot' => CreativeTemplate::render($config->prompt_template, $config->input_schema, $input['input_values'] ?? []),
                     'status' => GenerationStatus::Queued,
                     'idempotency_key' => $idempotencyKey,
                 ]);
@@ -191,6 +191,17 @@ class GenerationService
         return $generation->load('outputs');
     }
 
+    /** Lưu ảnh đầu vào lên S3 theo tên trường. */
+    private function storeInput(GenerationInput $input): array
+    {
+        $directory = MediaStorage::datedDirectory('generations/inputs');
+
+        return [
+            'input_paths' => array_map(fn ($file) => $this->media->storeUpload($file, $directory), $input->files),
+            'input_values' => $input->values,
+        ];
+    }
+
     private function findExisting(User $user, string $idempotencyKey, int $creativeId): ?Generation
     {
         $existing = Generation::query()
@@ -226,13 +237,10 @@ class GenerationService
         }
     }
 
-    /** Tỉ lệ khung hình người dùng được chọn: Creator giới hạn, nếu không thì mọi tỉ lệ model hỗ trợ. */
+    /** Tỉ lệ khung hình người dùng được chọn: mọi tỉ lệ model của Creative hỗ trợ. */
     public static function allowedAspectRatios(AiCreative $creative): array
     {
-        $supported = $creative->model->supported_aspect_ratios ?? [];
-        $allowed = $creative->config?->allowed_aspect_ratios;
-
-        return array_values($allowed ? array_intersect($supported, $allowed) : $supported);
+        return array_values($creative->model->supported_aspect_ratios ?? []);
     }
 
     private function transactionCode(): string

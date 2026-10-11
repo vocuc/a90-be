@@ -74,9 +74,13 @@ abstract class TestCase extends BaseTestCase
             'published_at' => now(),
         ]);
         $creative->config()->create(array_merge([
-            'system_prompt' => 'You are a product photographer.',
-            'creative_prompt' => [['label' => 'Bối cảnh', 'value' => 'Place the product on a marble table.']],
-            'negative_prompt' => 'text, watermark',
+            // 1 ảnh sản phẩm + tỉ lệ khung hình (bắt buộc với mọi Creative)
+            'input_schema' => [
+                ['key' => 'product_image', 'label' => 'Ảnh sản phẩm', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
+                ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'sort_order' => 2,
+                    'validation' => [], 'options' => [['value' => '1:1', 'label' => '1:1']], 'default_value' => '1:1'],
+            ],
+            'prompt_template' => 'Place the product on a marble table. Avoid text and watermark.',
             'max_outputs' => 5,
             'default_aspect_ratio' => '1:1',
         ], $config));
@@ -85,13 +89,16 @@ abstract class TestCase extends BaseTestCase
         return $creative;
     }
 
-    protected function generate(User $user, AiCreative $creative, int $quantity = 1, array $extra = [])
+    /** Tạo ảnh với Creative của publishedCreative(): $inputs ghi đè inputs[...] (ảnh sản phẩm, aspectRatio). */
+    protected function generate(User $user, AiCreative $creative, int $quantity = 1, array $extra = [], array $inputs = [])
     {
         return $this->actingAs($user)->post('/api/v1/generations', array_merge([
             'creative_id' => $creative->id,
-            'input_image' => UploadedFile::fake()->image('product.png', 64, 64),
+            'inputs' => array_merge([
+                'product_image' => UploadedFile::fake()->image('product.png', 64, 64),
+                'aspectRatio' => '1:1',
+            ], $inputs),
             'quantity' => $quantity,
-            'aspect_ratio' => '1:1',
             'idempotency_key' => (string) Str::uuid(),
         ], $extra), ['Accept' => 'application/json']);
     }

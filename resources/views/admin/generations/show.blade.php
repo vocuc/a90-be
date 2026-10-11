@@ -30,7 +30,23 @@
             </div>
             <div class="card">
                 <div class="card-header"><h3 class="card-title">Ảnh đầu vào</h3></div>
-                <div class="card-body"><img src="{{ $media->url($generation->input_image_path) }}" class="thumb-lg" alt=""></div>
+                <div class="card-body">
+                    @forelse($generation->input_paths ?? [] as $key => $path)
+                        <figure class="d-inline-block mr-2">
+                            <img src="{{ $media->url($path) }}" class="thumb-lg" alt="">
+                            <figcaption class="small text-muted"><code>{{ $key }}</code></figcaption>
+                        </figure>
+                    @empty
+                        <span class="text-muted">Không có ảnh.</span>
+                    @endforelse
+                    @if($generation->input_values)
+                        <dl class="mt-2 mb-0 small">
+                            @foreach($generation->input_values as $key => $value)
+                                <dt><code>{{ $key }}</code></dt><dd>{{ is_array($value) ? implode(', ', $value) : (is_bool($value) ? ($value ? 'Có' : 'Không') : $value) }}</dd>
+                            @endforeach
+                        </dl>
+                    @endif
+                </div>
             </div>
             <div class="card card-outline card-secondary collapsed-card">
                 <div class="card-header">
