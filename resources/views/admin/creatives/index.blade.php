@@ -29,7 +29,7 @@
                 <tbody>
                 @forelse ($creatives as $creative)
                     <tr>
-                        <td><img src="{{ $media->url($creative->images->first()?->path) }}" class="thumb" alt="" onerror="this.style.visibility='hidden'"></td>
+                        <td><img src="{{ $media->url($creative->images->first()?->thumbPathOrOriginal()) }}" class="thumb" alt="" onerror="this.style.visibility='hidden'"></td>
                         <td>
                             <a href="{{ route('admin.creatives.show', $creative) }}"><b>{{ \Illuminate\Support\Str::limit($creative->title, 40) }}</b></a>
                             <div class="text-muted small">#{{ $creative->id }} · {{ $creative->slug }}</div>

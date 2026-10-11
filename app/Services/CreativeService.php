@@ -125,7 +125,8 @@ class CreativeService
             throw BusinessException::invalidState('Chỉ xóa được bản nháp chưa tạo ảnh. Creative đang bán thì hãy tạm dừng (pause).');
         }
 
-        $paths = $creative->images()->pluck('path');
+        $paths = $creative->images()->get(['path', 'thumb_path'])
+            ->flatMap(fn ($image) => [$image->path, $image->thumb_path]);
         DB::transaction(function () use ($creative) {
             $this->audit->log('creative.delete', $creative, ['title' => $creative->title]);
             $creative->delete();

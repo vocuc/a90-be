@@ -13,6 +13,8 @@ use Illuminate\Support\Str;
  */
 class MediaStorage
 {
+    public function __construct(private ImageOptimizer $optimizer) {}
+
     public function disk(): Filesystem
     {
         return Storage::disk(config('ai90.media_disk'));
@@ -25,6 +27,27 @@ class MediaStorage
         $this->disk()->put($path, $file->getContent());
 
         return $path;
+    }
+
+    /**
+     * Lưu ảnh đã tối ưu, mỗi giới hạn cạnh dài một file (vd [1600, 600] = ảnh chính + thumbnail).
+     *
+     * @param  int[]  $maxSides
+     * @return string[] đường dẫn cùng thứ tự với $maxSides
+     */
+    public function storeOptimizedImage(UploadedFile $file, string $directory, array $maxSides): array
+    {
+        $variants = $this->optimizer->optimize($file, $maxSides);
+        $base = trim($directory, '/').'/'.Str::uuid();
+
+        $paths = [];
+        foreach ($variants as $i => $variant) {
+            $path = $base.($i === 0 ? '' : '_'.$maxSides[$i]).'.'.$variant['extension'];
+            $this->disk()->put($path, $variant['contents']);
+            $paths[] = $path;
+        }
+
+        return $paths;
     }
 
     public function put(string $path, string $contents): void

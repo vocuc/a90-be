@@ -21,7 +21,7 @@ class CreativeCardResource extends JsonResource
             'slug' => $this->slug,
             'title' => $this->title,
             'price_per_image' => $this->price_per_image,
-            'cover_url' => app(MediaStorage::class)->url($this->images->first()?->path),
+            'cover_url' => app(MediaStorage::class)->url($this->images->first()?->thumbPathOrOriginal()),
             'category' => $this->category ? new CategoryResource($this->category) : null,
             'creator' => $this->creator->creatorProfile
                 ? new CreatorSummaryResource($this->creator->creatorProfile)

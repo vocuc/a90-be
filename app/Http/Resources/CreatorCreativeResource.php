@@ -32,7 +32,7 @@ class CreatorCreativeResource extends JsonResource
             'is_hidden' => $this->hidden_at !== null,
             'usage_count' => $this->usage_count,
             'rating_avg' => (float) $this->rating_avg,
-            'cover_url' => $media->url($this->images->first()?->path),
+            'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),
             'published_at' => $this->published_at,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
@@ -41,6 +41,7 @@ class CreatorCreativeResource extends JsonResource
                 'images' => $this->images->map(fn ($image) => [
                     'id' => $image->id,
                     'url' => $media->url($image->path),
+                    'thumb_url' => $media->url($image->thumbPathOrOriginal()),
                     'sort_order' => $image->sort_order,
                 ])->values(),
                 'config' => [

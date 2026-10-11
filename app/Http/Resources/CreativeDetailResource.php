@@ -27,6 +27,7 @@ class CreativeDetailResource extends CreativeCardResource
             'images' => $this->images->map(fn ($image) => [
                 'id' => $image->id,
                 'url' => $media->url($image->path),
+                'thumb_url' => $media->url($image->thumbPathOrOriginal()),
             ])->values(),
             'options' => [
                 'max_outputs' => $this->config?->max_outputs,

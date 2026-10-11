@@ -17,6 +17,11 @@ class CreativeImageController extends Controller
 {
     private const MAX_IMAGES = 10;
 
+    /** Cạnh dài tối đa (px) của ảnh chính và thumbnail cho thẻ Marketplace. */
+    private const MAX_SIDE = 1600;
+
+    private const THUMB_MAX_SIDE = 600;
+
     public function __construct(private MediaStorage $media) {}
 
     public function store(Request $request, AiCreative $creative): JsonResponse
@@ -28,8 +33,15 @@ class CreativeImageController extends Controller
             throw new BusinessException('TOO_MANY_IMAGES', 'Tối đa '.self::MAX_IMAGES.' ảnh mẫu.', 422);
         }
 
+        [$path, $thumbPath] = $this->media->storeOptimizedImage(
+            $request->file('image'),
+            "creatives/{$creative->id}",
+            [self::MAX_SIDE, self::THUMB_MAX_SIDE],
+        );
+
         $image = $creative->images()->create([
-            'path' => $this->media->storeUpload($request->file('image'), "creatives/{$creative->id}"),
+            'path' => $path,
+            'thumb_path' => $thumbPath,
             'sort_order' => (int) $creative->images()->max('sort_order') + 1,
         ]);
 
@@ -47,6 +59,7 @@ class CreativeImageController extends Controller
 
         $image->delete();
         $this->media->delete($image->path);
+        $this->media->delete($image->thumb_path);
 
         return response()->json(['message' => 'Đã xóa ảnh mẫu.']);
     }
@@ -78,6 +91,7 @@ class CreativeImageController extends Controller
         return [
             'id' => $image->id,
             'url' => $this->media->url($image->path),
+            'thumb_url' => $this->media->url($image->thumbPathOrOriginal()),
             'sort_order' => $image->sort_order,
         ];
     }

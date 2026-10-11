@@ -2,18 +2,23 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Models\Banner;
 use App\Services\AuditLogger;
 use App\Services\MediaStorage;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class BannerController extends Controller
 {
     /** Các trường ghi vào nhật ký khi thay đổi. */
     private const FIELDS = ['title', 'image_path', 'link_url', 'sort_order', 'is_active'];
+
+    /** Cạnh dài tối đa (px) khi lưu ảnh banner. */
+    private const IMAGE_MAX_SIDE = 1920;
 
     public function __construct(private AuditLogger $audit, private MediaStorage $media) {}
 
@@ -37,7 +42,7 @@ class BannerController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $data = $this->validated($request, required: true);
-        $data['image_path'] = $this->media->storeUpload($request->file('image'), 'banners');
+        $data['image_path'] = $this->storeImage($request);
         unset($data['image']);
 
         $banner = Banner::query()->create($data);
@@ -61,7 +66,7 @@ class BannerController extends Controller
         $oldImage = null;
         if ($request->hasFile('image')) {
             $oldImage = $banner->image_path;
-            $data['image_path'] = $this->media->storeUpload($request->file('image'), 'banners');
+            $data['image_path'] = $this->storeImage($request);
         }
 
         $banner->update($data);
@@ -87,6 +92,16 @@ class BannerController extends Controller
         $this->media->delete($banner->image_path);
 
         return redirect()->route('admin.banners.index')->with('success', 'Đã xóa banner.');
+    }
+
+    /** Lưu ảnh đã tối ưu; ảnh hỏng/quá lớn hiện thành lỗi của trường ảnh trên form. */
+    private function storeImage(Request $request): string
+    {
+        try {
+            return $this->media->storeOptimizedImage($request->file('image'), 'banners', [self::IMAGE_MAX_SIDE])[0];
+        } catch (BusinessException $e) {
+            throw ValidationException::withMessages(['image' => $e->getMessage()]);
+        }
     }
 
     private function validated(Request $request, bool $required): array

@@ -15,6 +15,11 @@ use Illuminate\Validation\Rule;
 
 class ProfileController extends Controller
 {
+    /** Cạnh dài tối đa (px) khi lưu ảnh đại diện và ảnh bìa. */
+    private const AVATAR_MAX_SIDE = 512;
+
+    private const COVER_MAX_SIDE = 1920;
+
     public function __construct(private MediaStorage $media) {}
 
     public function store(Request $request): JsonResponse
@@ -51,21 +56,22 @@ class ProfileController extends Controller
 
     public function uploadAvatar(Request $request): CreatorProfileResource
     {
-        return $this->uploadImage($request, 'avatar_path');
+        return $this->uploadImage($request, 'avatar_path', self::AVATAR_MAX_SIDE);
     }
 
     public function uploadCover(Request $request): CreatorProfileResource
     {
-        return $this->uploadImage($request, 'cover_path');
+        return $this->uploadImage($request, 'cover_path', self::COVER_MAX_SIDE);
     }
 
-    private function uploadImage(Request $request, string $column): CreatorProfileResource
+    private function uploadImage(Request $request, string $column, int $maxSide): CreatorProfileResource
     {
         $request->validate(['image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120']]);
 
         $profile = $this->profile($request);
         $old = $profile->{$column};
-        $profile->update([$column => $this->media->storeUpload($request->file('image'), 'creators/'.$profile->user_id)]);
+        [$path] = $this->media->storeOptimizedImage($request->file('image'), 'creators/'.$profile->user_id, [$maxSide]);
+        $profile->update([$column => $path]);
         $this->media->delete($old);
 
         return new CreatorProfileResource($profile);

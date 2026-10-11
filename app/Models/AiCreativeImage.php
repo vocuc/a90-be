@@ -13,4 +13,10 @@ class AiCreativeImage extends Model
     {
         return $this->belongsTo(AiCreative::class, 'creative_id');
     }
+
+    /** Ảnh upload trước khi có thumbnail thì dùng lại ảnh chính. */
+    public function thumbPathOrOriginal(): string
+    {
+        return $this->thumb_path ?? $this->path;
+    }
 }
