@@ -9,6 +9,7 @@ use App\Models\CreatorRevenue;
 use App\Models\CreatorWallet;
 use App\Models\GenerationOutput;
 use App\Models\Transaction;
+use App\Services\SettingService;
 use Tests\TestCase;
 
 class RevenueAndSweepTest extends TestCase
@@ -33,6 +34,25 @@ class RevenueAndSweepTest extends TestCase
         $this->assertSame(0, $wallet->pending_balance);
         $this->assertSame(100, $wallet->available_balance);
         $this->assertSame(100, $wallet->total_earned);
+    }
+
+    public function test_revenue_is_available_immediately_when_hold_days_is_zero(): void
+    {
+        app(SettingService::class)->set('revenue_hold_days', 0);
+        $creator = $this->creator();
+        $creative = $this->publishedCreative($creator, price: 2000);
+        $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
+        $this->runWorker([null]);
+
+        $revenue = CreatorRevenue::query()->firstOrFail();
+        $this->assertSame(RevenueStatus::Available, $revenue->status);
+        $this->assertNotNull($revenue->released_at);
+        $wallet = CreatorWallet::query()->where('user_id', $creator->id)->firstOrFail();
+        $this->assertSame(0, $wallet->pending_balance);
+        $this->assertSame(200, $wallet->available_balance);
+
+        $this->artisan('revenue:release')->assertSuccessful(); // không cộng thêm lần nữa
+        $this->assertSame(200, $wallet->fresh()->available_balance);
     }
 
     public function test_images_no_worker_claims_are_failed_and_refunded(): void

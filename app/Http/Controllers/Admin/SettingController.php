@@ -14,7 +14,7 @@ class SettingController extends Controller
     /** Các cấu hình admin được sửa: key trong bảng settings => [tên trường form, nhãn, gợi ý, rule]. */
     private const FIELDS = [
         'creator_share_percent' => ['creator_share_percent', 'Creator nhận mặc định (% giá mỗi ảnh)', 'Áp dụng cho Creator chưa có mức riêng. Phần còn lại là phí nền tảng.', ['required', 'numeric', 'min:0', 'max:100']],
-        'revenue_hold_days' => ['revenue_hold_days', 'Số ngày giữ doanh thu', 'Doanh thu chuyển từ pending sang available sau số ngày này.', ['required', 'integer', 'min:0', 'max:90']],
+        'revenue_hold_days' => ['revenue_hold_days', 'Số ngày giữ doanh thu', 'Doanh thu chuyển từ pending sang available sau số ngày này. Đặt 0 để Creator nhận ngay khi ảnh hoàn thành.', ['required', 'integer', 'min:0', 'max:90']],
         'generation.default_max_outputs' => ['default_max_outputs', 'Số ảnh tối đa mặc định / lần tạo', 'Giá trị mặc định khi Creator tạo Creative mới.', ['required', 'integer', 'min:1', 'max:10']],
         'generation.max_outputs_limit' => ['max_outputs_limit', 'Giới hạn số ảnh / lần tạo', 'Creator không được cấu hình vượt quá số này (tối đa 10).', ['required', 'integer', 'min:1', 'max:10']],
         'generation.input_max_size_kb' => ['input_max_size_kb', 'Dung lượng ảnh đầu vào tối đa (KB)', '10240 KB = 10 MB.', ['required', 'integer', 'min:512', 'max:20480']],

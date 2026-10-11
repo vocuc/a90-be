@@ -15,26 +15,33 @@ class RevenueService
         private AuditLogger $audit,
     ) {}
 
-    /** Ghi doanh thu pending cho Transaction vừa hoàn tất. Gọi trong DB transaction. */
+    /**
+     * Ghi doanh thu cho Transaction vừa hoàn tất. Gọi trong DB transaction.
+     * Số ngày giữ = 0 thì cộng thẳng vào available, không qua pending.
+     */
     public function record(Transaction $transaction): ?CreatorRevenue
     {
         if ($transaction->creator_amount <= 0) {
             return null;
         }
 
+        $holdDays = $this->settings->int('revenue_hold_days');
+        $immediate = $holdDays <= 0;
+
         $revenue = CreatorRevenue::query()->firstOrCreate(
             ['transaction_id' => $transaction->id],
             [
                 'creator_id' => $transaction->creator_id,
                 'amount' => $transaction->creator_amount,
-                'status' => RevenueStatus::Pending,
-                'available_at' => now()->addDays($this->settings->int('revenue_hold_days')),
+                'status' => $immediate ? RevenueStatus::Available : RevenueStatus::Pending,
+                'available_at' => now()->addDays(max($holdDays, 0)),
+                'released_at' => $immediate ? now() : null,
             ],
         );
 
         if ($revenue->wasRecentlyCreated) {
             $wallet = $this->lockWallet($transaction->creator_id);
-            $wallet->increment('pending_balance', $revenue->amount);
+            $wallet->increment($immediate ? 'available_balance' : 'pending_balance', $revenue->amount);
             $wallet->increment('total_earned', $revenue->amount);
         }
 
