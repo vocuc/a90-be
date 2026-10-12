@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
@@ -94,5 +95,26 @@ class UserController extends Controller
         $this->audit->log($banned ? 'admin.user.ban' : 'admin.user.unban', $user);
 
         return back()->with('success', $banned ? 'Đã khóa tài khoản.' : 'Đã mở khóa tài khoản.');
+    }
+
+    /** Cấp hoặc thu hồi quyền admin. */
+    public function toggleAdmin(Request $request, User $user): RedirectResponse
+    {
+        if ($user->id === $request->user()->id) {
+            return back()->withErrors(['role' => 'Không thể tự thay đổi quyền của chính mình.']);
+        }
+
+        $granting = ! $user->isAdmin();
+
+        if ($granting && ! $user->isActive()) {
+            return back()->withErrors(['role' => 'Không thể cấp quyền admin cho tài khoản đang bị khóa.']);
+        }
+
+        // Admin bị thu hồi sẽ bị đăng xuất khỏi trang quản trị ở request kế tiếp (EnsureAdminSession).
+        $user->forceFill(['role' => $granting ? UserRole::Admin : UserRole::User])->save();
+
+        $this->audit->log($granting ? 'admin.user.grant_admin' : 'admin.user.revoke_admin', $user);
+
+        return back()->with('success', $granting ? 'Đã cấp quyền admin.' : 'Đã thu hồi quyền admin.');
     }
 }

@@ -35,6 +35,16 @@
                             </button>
                         </form>
                     @endunless
+                    @if ($user->id !== auth()->id() && ($user->isAdmin() || $user->isActive()))
+                        <form method="POST" action="{{ route('admin.users.toggle-admin', $user) }}" class="mt-2"
+                              data-confirm="{{ $user->isAdmin() ? 'Thu hồi quyền admin của '.$user->email.'?' : 'Cấp quyền admin cho '.$user->email.'? Tài khoản này sẽ có toàn quyền quản trị.' }}">
+                            @csrf
+                            <button class="btn btn-block {{ $user->isAdmin() ? 'btn-outline-secondary' : 'btn-outline-warning' }}">
+                                <i class="fas {{ $user->isAdmin() ? 'fa-user-minus' : 'fa-user-shield' }}"></i>
+                                {{ $user->isAdmin() ? 'Thu hồi quyền admin' : 'Cấp quyền admin' }}
+                            </button>
+                        </form>
+                    @endif
                 </div>
             </div>
 

@@ -28,6 +28,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
         Route::post('users/{user}/credits', [UserController::class, 'adjustCredit'])->name('users.credits');
         Route::post('users/{user}/toggle-ban', [UserController::class, 'toggleBan'])->name('users.toggle-ban');
+        Route::post('users/{user}/toggle-admin', [UserController::class, 'toggleAdmin'])->name('users.toggle-admin');
 
         Route::get('creators', [CreatorController::class, 'index'])->name('creators.index');
         Route::put('creators/{creator}', [CreatorController::class, 'update'])->name('creators.update');

@@ -172,4 +172,28 @@ class AdminPanelTest extends TestCase
         // Không khóa được admin.
         $this->actingAs($admin)->post("/admin/users/{$admin->id}/toggle-ban")->assertSessionHasErrors('status');
     }
+
+    public function test_admin_grants_and_revokes_admin_role(): void
+    {
+        $user = $this->buyer();
+        $admin = $this->admin();
+
+        $this->actingAs($admin)->post("/admin/users/{$user->id}/toggle-admin")->assertSessionHas('success');
+        $this->assertTrue($user->fresh()->isAdmin());
+        $this->assertDatabaseHas('audit_logs', ['action' => 'admin.user.grant_admin', 'resource_id' => $user->id]);
+        $this->actingAs($user->fresh())->get('/admin')->assertOk();
+
+        $this->actingAs($admin)->post("/admin/users/{$user->id}/toggle-admin")->assertSessionHas('success');
+        $this->assertFalse($user->fresh()->isAdmin());
+        $this->actingAs($user->fresh())->get('/admin')->assertRedirect('/admin/login');
+
+        // Không tự đổi quyền của mình.
+        $this->actingAs($admin)->post("/admin/users/{$admin->id}/toggle-admin")->assertSessionHasErrors('role');
+        $this->assertTrue($admin->fresh()->isAdmin());
+
+        // Không cấp admin cho tài khoản bị khóa.
+        $user->forceFill(['status' => 'banned'])->save();
+        $this->actingAs($admin)->post("/admin/users/{$user->id}/toggle-admin")->assertSessionHasErrors('role');
+        $this->assertFalse($user->fresh()->isAdmin());
+    }
 }
