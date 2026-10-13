@@ -40,6 +40,8 @@ class MarketplaceController extends Controller
     {
         $filters = $request->validate([
             'category' => ['nullable', 'string'],
+            // username của Creator: danh sách trên trang /creators/{username}
+            'creator' => ['nullable', 'string', 'max:50'],
             'q' => ['nullable', 'string', 'max:100'],
             'sort' => ['nullable', 'in:newest,popular,price_asc,price_desc'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
@@ -47,6 +49,7 @@ class MarketplaceController extends Controller
 
         $query = AiCreative::query()->listed()->with(self::CARD_RELATIONS)
             ->when($filters['category'] ?? null, fn (Builder $q, $slug) => $q->whereHas('category', fn ($c) => $c->where('slug', $slug)))
+            ->when($filters['creator'] ?? null, fn (Builder $q, $username) => $q->whereHas('creator.creatorProfile', fn ($p) => $p->where('username', $username)))
             ->when($filters['q'] ?? null, fn (Builder $q, $term) => $q->where('title', 'like', '%'.addcslashes($term, '%_\\').'%'));
 
         match ($filters['sort'] ?? 'newest') {

@@ -62,7 +62,17 @@ class CreatorStudioTest extends TestCase
         $this->assertStringNotContainsString('Luxury cosmetic shot', $detail->getContent());
 
         $this->getJson('/api/v1/creatives')->assertOk()->assertJsonCount(1, 'data');
-        $this->getJson('/api/v1/creators/shop-a')->assertOk()->assertJsonPath('data.profile.creative_count', 1);
+        $this->getJson('/api/v1/creators/shop-a')->assertOk()
+            ->assertJsonPath('data.profile.creative_count', 1)
+            ->assertJsonPath('data.profile.shop_name', 'Shop A');
+        $this->assertNotNull($this->getJson('/api/v1/creators/shop-a')->json('data.profile.created_at'));
+        $this->getJson('/api/v1/creators/khong-co')->assertNotFound();
+
+        // Lọc Creative theo username của Creator
+        $this->getJson('/api/v1/creatives?creator=shop-a&sort=popular')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.slug', $slug);
+        $this->getJson('/api/v1/creatives?creator=khong-co')->assertOk()->assertJsonCount(0, 'data');
     }
 
     public function test_api_key_endpoints_no_longer_exist(): void
