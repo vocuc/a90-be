@@ -21,6 +21,14 @@
                         <dd><a href="{{ route('admin.users.show', $creative->creator_id) }}">{{ '@'.($creative->creator->creatorProfile?->username ?? '—') }}</a> · {{ $creative->creator->email }}</dd>
                         <dt>Danh mục / Model</dt>
                         <dd>{{ $creative->category?->name ?? '—' }} · {{ $creative->model->name }} <span class="text-muted">({{ $creative->model->provider->name }})</span></dd>
+                        <dt>Hashtag</dt>
+                        <dd>
+                            @forelse ($creative->hashtags as $hashtag)
+                                <span class="badge badge-light">#{{ $hashtag->name }}</span>
+                            @empty
+                                —
+                            @endforelse
+                        </dd>
                         <dt>Giá</dt>
                         <dd>@credit($creative->price_per_image) Credit / ảnh</dd>
                         <dt>Ngày đăng</dt>

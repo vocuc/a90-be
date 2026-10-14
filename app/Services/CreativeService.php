@@ -6,6 +6,7 @@ use App\Enums\CreativeStatus;
 use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
 use App\Models\CreatorProfile;
+use App\Models\Hashtag;
 use App\Models\User;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -27,7 +28,7 @@ class CreativeService
 
         return DB::transaction(function () use ($creator, $data) {
             $creative = AiCreative::query()->create([
-                ...Arr::except($data, self::CONFIG_FIELDS),
+                ...Arr::except($data, [...self::CONFIG_FIELDS, 'hashtags']),
                 'creator_id' => $creator->id,
                 'slug' => $this->makeSlug($data['title']),
                 'status' => CreativeStatus::Draft,
@@ -39,6 +40,7 @@ class CreativeService
                 ...Arr::only($data, self::CONFIG_FIELDS),
             ]);
 
+            $this->syncHashtags($creative, $data['hashtags'] ?? []);
             $this->audit->log('creative.create', $creative);
 
             return $creative;
@@ -50,11 +52,14 @@ class CreativeService
         $data = $this->prepareTemplate($data);
 
         DB::transaction(function () use ($creative, $data) {
-            $creative->update(Arr::except($data, self::CONFIG_FIELDS));
+            $creative->update(Arr::except($data, [...self::CONFIG_FIELDS, 'hashtags']));
 
             $config = Arr::only($data, self::CONFIG_FIELDS);
             if ($config) {
                 $creative->config()->updateOrCreate([], $config);
+            }
+            if (array_key_exists('hashtags', $data)) {
+                $this->syncHashtags($creative, $data['hashtags']);
             }
 
             $this->audit->log('creative.update', $creative, ['fields' => array_keys($data)]);
@@ -153,6 +158,35 @@ class CreativeService
         }
 
         return $creative;
+    }
+
+    /**
+     * Thay toàn bộ hashtag của Creative, giữ thứ tự nhập. Trùng nhau (khác hoa/thường, dấu) chỉ lấy lần đầu.
+     * Hashtag mới được tạo với tên hiển thị như Creator nhập; hashtag đã có giữ tên cũ.
+     *
+     * @param  string[]  $names
+     */
+    private function syncHashtags(AiCreative $creative, array $names): void
+    {
+        // [slug => tên hiển thị]
+        $names = collect($names)
+            ->map(fn (string $name) => Hashtag::cleanName($name))
+            ->unique(fn (string $name) => Hashtag::slugFor($name))
+            ->mapWithKeys(fn (string $name) => [Hashtag::slugFor($name) => $name]);
+
+        if ($names->isNotEmpty()) {
+            $now = now();
+            // insertOrIgnore: an toàn khi 2 Creator cùng tạo một hashtag mới
+            Hashtag::query()->insertOrIgnore($names->map(fn ($name, $slug) => [
+                'name' => $name, 'slug' => $slug, 'created_at' => $now, 'updated_at' => $now,
+            ])->values()->all());
+        }
+
+        $ids = Hashtag::query()->whereIn('slug', $names->keys())->pluck('id', 'slug');
+        $creative->hashtags()->sync(
+            $names->keys()->values()->mapWithKeys(fn ($slug, $i) => [$ids[$slug] => ['sort_order' => $i]])->all()
+        );
+        $creative->unsetRelation('hashtags');
     }
 
     /** Chuẩn hóa input_schema; tỉ lệ mặc định lấy từ trường tỉ lệ khung hình. */

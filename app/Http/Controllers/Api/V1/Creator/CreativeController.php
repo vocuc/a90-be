@@ -18,7 +18,7 @@ use Illuminate\Validation\Rule;
 
 class CreativeController extends Controller
 {
-    private const DETAIL_RELATIONS = ['images', 'config', 'model'];
+    private const DETAIL_RELATIONS = ['images', 'config', 'model', 'hashtags'];
 
     public function __construct(private CreativeService $creatives) {}
 
@@ -32,7 +32,7 @@ class CreativeController extends Controller
         $creatives = AiCreative::query()
             ->where('creator_id', $request->user()->id)
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
-            ->with('images')
+            ->with(['images', 'hashtags'])
             ->latest('updated_at')
             ->paginate($filters['per_page'] ?? 20);
 

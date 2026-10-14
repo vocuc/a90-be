@@ -29,6 +29,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     // Marketplace (công khai)
     Route::get('banners', [MarketplaceController::class, 'banners']);
     Route::get('categories', [MarketplaceController::class, 'categories']);
+    Route::get('hashtags', [MarketplaceController::class, 'hashtags']);
     Route::get('creatives', [MarketplaceController::class, 'creatives']);
     Route::get('creatives/{slug}', [MarketplaceController::class, 'creative']);
     Route::get('creators/{username}', [MarketplaceController::class, 'creator']);

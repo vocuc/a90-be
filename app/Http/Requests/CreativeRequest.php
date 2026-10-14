@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\AiModel;
+use App\Models\Hashtag;
 use App\Services\CreativeTemplate;
 use App\Services\SettingService;
 use Closure;
@@ -15,6 +16,8 @@ use Illuminate\Validation\Validator;
  */
 class CreativeRequest extends FormRequest
 {
+    public const MAX_HASHTAGS = 10;
+
     public function rules(): array
     {
         $required = $this->isMethod('POST') ? 'required' : 'sometimes';
@@ -34,6 +37,9 @@ class CreativeRequest extends FormRequest
             'model_id' => [$required, 'integer', Rule::exists('ai_models', 'id')->where('is_active', true)],
             'price_per_image' => [$required, 'integer', 'min:0', 'max:100000000'],
             'max_outputs' => ['sometimes', 'integer', 'min:1', "max:{$limit}"],
+            // Gửi cả danh sách để thay thế; [] để xóa hết. Có hoặc không có # đều được.
+            'hashtags' => ['sometimes', 'array', 'max:'.self::MAX_HASHTAGS],
+            'hashtags.*' => ['required', 'string', 'max:50', 'regex:'.Hashtag::PATTERN, $this->hashtag(...)],
         ];
     }
 
@@ -56,6 +62,14 @@ class CreativeRequest extends FormRequest
                 }
             },
         ];
+    }
+
+    /** Hashtag phải còn ký tự Latin/số sau khi bỏ dấu (dùng làm khóa so trùng). */
+    private function hashtag(string $attribute, mixed $value, Closure $fail): void
+    {
+        if (is_string($value) && Hashtag::slugFor($value) === '') {
+            $fail('Hashtag phải chứa chữ cái hoặc chữ số.');
+        }
     }
 
     /** Link video hướng dẫn chỉ nhận TikTok (tiktok.com và tên miền con: www., m., vt., vm.). */

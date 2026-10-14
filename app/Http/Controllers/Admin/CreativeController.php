@@ -41,7 +41,7 @@ class CreativeController extends Controller
 
     public function show(AiCreative $creative): View
     {
-        $creative->load(['creator.creatorProfile', 'category', 'model.provider', 'images', 'config']);
+        $creative->load(['creator.creatorProfile', 'category', 'model.provider', 'images', 'config', 'hashtags']);
 
         $stats = Transaction::query()
             ->where('creative_id', $creative->id)

@@ -6,6 +6,7 @@ use App\Enums\CreativeStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
@@ -57,6 +58,14 @@ class AiCreative extends Model
     public function images(): HasMany
     {
         return $this->hasMany(AiCreativeImage::class, 'creative_id')->orderBy('sort_order')->orderBy('id');
+    }
+
+    /** Hashtag theo thứ tự Creator nhập. */
+    public function hashtags(): BelongsToMany
+    {
+        return $this->belongsToMany(Hashtag::class, 'ai_creative_hashtag', 'creative_id', 'hashtag_id')
+            ->withPivot('sort_order')
+            ->orderByPivot('sort_order');
     }
 
     public function generations(): HasMany
