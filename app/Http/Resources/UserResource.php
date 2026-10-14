@@ -20,6 +20,11 @@ class UserResource extends JsonResource
             'creator_profile' => $this->creatorProfile
                 ? new CreatorProfileResource($this->creatorProfile)
                 : null,
+            // Chỉ có ở GET /auth/me: trạng thái ủy quyền TikTok, không gọi TikTok
+            'tiktok' => $this->whenLoaded('tiktokAccount', fn () => [
+                'connected' => (bool) $this->tiktokAccount?->isUsable(),
+                'username' => $this->tiktokAccount?->username,
+            ]),
             'created_at' => $this->created_at,
         ];
     }

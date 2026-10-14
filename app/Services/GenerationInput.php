@@ -23,11 +23,37 @@ final class GenerationInput
 
     public static function fromRequest(Request $request, AiCreative $creative, int $maxImageKb): self
     {
+        $data = $request->validate(self::rules($creative, $maxImageKb));
+
+        return self::fromValidated($data['inputs'], $creative);
+    }
+
+    /**
+     * Rule cho inputs[key] của một Creative, đặt dưới $prefix (vd "items.0.") khi một request chứa nhiều mẫu.
+     *
+     * @param  string[]  $keptImageKeys  trường ảnh giữ file cũ (không bắt buộc tải lại)
+     */
+    public static function rules(AiCreative $creative, int $maxImageKb, string $prefix = '', array $keptImageKeys = []): array
+    {
+        $creative->loadMissing(['config', 'model']);
+        $fields = array_map(fn (array $field) => $field['type'] === 'image' && in_array($field['key'], $keptImageKeys, true)
+            ? [...$field, 'required' => false]
+            : $field, $creative->config->input_schema);
+
+        $rules = [];
+        foreach (CreativeTemplate::inputRules($fields, $maxImageKb, GenerationService::allowedAspectRatios($creative)) as $key => $rule) {
+            $rules[$prefix.$key] = $rule;
+        }
+
+        return $rules;
+    }
+
+    /** @param  array<string, mixed>  $inputs  inputs đã qua rules() */
+    public static function fromValidated(array $inputs, AiCreative $creative): self
+    {
         $creative->loadMissing(['config', 'model']);
         $config = $creative->config;
         $fields = $config->input_schema;
-        $data = $request->validate(CreativeTemplate::inputRules($fields, $maxImageKb, GenerationService::allowedAspectRatios($creative)));
-        $inputs = $data['inputs'];
 
         $files = [];
         $values = [];

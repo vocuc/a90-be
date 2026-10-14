@@ -7,6 +7,7 @@ use App\Enums\GenerationType;
 use App\Enums\LedgerType;
 use App\Enums\OutputStatus;
 use App\Enums\TransactionStatus;
+use App\Events\GenerationOutputFinished;
 use App\Models\AiCreative;
 use App\Models\CreatorProfile;
 use App\Models\Generation;
@@ -66,6 +67,8 @@ class GenerationFinalizer
 
             $generation->success_count++;
             $this->settle($generation);
+
+            GenerationOutputFinished::dispatch($output->id);
         });
     }
 
@@ -94,6 +97,8 @@ class GenerationFinalizer
 
             $generation->failed_count++;
             $this->settle($generation);
+
+            GenerationOutputFinished::dispatch($output->id);
         });
     }
 

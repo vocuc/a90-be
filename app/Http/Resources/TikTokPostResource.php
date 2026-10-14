@@ -1,0 +1,65 @@
+<?php
+
+namespace App\Http\Resources;
+
+use App\Enums\OutputStatus;
+use App\Models\TikTokPost;
+use App\Models\TikTokPostImage;
+use App\Services\MediaStorage;
+use App\Services\TikTok\TikTokPostService;
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+
+/**
+ * Cần load: images.output, images.generation.creative (TikTokPostResource::RELATIONS).
+ *
+ * @mixin TikTokPost
+ */
+class TikTokPostResource extends JsonResource
+{
+    public const RELATIONS = ['images.output', 'images.generation.creative'];
+
+    public function toArray(Request $request): array
+    {
+        $images = $this->images->map(fn (TikTokPostImage $image) => self::image($image))->values();
+
+        return [
+            'id' => $this->id,
+            'status' => $this->status,
+            'source' => $this->source,
+            'title' => $this->title,
+            'content' => $this->content ?? '',
+            'hashtags' => $this->hashtags ?? [],
+            'privacy_level' => $this->privacy_level,
+            'allow_comment' => $this->allow_comment,
+            'auto_add_music' => $this->auto_add_music,
+            'image_count' => $images->count(),
+            'cover_url' => $images->firstWhere('image_url', '!==', null)['image_url'] ?? null,
+            'images' => $images,
+            'last_error' => $this->last_error,
+            'tiktok_publish_id' => $this->tiktok_publish_id,
+            'tiktok_username' => $this->tiktok_username,
+            'tiktok_post_url' => $this->tiktok_post_url,
+            'created_at' => $this->created_at,
+            'published_at' => $this->published_at,
+        ];
+    }
+
+    /** Một ảnh của bài: liên kết + dữ liệu lấy từ output và generation.creative. */
+    public static function image(TikTokPostImage $image): array
+    {
+        $output = $image->output;
+        $creative = $image->generation?->creative;
+
+        return [
+            'id' => $image->id,
+            'position' => $image->position,
+            'generation_id' => $image->generation_id,
+            'output_id' => $image->output_id,
+            'status' => $output?->status,
+            'image_url' => $output?->status === OutputStatus::Completed ? app(MediaStorage::class)->url($output->image_path) : null,
+            'error_message' => $output?->status === OutputStatus::Failed ? GenerationResource::errorMessage($output->error_code) : null,
+            'creative' => $creative ? TikTokPostService::creativeSummary($creative) : null,
+        ];
+    }
+}

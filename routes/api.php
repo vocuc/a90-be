@@ -10,6 +10,10 @@ use App\Http\Controllers\Api\V1\Creator\ProfileController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\MarketplaceController;
+use App\Http\Controllers\Api\V1\TikTok\AccountController as TikTokAccountController;
+use App\Http\Controllers\Api\V1\TikTok\PostController as TikTokPostController;
+use App\Http\Controllers\Api\V1\TikTok\WebhookController as TikTokWebhookController;
+use App\Http\Controllers\Api\V1\WorkerContentJobController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
 use Illuminate\Support\Facades\Route;
 
@@ -33,6 +37,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     Route::get('creatives', [MarketplaceController::class, 'creatives']);
     Route::get('creatives/{slug}', [MarketplaceController::class, 'creative']);
     Route::get('creators/{username}', [MarketplaceController::class, 'creator']);
+
+    // TikTok gọi về sau khi người dùng ủy quyền (không có Bearer, xác định người dùng qua state)
+    Route::get('tiktok/oauth/callback', [TikTokAccountController::class, 'callback']);
 
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
 
@@ -76,6 +83,23 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('wallet/transactions', [DashboardController::class, 'walletTransactions']);
         });
 
+        // Đăng bài TikTok
+        Route::prefix('tiktok')->group(function () {
+            Route::get('account', [TikTokAccountController::class, 'show']);
+            Route::delete('account', [TikTokAccountController::class, 'destroy']);
+            Route::post('oauth/authorize', [TikTokAccountController::class, 'authorizeUrl']);
+
+            Route::get('posts', [TikTokPostController::class, 'index']);
+            Route::post('posts/from-images', [TikTokPostController::class, 'storeFromImages']);
+            Route::post('posts/from-creatives', [TikTokPostController::class, 'storeFromCreatives'])->middleware('throttle:generations');
+            Route::get('posts/{post}', [TikTokPostController::class, 'show'])->whereNumber('post');
+            Route::delete('posts/{post}', [TikTokPostController::class, 'destroy'])->whereNumber('post');
+            Route::post('posts/{post}/publish', [TikTokPostController::class, 'publish'])->whereNumber('post');
+            Route::get('posts/{post}/images/{image}/inputs', [TikTokPostController::class, 'imageInputs'])->whereNumber(['post', 'image']);
+            Route::post('posts/{post}/images/{image}/regenerate', [TikTokPostController::class, 'regenerate'])
+                ->whereNumber(['post', 'image'])->middleware('throttle:generations');
+        });
+
         // Admin
         Route::prefix('admin')->middleware('admin')->group(function () {
             Route::post('users/{user}/credits', [AdminCreditController::class, 'topup']);
@@ -88,3 +112,12 @@ Route::prefix('v1/jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerJobController::class, 'next']);
     Route::post('{id}', [WorkerJobController::class, 'submit'])->whereNumber('id');
 });
+
+// Worker viết nội dung bài TikTok (cùng token worker, tách khỏi job ảnh).
+Route::prefix('v1/content-jobs')->middleware('worker')->group(function () {
+    Route::get('/', [WorkerContentJobController::class, 'next']);
+    Route::post('{id}', [WorkerContentJobController::class, 'submit'])->whereNumber('id');
+});
+
+// Webhook TikTok: xác thực bằng chữ ký TikTok-Signature.
+Route::post('v1/tiktok/webhook', TikTokWebhookController::class);

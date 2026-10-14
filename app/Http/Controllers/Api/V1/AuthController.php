@@ -134,7 +134,7 @@ class AuthController extends Controller
 
     public function me(Request $request): UserResource
     {
-        return new UserResource($request->user()->load(['creditWallet', 'creatorProfile']));
+        return new UserResource($request->user()->load(['creditWallet', 'creatorProfile', 'tiktokAccount']));
     }
 
     private function tokenResponse(User $user, int $status = 200): JsonResponse

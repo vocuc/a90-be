@@ -18,6 +18,13 @@ class GenerationResource extends JsonResource
         'TIMEOUT' => 'Quá thời gian xử lý. Credit đã được hoàn lại.',
     ];
 
+    public static function errorMessage(?string $errorCode): ?string
+    {
+        return $errorCode
+            ? (self::ERROR_MESSAGES[$errorCode] ?? 'Tạo ảnh thất bại. Credit đã được hoàn lại.')
+            : null;
+    }
+
     public function toArray(Request $request): array
     {
         $media = app(MediaStorage::class);
@@ -46,9 +53,7 @@ class GenerationResource extends JsonResource
                 'status' => $output->status,
                 'image_url' => $output->status === OutputStatus::Completed ? $media->url($output->image_path) : null,
                 'error_code' => $output->error_code,
-                'error_message' => $output->error_code
-                    ? (self::ERROR_MESSAGES[$output->error_code] ?? 'Tạo ảnh thất bại. Credit đã được hoàn lại.')
-                    : null,
+                'error_message' => self::errorMessage($output->error_code),
                 'retry_of_output_id' => $output->retry_of_output_id,
             ])->values()),
             'created_at' => $this->created_at,

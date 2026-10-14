@@ -32,8 +32,12 @@ class GenerationService
         private AuditLogger $audit,
     ) {}
 
-    /** Người mua (kể cả chính Creator) tạo ảnh từ Creative đang xuất bản: luôn trừ Credit. */
-    public function create(User $user, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey): Generation
+    /**
+     * Người mua (kể cả chính Creator) tạo ảnh từ Creative đang xuất bản: luôn trừ Credit.
+     *
+     * @param  array<string, string>  $keptPaths  ảnh đầu vào dùng lại từ lần tạo trước theo tên trường (khi không tải ảnh mới)
+     */
+    public function create(User $user, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey, array $keptPaths = [], ?Generation $parent = null): Generation
     {
         if ($existing = $this->findExisting($user, $idempotencyKey, $creative->id)) {
             return $existing;
@@ -43,7 +47,7 @@ class GenerationService
 
         // Creator tự dùng mẫu của mình cũng bị trừ Credit như người mua (tạo thử miễn phí dùng createTest)
         return $this->start($user, $creative, GenerationType::Paid, $quantity, $input->aspectRatio, $idempotencyKey,
-            fn () => $this->storeInput($input));
+            fn () => $this->storeInput($input, $keptPaths), $parent);
     }
 
     /** Creator tạo thử (kể cả bản nháp): không trừ Credit. */
@@ -191,13 +195,20 @@ class GenerationService
         return $generation->load('outputs');
     }
 
-    /** Lưu ảnh đầu vào lên S3 theo tên trường. */
-    private function storeInput(GenerationInput $input): array
+    /**
+     * Lưu ảnh đầu vào lên S3 theo tên trường; trường không có ảnh mới thì dùng ảnh giữ lại.
+     *
+     * @param  array<string, string>  $keptPaths
+     */
+    private function storeInput(GenerationInput $input, array $keptPaths = []): array
     {
         $directory = MediaStorage::datedDirectory('generations/inputs');
 
         return [
-            'input_paths' => array_map(fn ($file) => $this->media->storeUpload($file, $directory), $input->files),
+            'input_paths' => [
+                ...$keptPaths,
+                ...array_map(fn ($file) => $this->media->storeUpload($file, $directory), $input->files),
+            ],
             'input_values' => $input->values,
         ];
     }

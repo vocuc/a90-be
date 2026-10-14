@@ -40,6 +40,8 @@ return [
         'lease_minutes' => 15,
         // Số lần giao job tối đa; quá số lần này thì ảnh thất bại và hoàn Credit.
         'max_attempts' => 3,
+        // Job viết nội dung bài TikTok (GET /api/v1/content-jobs): thời gian worker phải trả kết quả.
+        'content_lease_minutes' => 5,
         // Dung lượng ảnh kết quả tối đa worker được gửi lên (KB).
         'output_max_size_kb' => 20480,
     ],
