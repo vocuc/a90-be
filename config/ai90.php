@@ -31,6 +31,11 @@ return [
         'password' => env('ADMIN_PASSWORD'),
     ],
 
+    'tiktok' => [
+        // Bật: ảnh xong thì giao worker viết tiêu đề / nội dung / hashtag. Tắt: người dùng tự nhập, bài sang chờ duyệt ngay.
+        'ai_content' => (bool) env('TIKTOK_AI_CONTENT', false),
+    ],
+
     'auth' => [
         'token_ttl_days' => 30,
     ],

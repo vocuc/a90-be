@@ -62,12 +62,14 @@ class PostController extends Controller
             'images.*.generation_id' => ['required', 'integer'],
             'images.*.output_id' => ['required', 'integer', 'distinct'],
             'idempotency_key' => ['required', 'string', 'max:80'],
+            ...self::contentRules(required: false),
         ], [
             'images.max' => 'Tối đa '.TikTokPost::MAX_IMAGES.' ảnh mỗi bài.',
             'images.*.output_id.distinct' => 'Ảnh bị chọn trùng.',
+            ...self::contentMessages(),
         ]);
 
-        $post = $this->posts->createFromImages($request->user(), array_values($data['images']), $data['idempotency_key']);
+        $post = $this->posts->createFromImages($request->user(), array_values($data['images']), $data['idempotency_key'], $data);
 
         return $this->resource($post)->response()->setStatusCode(201);
     }
@@ -79,8 +81,10 @@ class PostController extends Controller
             'items' => ['required', 'array', 'min:1', 'max:'.TikTokPost::MAX_CREATIVES],
             'items.*.creative_id' => ['required', 'integer'],
             'idempotency_key' => ['required', 'string', 'max:80'],
+            ...self::contentRules(required: false),
         ], [
             'items.max' => 'Tối đa '.TikTokPost::MAX_CREATIVES.' mẫu mỗi lần.',
+            ...self::contentMessages(),
         ]);
 
         $items = array_values($data['items']);
@@ -105,7 +109,7 @@ class PostController extends Controller
             $resolved[] = ['creative' => $creative, 'input' => GenerationInput::fromValidated($validated['items'][$i]['inputs'], $creative)];
         }
 
-        $post = $this->posts->createFromCreatives($request->user(), $resolved, $data['idempotency_key']);
+        $post = $this->posts->createFromCreatives($request->user(), $resolved, $data['idempotency_key'], $data);
 
         return $this->resource($post)->response()->setStatusCode(201);
     }
@@ -153,10 +157,7 @@ class PostController extends Controller
     {
         $post = $this->findPost($request, $post);
         $data = $request->validate([
-            'title' => ['required', 'string', 'max:'.TikTokPost::TITLE_MAX],
-            'content' => ['nullable', 'string', 'max:'.TikTokPost::CONTENT_MAX],
-            'hashtags' => ['nullable', 'array', 'max:'.TikTokPost::MAX_HASHTAGS],
-            'hashtags.*' => ['string', 'max:50', 'regex:'.Hashtag::PATTERN],
+            ...self::contentRules(required: true),
             'images' => ['required', 'array', 'min:1', 'max:'.TikTokPost::MAX_IMAGES],
             'images.*' => ['array'],
             'images.*.image_id' => ['nullable', 'integer'],
@@ -164,7 +165,7 @@ class PostController extends Controller
             'images.*.output_id' => ['required_without:images.*.image_id', 'nullable', 'integer'],
         ], [
             'images.max' => 'Tối đa '.TikTokPost::MAX_IMAGES.' ảnh mỗi bài.',
-            'hashtags.max' => 'Tối đa '.TikTokPost::MAX_HASHTAGS.' hashtag.',
+            ...self::contentMessages(),
         ]);
         $data['images'] = array_values($data['images']);
 
@@ -176,6 +177,22 @@ class PostController extends Controller
         $this->posts->delete($request->user(), $this->findPost($request, $post));
 
         return response()->noContent();
+    }
+
+    /** Tiêu đề / nội dung / hashtag: không bắt buộc khi tạo bài, tiêu đề bắt buộc khi đăng. */
+    private static function contentRules(bool $required): array
+    {
+        return [
+            'title' => [$required ? 'required' : 'nullable', 'string', 'max:'.TikTokPost::TITLE_MAX],
+            'content' => ['nullable', 'string', 'max:'.TikTokPost::CONTENT_MAX],
+            'hashtags' => ['nullable', 'array', 'max:'.TikTokPost::MAX_HASHTAGS],
+            'hashtags.*' => ['string', 'max:50', 'regex:'.Hashtag::PATTERN],
+        ];
+    }
+
+    private static function contentMessages(): array
+    {
+        return ['hashtags.max' => 'Tối đa '.TikTokPost::MAX_HASHTAGS.' hashtag.'];
     }
 
     private function findPost(Request $request, int $id): TikTokPost

@@ -5,7 +5,7 @@ namespace App\Listeners;
 use App\Events\GenerationOutputFinished;
 use App\Services\TikTok\TikTokPostService;
 
-/** Bài đăng đang tạo nội dung: mọi ảnh đã xong thì giao job viết nội dung cho worker. */
+/** Bài đăng đang tạo ảnh: mọi ảnh đã xong thì sang bước nội dung (worker viết hoặc chờ duyệt ngay). */
 class AdvanceTikTokPosts
 {
     public function __construct(private TikTokPostService $posts) {}

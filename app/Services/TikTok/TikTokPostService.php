@@ -36,11 +36,12 @@ class TikTokPostService
     ) {}
 
     /**
-     * Bước 2b: dùng ảnh đã tạo trên A51 (không tính phí). Bài ở generating trong lúc worker viết nội dung.
+     * Bước 2b: dùng ảnh đã tạo trên A51 (không tính phí). Ảnh đã xong nên bài sang bước nội dung ngay.
      *
      * @param  array<int, array{generation_id: int, output_id: int}>  $refs
+     * @param  array{title?: ?string, content?: ?string, hashtags?: ?array}  $content  người dùng tự nhập (không bắt buộc)
      */
-    public function createFromImages(User $user, array $refs, string $idempotencyKey): TikTokPost
+    public function createFromImages(User $user, array $refs, string $idempotencyKey, array $content = []): TikTokPost
     {
         if ($existing = $this->findExisting($user, $idempotencyKey, TikTokPost::SOURCE_EXISTING)) {
             return $existing;
@@ -49,17 +50,18 @@ class TikTokPostService
         $outputs = $this->resolveOwnedOutputs($user, $refs, 'images');
 
         try {
-            $post = DB::transaction(function () use ($user, $outputs, $idempotencyKey) {
+            $post = DB::transaction(function () use ($user, $outputs, $idempotencyKey, $content) {
                 $post = TikTokPost::query()->create([
                     'user_id' => $user->id,
                     'status' => TikTokPostStatus::Generating,
                     'source' => TikTokPost::SOURCE_EXISTING,
                     'idempotency_key' => $idempotencyKey,
+                    ...self::manualContent($content),
                 ]);
                 foreach ($outputs->values() as $i => $output) {
                     $post->images()->create(['generation_id' => $output->generation_id, 'output_id' => $output->id, 'position' => $i + 1]);
                 }
-                TikTokContentJob::query()->create(['tiktok_post_id' => $post->id, 'status' => OutputStatus::Queued]);
+                $this->imagesReady($post);
 
                 $this->audit->log('tiktok_post.create', $post, ['source' => 'existing', 'images' => $outputs->count()], $user->id);
 
@@ -76,8 +78,9 @@ class TikTokPostService
      * Bước 2a: mỗi mẫu tạo 1 ảnh (1 generation quantity=1). Trừ tổng phí ngay, đủ hoặc không tạo gì.
      *
      * @param  array<int, array{creative: AiCreative, input: GenerationInput}>  $items
+     * @param  array{title?: ?string, content?: ?string, hashtags?: ?array}  $content  người dùng tự nhập (không bắt buộc)
      */
-    public function createFromCreatives(User $user, array $items, string $idempotencyKey): TikTokPost
+    public function createFromCreatives(User $user, array $items, string $idempotencyKey, array $content = []): TikTokPost
     {
         if ($existing = $this->findExisting($user, $idempotencyKey, TikTokPost::SOURCE_NEW)) {
             return $existing;
@@ -86,7 +89,7 @@ class TikTokPostService
         $total = array_sum(array_map(fn (array $item) => $item['creative']->price_per_image, $items));
 
         try {
-            $post = DB::transaction(function () use ($user, $items, $idempotencyKey, $total) {
+            $post = DB::transaction(function () use ($user, $items, $idempotencyKey, $total, $content) {
                 // Kiểm tra tổng phí trước để báo đúng số tiền cần (không dừng giữa chừng ở mẫu thứ n)
                 $this->credits->assertSufficient($this->credits->lockWallet($user->id), $total);
 
@@ -95,6 +98,7 @@ class TikTokPostService
                     'status' => TikTokPostStatus::Generating,
                     'source' => TikTokPost::SOURCE_NEW,
                     'idempotency_key' => $idempotencyKey,
+                    ...self::manualContent($content),
                 ]);
 
                 foreach (array_values($items) as $i => $item) {
@@ -117,7 +121,7 @@ class TikTokPostService
         return $post;
     }
 
-    /** Một ảnh vừa xong: bài đang generating có đủ ảnh xong thì giao job viết nội dung. */
+    /** Một ảnh vừa xong: bài đang generating có đủ ảnh xong thì sang bước nội dung. */
     public function outputFinished(int $outputId): void
     {
         $postIds = TikTokPostImage::query()
@@ -126,12 +130,12 @@ class TikTokPostService
             ->pluck('tiktok_post_id');
 
         foreach ($postIds as $postId) {
-            $this->enqueueContentIfReady($postId);
+            $this->advanceIfReady($postId);
         }
     }
 
     /** Idempotent: gọi lặp (listener, lệnh sweep) không tạo job thứ 2. */
-    public function enqueueContentIfReady(int $postId): void
+    public function advanceIfReady(int $postId): void
     {
         DB::transaction(function () use ($postId) {
             $post = TikTokPost::query()->lockForUpdate()->find($postId);
@@ -143,9 +147,38 @@ class TikTokPostService
                 ->whereHas('output', fn ($q) => $q->whereIn('status', [OutputStatus::Queued, OutputStatus::Processing]))
                 ->exists();
             if (! $pending) {
-                TikTokContentJob::query()->firstOrCreate(['tiktok_post_id' => $post->id], ['status' => OutputStatus::Queued]);
+                $this->imagesReady($post);
             }
         });
+    }
+
+    /**
+     * Ảnh của bài đã xong: giao worker viết nội dung (bật ai_content và người dùng chưa tự nhập),
+     * không thì sang chờ duyệt ngay (chưa nhập gì: lấy tên mẫu + hashtag của mẫu).
+     */
+    private function imagesReady(TikTokPost $post): void
+    {
+        $manual = $post->hasManualContent();
+        if (config('ai90.tiktok.ai_content') && ! $manual) {
+            TikTokContentJob::query()->firstOrCreate(['tiktok_post_id' => $post->id], ['status' => OutputStatus::Queued]);
+
+            return;
+        }
+
+        $post->update([
+            ...($manual ? [] : $post->defaultContent()),
+            'status' => TikTokPostStatus::PendingReview,
+        ]);
+    }
+
+    /** @param  array{title?: ?string, content?: ?string, hashtags?: ?array}  $content */
+    private static function manualContent(array $content): array
+    {
+        return [
+            'title' => trim((string) ($content['title'] ?? '')),
+            'content' => $content['content'] ?? null,
+            'hashtags' => TikTokPost::normalizeHashtags($content['hashtags'] ?? []) ?: null,
+        ];
     }
 
     /**

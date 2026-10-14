@@ -5,7 +5,6 @@ namespace App\Services\TikTok;
 use App\Enums\OutputStatus;
 use App\Enums\TikTokPostStatus;
 use App\Exceptions\BusinessException;
-use App\Models\Generation;
 use App\Models\TikTokContentJob;
 use App\Models\TikTokPost;
 use App\Models\Worker;
@@ -16,11 +15,10 @@ use Illuminate\Support\Str;
 /**
  * Job viết tiêu đề / nội dung / hashtag cho worker nội bộ (1 job / bài), giao việc giống job ảnh:
  * lease, giao lại khi quá hạn, hết lượt thì dùng nội dung mặc định. Bài luôn sang pending_review khi job chốt.
+ * Chỉ dùng khi bật ai90.tiktok.ai_content (TIKTOK_AI_CONTENT).
  */
 class TikTokContentJobService
 {
-    private const FALLBACK_TITLE = 'Ảnh mới từ A51';
-
     public function __construct(private MediaStorage $media) {}
 
     public function claim(Worker $worker): ?TikTokContentJob
@@ -174,18 +172,8 @@ class TikTokContentJobService
     /** Nội dung mặc định từ các mẫu của bài; người dùng tự sửa ở bước duyệt. */
     private function fallback(TikTokContentJob $job, string $errorCode, string $errorMessage): void
     {
-        $generations = Generation::query()
-            ->whereIn('id', $job->post->images()->pluck('generation_id'))
-            ->with('creative.hashtags')
-            ->get();
-        $creatives = $generations->pluck('creative')->filter()->unique('id')->values();
-
         $job->forceFill(['error_code' => $errorCode, 'error_message' => Str::limit($errorMessage, 490)]);
-        $this->finish($job, [
-            'title' => $creatives->isNotEmpty() ? Str::limit($creatives->first()->title, TikTokPost::TITLE_MAX, '') : null,
-            'content' => '',
-            'hashtags' => TikTokPost::normalizeHashtags($creatives->flatMap(fn ($c) => $c->hashtags->pluck('name'))->all()),
-        ], OutputStatus::Failed);
+        $this->finish($job, $job->post->defaultContent(), OutputStatus::Failed);
     }
 
     /** @param  array{title: ?string, content: string, hashtags: string[]}  $content */
@@ -204,7 +192,7 @@ class TikTokContentJobService
         }
 
         $post->update([
-            'title' => $content['title'] ?? self::FALLBACK_TITLE,
+            'title' => $content['title'] ?? TikTokPost::DEFAULT_TITLE,
             'content' => $content['content'],
             'hashtags' => $content['hashtags'],
             'status' => TikTokPostStatus::PendingReview,

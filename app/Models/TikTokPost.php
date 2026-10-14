@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Str;
 
 class TikTokPost extends Model
 {
@@ -25,6 +26,8 @@ class TikTokPost extends Model
 
     /** Mẫu tối đa mỗi lần "Tạo ảnh mới" (mỗi mẫu 1 ảnh). */
     public const MAX_CREATIVES = 10;
+
+    public const DEFAULT_TITLE = 'Ảnh mới từ A51';
 
     protected $table = 'tiktok_posts';
 
@@ -74,6 +77,35 @@ class TikTokPost extends Model
         $tags = implode(' ', array_map(fn ($tag) => '#'.$tag, $hashtags));
 
         return trim(trim((string) $content)."\n".$tags);
+    }
+
+    /** Người dùng đã tự nhập tiêu đề / nội dung / hashtag khi tạo bài. */
+    public function hasManualContent(): bool
+    {
+        return $this->title !== '' || trim((string) $this->content) !== '' || ! empty($this->hashtags);
+    }
+
+    /**
+     * Nội dung mặc định từ các mẫu của bài: tên mẫu đầu tiên + hashtag các mẫu. Người dùng sửa ở bước duyệt.
+     *
+     * @return array{title: string, content: string, hashtags: string[]}
+     */
+    public function defaultContent(): array
+    {
+        $creatives = Generation::query()
+            ->whereIn('id', $this->images()->pluck('generation_id'))
+            ->with('creative.hashtags')
+            ->get()
+            ->pluck('creative')
+            ->filter()
+            ->unique('id')
+            ->values();
+
+        return [
+            'title' => $creatives->isNotEmpty() ? Str::limit($creatives->first()->title, self::TITLE_MAX, '') : self::DEFAULT_TITLE,
+            'content' => '',
+            'hashtags' => self::normalizeHashtags($creatives->flatMap(fn ($c) => $c->hashtags->pluck('name'))->all()),
+        ];
     }
 
     public function user(): BelongsTo

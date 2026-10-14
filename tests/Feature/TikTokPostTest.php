@@ -29,6 +29,8 @@ class TikTokPostTest extends TestCase
     {
         parent::setUp();
         $this->setUpTikTok();
+        // Phần lớn test đi qua worker viết nội dung; chế độ tự nhập (mặc định) có test riêng
+        config(['ai90.tiktok.ai_content' => true]);
     }
 
     // ---- Helpers ----
@@ -44,12 +46,12 @@ class TikTokPostTest extends TestCase
         return ['generation_id' => $generation->id, 'output_id' => $generation->outputs[0]->id];
     }
 
-    private function fromImages(User $user, array $images): TestResponse
+    private function fromImages(User $user, array $images, array $extra = []): TestResponse
     {
-        return $this->actingAs($user)->postJson('/api/v1/tiktok/posts/from-images', [
+        return $this->actingAs($user)->postJson('/api/v1/tiktok/posts/from-images', array_merge([
             'images' => $images,
             'idempotency_key' => (string) Str::uuid(),
-        ]);
+        ], $extra));
     }
 
     /** @param  AiCreative[]  $creatives */
@@ -226,6 +228,82 @@ class TikTokPostTest extends TestCase
 
         $this->assertSame(OutputStatus::Queued, TikTokContentJob::query()->find($jobId)->status);
         $this->submitContent($token, $jobId, ['status' => 'completed', 'title' => 'x'])->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
+    }
+
+    // ---- Không dùng worker viết nội dung (mặc định) ----
+
+    public function test_without_ai_content_post_goes_to_review_with_manual_content(): void
+    {
+        config(['ai90.tiktok.ai_content' => false]);
+        $user = $this->buyer(credit: 5000);
+
+        $this->fromImages($user, [$this->completedImage($user)], [
+            'title' => 'Tiêu đề tự nhập',
+            'content' => 'Nội dung tự nhập',
+            'hashtags' => ['#a51', 'A51', 'xuhuong'],
+        ])->assertCreated()
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.title', 'Tiêu đề tự nhập')
+            ->assertJsonPath('data.content', 'Nội dung tự nhập')
+            ->assertJsonPath('data.hashtags', ['a51', 'xuhuong']);
+
+        $this->assertSame(0, TikTokContentJob::query()->count());
+    }
+
+    public function test_without_ai_content_and_no_input_uses_creative_defaults(): void
+    {
+        config(['ai90.tiktok.ai_content' => false]);
+        $user = $this->buyer(credit: 5000);
+        $creative = $this->publishedCreative($this->creator());
+        $creative->hashtags()->attach(Hashtag::query()->create(['name' => 'MyPham', 'slug' => 'mypham'])->id, ['sort_order' => 1]);
+
+        $this->fromImages($user, [$this->completedImage($user, $creative)])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.title', 'Ảnh sản phẩm studio')
+            ->assertJsonPath('data.content', '')
+            ->assertJsonPath('data.hashtags', ['MyPham']);
+        $this->assertSame(0, TikTokContentJob::query()->count());
+    }
+
+    public function test_without_ai_content_new_images_go_to_review_when_generated(): void
+    {
+        config(['ai90.tiktok.ai_content' => false]);
+        $user = $this->buyer(credit: 5000);
+
+        $id = $this->fromCreatives($user, [$this->publishedCreative($this->creator())], ['title' => 'Bài mới'])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'generating')
+            ->json('data.id');
+
+        $this->runWorker([null]);
+
+        $this->actingAs($user)->getJson("/api/v1/tiktok/posts/{$id}")
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.title', 'Bài mới');
+        $this->assertSame(0, TikTokContentJob::query()->count());
+    }
+
+    public function test_manual_content_skips_worker_even_when_ai_content_enabled(): void
+    {
+        $user = $this->buyer(credit: 5000);
+
+        $this->fromImages($user, [$this->completedImage($user)], ['title' => 'Tự viết'])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'pending_review');
+        $this->assertSame(0, TikTokContentJob::query()->count());
+    }
+
+    public function test_create_validates_manual_content(): void
+    {
+        config(['ai90.tiktok.ai_content' => false]);
+        $user = $this->buyer(credit: 5000);
+
+        $this->fromImages($user, [$this->completedImage($user)], [
+            'title' => str_repeat('a', 91),
+            'hashtags' => array_map(fn ($i) => "tag{$i}", range(1, 11)),
+        ])->assertStatus(422)->assertJsonValidationErrors(['title', 'hashtags']);
+        $this->assertSame(0, TikTokPost::query()->count());
     }
 
     // ---- Tạo bài bằng ảnh mới ----

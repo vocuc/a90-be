@@ -9,7 +9,7 @@ use App\Services\TikTok\TikTokPostService;
 use Illuminate\Console\Command;
 
 /**
- * Lưới an toàn cho bài TikTok đang tạo nội dung: giao job viết nội dung nếu ảnh đã xong mà chưa có job,
+ * Lưới an toàn cho bài TikTok đang tạo nội dung: ảnh đã xong mà bài chưa sang bước nội dung thì chuyển tiếp,
  * giao lại job worker giữ quá hạn, dùng nội dung mặc định cho job chờ quá lâu / hết lượt.
  */
 class SweepTikTokPosts extends Command
@@ -24,7 +24,7 @@ class SweepTikTokPosts extends Command
             ->where('status', TikTokPostStatus::Generating)
             ->whereDoesntHave('contentJob')
             ->pluck('id')
-            ->each(fn (int $id) => $posts->enqueueContentIfReady($id));
+            ->each(fn (int $id) => $posts->advanceIfReady($id));
 
         $leases = $jobs->releaseExpiredLeases();
         $stuck = $jobs->failStuckQueued();
