@@ -31,7 +31,7 @@ class TikTokPostResource extends JsonResource
             'content' => $this->content ?? '',
             'hashtags' => $this->hashtags ?? [],
             'image_count' => $images->count(),
-            'cover_url' => $images->firstWhere('image_url', '!==', null)['image_url'] ?? null,
+            'cover_url' => $images->firstWhere('thumb_url', '!==', null)['thumb_url'] ?? null,
             'images' => $images,
             'last_error' => $this->last_error,
             'tiktok_publish_id' => $this->tiktok_publish_id,
@@ -47,6 +47,8 @@ class TikTokPostResource extends JsonResource
     {
         $output = $image->output;
         $creative = $image->generation?->creative;
+        $completed = $output?->status === OutputStatus::Completed;
+        $media = app(MediaStorage::class);
 
         return [
             'id' => $image->id,
@@ -54,7 +56,8 @@ class TikTokPostResource extends JsonResource
             'generation_id' => $image->generation_id,
             'output_id' => $image->output_id,
             'status' => $output?->status,
-            'image_url' => $output?->status === OutputStatus::Completed ? app(MediaStorage::class)->url($output->image_path) : null,
+            'image_url' => $completed ? $media->url($output->image_path) : null,
+            'thumb_url' => $completed ? $media->url($output->thumbPathOrOriginal()) : null,
             'error_message' => $output?->status === OutputStatus::Failed ? GenerationResource::errorMessage($output->error_code) : null,
             'creative' => $creative ? TikTokPostService::creativeSummary($creative) : null,
         ];
