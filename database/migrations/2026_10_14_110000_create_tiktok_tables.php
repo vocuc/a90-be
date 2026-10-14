@@ -34,14 +34,11 @@ return new class extends Migration
         Schema::create('tiktok_posts', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->string('status', 20)->default('generating'); // generating | pending_review | publishing | published
+            $table->string('status', 20)->default('generating'); // generating | pending_review | publishing | inbox_delivered | published
             $table->string('source', 10); // new | existing
             $table->string('title', 90)->default('');
             $table->text('content')->nullable();
             $table->json('hashtags')->nullable();
-            $table->string('privacy_level', 30)->default('PUBLIC_TO_EVERYONE');
-            $table->boolean('allow_comment')->default(true);
-            $table->boolean('auto_add_music')->default(true);
             $table->json('last_error')->nullable();
             // Tài khoản đã dùng để đăng (ảnh chụp lúc bấm đăng)
             $table->foreignId('tiktok_account_id')->nullable()->constrained()->nullOnDelete();

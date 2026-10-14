@@ -16,7 +16,7 @@ class AccountController extends Controller
 {
     public function __construct(private TikTokAccountService $accounts) {}
 
-    /** Trạng thái ủy quyền + creator_info lấy mới mỗi lần gọi. */
+    /** Trạng thái ủy quyền, hồ sơ lấy mới mỗi lần gọi. */
     public function show(Request $request): JsonResponse
     {
         return response()->json(['data' => $this->accounts->status($request->user())]);

@@ -40,13 +40,14 @@ return [
         ],
     ],
 
-    // Đăng bài TikTok: Login Kit (OAuth) + Content Posting API (Direct Post), xem note/uy-quyen-tiktok.txt
+    // Đăng bài TikTok: Login Kit (OAuth) + Content Posting API (Upload: gửi vào hộp thư TikTok), xem note/uy-quyen-tiktok.txt
     'tiktok' => [
         'client_key' => env('TIKTOK_CLIENT_KEY'),
         'client_secret' => env('TIKTOK_CLIENT_SECRET'),
         // {BACKEND}/api/v1/tiktok/oauth/callback, khớp chính xác URI đăng ký trên Developer Portal
         'redirect_uri' => env('TIKTOK_REDIRECT_URI'),
-        'scopes' => 'user.info.basic,video.publish',
+        // user.info.profile: lấy username để hiển thị @username và tạo link bài đăng
+        'scopes' => 'user.info.basic,user.info.profile,video.upload',
         // Trang frontend nhận kết quả ủy quyền: {FRONTEND_URL}{redirect}?tiktok=...
         'frontend_url' => rtrim((string) env('FRONTEND_URL', 'http://localhost:5173'), '/'),
         // Ảnh gửi TikTok (PULL_FROM_URL): disk public gắn tên miền đã xác minh với TikTok, vd https://media.a51.vn

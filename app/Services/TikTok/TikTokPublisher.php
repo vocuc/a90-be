@@ -18,8 +18,9 @@ use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
- * "Duyệt và đăng": lưu chỉnh sửa, chuẩn bị ảnh JPG/WEBP trên tên miền đã xác minh, gọi content/init (Direct Post, PHOTO).
- * Kết quả đăng do webhook TikTok báo về (TikTokWebhookService).
+ * "Duyệt và đăng": lưu chỉnh sửa, chuẩn bị ảnh JPG/WEBP trên tên miền đã xác minh, gọi content/init (MEDIA_UPLOAD, PHOTO).
+ * Ảnh vào hộp thư TikTok, người dùng tự đăng trong app (quyền riêng tư, bình luận, nhạc chọn ở đó).
+ * Kết quả do webhook TikTok báo về (TikTokWebhookService).
  */
 class TikTokPublisher
 {
@@ -29,8 +30,6 @@ class TikTokPublisher
         'spam_risk_user_banned_from_posting' => [403, 'Tài khoản TikTok này đang bị hạn chế đăng bài.'],
         'reached_active_user_cap' => [429, 'TikTok đang giới hạn số người dùng đăng qua A51, thử lại sau.'],
         'rate_limit_exceeded' => [429, 'Gửi yêu cầu lên TikTok quá nhanh, vui lòng thử lại sau ít phút.'],
-        'unaudited_client_can_only_post_to_private_accounts' => [403, 'Ứng dụng A51 chưa được TikTok duyệt: chỉ đăng được lên tài khoản riêng tư với quyền "Chỉ mình tôi".'],
-        'privacy_level_option_mismatch' => [422, 'Quyền riêng tư không hợp lệ với tài khoản TikTok này, vui lòng chọn lại.'],
         'url_ownership_unverified' => [422, 'Tên miền chứa ảnh chưa được xác minh với TikTok.'],
         'invalid_params' => [422, 'Dữ liệu bài đăng không hợp lệ với TikTok.'],
     ];
@@ -40,14 +39,13 @@ class TikTokPublisher
     public function __construct(
         private TikTokClient $client,
         private TikTokTokenManager $tokens,
-        private TikTokAccountService $accounts,
         private TikTokPostService $posts,
         private MediaStorage $media,
         private AuditLogger $audit,
     ) {}
 
     /**
-     * @param  array{title: string, content: ?string, hashtags: string[], privacy_level: string, allow_comment: bool, auto_add_music: bool, images: array<int, array>}  $data
+     * @param  array{title: string, content: ?string, hashtags: string[], images: array<int, array>}  $data
      */
     public function publish(User $user, TikTokPost $post, array $data): TikTokPost
     {
@@ -65,18 +63,8 @@ class TikTokPublisher
 
         $images = $this->resolveImages($user, $post, $data['images']);
 
-        // Lấy mới creator_info ngay trước khi đăng (TikTok yêu cầu): kiểm tra quyền riêng tư và được phép đăng
-        $creator = $this->accounts->creator($account);
-        if (! $creator['can_post']) {
-            throw new BusinessException('TIKTOK_CANNOT_POST', $creator['cannot_post_reason']['message'], 409, ['reason' => $creator['cannot_post_reason']['code']]);
-        }
-        if (! in_array($data['privacy_level'], $creator['privacy_level_options'], true)) {
-            throw ValidationException::withMessages(['privacy_level' => 'Quyền riêng tư không có trong lựa chọn của tài khoản TikTok này.']);
-        }
-        $allowComment = ! $creator['comment_disabled'] && $data['allow_comment'];
-
-        // Chuyển sang publishing trước khi gọi TikTok để bấm đăng 2 lần không đăng 2 bài
-        $post = DB::transaction(function () use ($post, $data, $hashtags, $allowComment, $images, $account, $creator) {
+        // Chuyển sang publishing trước khi gọi TikTok để bấm đăng 2 lần không gửi 2 bài
+        $post = DB::transaction(function () use ($post, $data, $hashtags, $images, $account) {
             $post = TikTokPost::query()->lockForUpdate()->findOrFail($post->id);
             $this->posts->assertEditable($post);
 
@@ -84,14 +72,11 @@ class TikTokPublisher
                 'title' => $data['title'],
                 'content' => $data['content'] ?? '',
                 'hashtags' => $hashtags,
-                'privacy_level' => $data['privacy_level'],
-                'allow_comment' => $allowComment,
-                'auto_add_music' => $data['auto_add_music'],
                 'status' => TikTokPostStatus::Publishing,
                 'last_error' => null,
                 'tiktok_account_id' => $account->id,
                 'tiktok_open_id' => $account->open_id,
-                'tiktok_username' => $creator['username'],
+                'tiktok_username' => $account->username,
                 'tiktok_publish_id' => null,
                 'tiktok_post_id' => null,
                 'tiktok_post_url' => null,
@@ -104,22 +89,17 @@ class TikTokPublisher
         try {
             $urls = array_map(fn (array $image) => $this->prepareImage($post, $image['output']), $images);
             $publishId = $this->tokens->call($account, fn (string $token) => $this->client->initPhotoPost($token, [
+                // MEDIA_UPLOAD chỉ nhận title + description
                 'post_info' => [
                     'title' => $post->title,
                     'description' => TikTokPost::description($post->content, $post->hashtags ?? []),
-                    'privacy_level' => $post->privacy_level,
-                    'disable_comment' => ! $post->allow_comment,
-                    'auto_add_music' => $post->auto_add_music,
-                    // Bỏ mục "Công khai nội dung quảng cáo" ở frontend: luôn gửi false
-                    'brand_content_toggle' => false,
-                    'brand_organic_toggle' => false,
                 ],
                 'source_info' => [
                     'source' => 'PULL_FROM_URL',
                     'photo_cover_index' => 0,
                     'photo_images' => $urls,
                 ],
-                'post_mode' => 'DIRECT_POST',
+                'post_mode' => 'MEDIA_UPLOAD',
                 'media_type' => 'PHOTO',
             ]));
         } catch (Throwable $e) {

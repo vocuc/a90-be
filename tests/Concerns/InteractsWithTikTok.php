@@ -31,7 +31,7 @@ trait InteractsWithTikTok
         return TikTokAccount::query()->create(array_merge([
             'user_id' => $user->id,
             'open_id' => 'open-'.$user->id,
-            'scope' => 'user.info.basic,video.publish',
+            'scope' => 'user.info.basic,user.info.profile,video.upload',
             'access_token' => 'access-'.$user->id,
             'access_token_expires_at' => now()->addHours(20),
             'refresh_token' => 'refresh-'.$user->id,
@@ -43,19 +43,16 @@ trait InteractsWithTikTok
         ], $attributes));
     }
 
-    protected static function creatorInfoResponse(array $data = []): array
+    protected static function userInfoResponse(array $user = []): array
     {
         return [
-            'data' => array_merge([
-                'creator_avatar_url' => 'https://p16.tiktokcdn.test/avatar.jpg',
-                'creator_username' => 'a51.vn',
-                'creator_nickname' => 'A51 Official',
-                'privacy_level_options' => ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'],
-                'comment_disabled' => false,
-                'duet_disabled' => false,
-                'stitch_disabled' => false,
-                'max_video_post_duration_sec' => 600,
-            ], $data),
+            'data' => ['user' => array_merge([
+                'open_id' => 'open-1',
+                'union_id' => 'union-1',
+                'avatar_url' => 'https://p16.tiktokcdn.test/avatar.jpg',
+                'display_name' => 'A51 Official',
+                'username' => 'a51.vn',
+            ], $user)],
             'error' => ['code' => 'ok', 'message' => '', 'log_id' => 'log'],
         ];
     }

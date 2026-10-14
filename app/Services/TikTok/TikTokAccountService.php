@@ -13,20 +13,13 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 /**
- * Ủy quyền tài khoản TikTok (OAuth Login Kit) và thông tin creator, xem note/uy-quyen-tiktok.txt.
+ * Ủy quyền tài khoản TikTok (OAuth Login Kit) và thông tin hồ sơ, xem note/uy-quyen-tiktok.txt.
  */
 class TikTokAccountService
 {
     private const STATE_TTL_MINUTES = 10;
 
     private const DEFAULT_REDIRECT = '/tiktok';
-
-    /** Lỗi creator_info chặn đăng bài -> thông báo tiếng Việt. */
-    private const CANNOT_POST = [
-        'spam_risk_too_many_posts' => 'Tài khoản đã đạt giới hạn đăng bài trong ngày, thử lại sau.',
-        'spam_risk_user_banned_from_posting' => 'Tài khoản TikTok này đang bị hạn chế đăng bài.',
-        'reached_active_user_cap' => 'TikTok đang giới hạn số người dùng đăng qua A51, thử lại sau.',
-    ];
 
     public function __construct(
         private TikTokClient $client,
@@ -82,7 +75,7 @@ class TikTokAccountService
         try {
             $info = $this->client->userInfo($token['access_token']);
         } catch (TikTokApiException|BusinessException) {
-            $info = []; // chỉ để hiển thị, creator_info sẽ cập nhật sau
+            $info = []; // chỉ để hiển thị, GET /tiktok/account sẽ cập nhật sau
         }
 
         $this->connect($user, $token, $info);
@@ -91,7 +84,7 @@ class TikTokAccountService
     }
 
     /**
-     * Trạng thái cho GET /tiktok/account. Gọi creator_info mỗi lần (TikTok yêu cầu dữ liệu mới).
+     * Trạng thái cho GET /tiktok/account. Gọi user/info mỗi lần để kiểm tra token và cập nhật hồ sơ.
      */
     public function status(User $user): array
     {
@@ -106,7 +99,7 @@ class TikTokAccountService
 
         if ($reason === null) {
             try {
-                $creator = $this->creator($account);
+                $this->refreshProfile($account);
             } catch (BusinessException $e) {
                 if ($e->errorCode !== 'TIKTOK_NOT_CONNECTED') {
                     throw $e;
@@ -122,7 +115,6 @@ class TikTokAccountService
                 'reason' => $reason,
                 // Còn thông tin cũ: frontend hiện "Ủy quyền lại @username"
                 'account' => $account && $reason !== 'not_connected' ? self::accountSummary($account) : null,
-                'creator' => null,
             ];
         }
 
@@ -130,36 +122,28 @@ class TikTokAccountService
             'connected' => true,
             'reason' => null,
             'account' => self::accountSummary($account),
-            'creator' => $creator,
         ];
     }
 
     /**
-     * creator_info/query, cập nhật cache username / display_name / avatar.
-     * Không dùng được tài khoản -> TIKTOK_NOT_CONNECTED (context.reason); TikTok lỗi -> TIKTOK_UNAVAILABLE.
+     * user/info: cập nhật cache username / display_name / avatar. TikTok từ chối (vd thiếu user.info.profile) -> giữ thông tin cũ.
+     * Không dùng được tài khoản -> TIKTOK_NOT_CONNECTED (context.reason); TikTok lỗi mạng / 5xx -> TIKTOK_UNAVAILABLE.
      */
-    public function creator(TikTokAccount $account): array
+    private function refreshProfile(TikTokAccount $account): void
     {
         try {
-            $info = $this->tokens->call($account, fn (string $token) => $this->client->creatorInfo($token));
+            $info = $this->tokens->call($account, fn (string $token) => $this->client->userInfo($token));
         } catch (TikTokApiException $e) {
-            if ($e->errorCode === 'scope_not_authorized') {
-                throw BusinessException::tiktokNotConnected('scope_missing');
-            }
             $account->update(['last_error' => ['code' => $e->errorCode, 'message' => $e->getMessage()]]);
-            if (isset(self::CANNOT_POST[$e->errorCode])) {
-                return self::creatorPayload($account, [], ['code' => $e->errorCode, 'message' => self::CANNOT_POST[$e->errorCode]]);
-            }
-            throw BusinessException::tiktokUnavailable();
+
+            return;
         }
 
         $account->update(array_filter([
-            'username' => $info['creator_username'] ?? null,
-            'display_name' => $info['creator_nickname'] ?? null,
-            'avatar_url' => $info['creator_avatar_url'] ?? null,
+            'username' => $info['username'] ?? null,
+            'display_name' => $info['display_name'] ?? null,
+            'avatar_url' => $info['avatar_url'] ?? null,
         ], fn ($v) => $v !== null && $v !== ''));
-
-        return self::creatorPayload($account, $info, null);
     }
 
     /** Huỷ kết nối: thu hồi token ở TikTok, xoá token, status revoked. */
@@ -211,7 +195,7 @@ class TikTokAccountService
             'scope' => (string) $token['scope'],
             ...TikTokTokenManager::tokenAttributes($token),
             'display_name' => $info['display_name'] ?? ($sameAccount ? $account->display_name : null),
-            'username' => $sameAccount ? $account->username : null,
+            'username' => $info['username'] ?? ($sameAccount ? $account->username : null),
             'avatar_url' => $info['avatar_url'] ?? ($sameAccount ? $account->avatar_url : null),
             'status' => TikTokAccountStatus::Active,
             'last_error' => null,
@@ -224,22 +208,6 @@ class TikTokAccountService
             : TikTokAccount::query()->create(['user_id' => $user->id, ...$attributes]);
 
         $this->audit->log('tiktok.connect', $account, ['open_id' => $account->open_id, 'replaced' => $replaced], $user->id);
-    }
-
-    private static function creatorPayload(TikTokAccount $account, array $info, ?array $cannotPost): array
-    {
-        return [
-            'avatar_url' => $info['creator_avatar_url'] ?? $account->avatar_url,
-            'username' => $info['creator_username'] ?? $account->username,
-            'nickname' => $info['creator_nickname'] ?? $account->display_name,
-            'privacy_level_options' => array_values($info['privacy_level_options'] ?? []),
-            'comment_disabled' => (bool) ($info['comment_disabled'] ?? false),
-            'duet_disabled' => (bool) ($info['duet_disabled'] ?? false),
-            'stitch_disabled' => (bool) ($info['stitch_disabled'] ?? false),
-            'max_video_post_duration_sec' => isset($info['max_video_post_duration_sec']) ? (int) $info['max_video_post_duration_sec'] : null,
-            'can_post' => $cannotPost === null,
-            'cannot_post_reason' => $cannotPost,
-        ];
     }
 
     private static function accountSummary(TikTokAccount $account): array

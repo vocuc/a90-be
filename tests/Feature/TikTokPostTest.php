@@ -104,17 +104,13 @@ class TikTokPostTest extends TestCase
             'title' => 'Tiêu đề đã sửa',
             'content' => 'Nội dung đã sửa',
             'hashtags' => ['a51', '#ChânDung'],
-            'privacy_level' => 'PUBLIC_TO_EVERYONE',
-            'allow_comment' => true,
-            'auto_add_music' => true,
             'images' => $post->images()->get()->map(fn ($image) => ['image_id' => $image->id])->all(),
         ], $extra);
     }
 
-    private function fakePublishApis(array $creator = [], $init = null): void
+    private function fakePublishApis($init = null): void
     {
         $this->fakeTikTok([
-            '/post/publish/creator_info/query/' => Http::response(self::creatorInfoResponse($creator)),
             '/post/publish/content/init/' => $init ?? Http::response(['data' => ['publish_id' => 'p_pub_1'], 'error' => ['code' => 'ok']]),
         ]);
     }
@@ -401,7 +397,7 @@ class TikTokPostTest extends TestCase
 
     // ---- Đăng ----
 
-    public function test_publish_sends_direct_photo_post_and_webhook_marks_published(): void
+    public function test_publish_uploads_photos_to_inbox_and_webhooks_track_until_published(): void
     {
         $user = $this->buyer(credit: 5000);
         $post = $this->pendingPost($user);
@@ -426,13 +422,10 @@ class TikTokPostTest extends TestCase
             }
             $urls = $r['source_info']['photo_images'];
 
-            return $r['post_mode'] === 'DIRECT_POST' && $r['media_type'] === 'PHOTO'
+            return $r['post_mode'] === 'MEDIA_UPLOAD' && $r['media_type'] === 'PHOTO'
                 && $r['source_info']['source'] === 'PULL_FROM_URL' && $r['source_info']['photo_cover_index'] === 0
                 && count($urls) === 2 && collect($urls)->every(fn ($u) => preg_match('#^https://media\.a51\.test/tiktok/.+\.jpg$#', $u))
-                && $r['post_info']['description'] === "Nội dung đã sửa\n#a51 #ChânDung"
-                && $r['post_info']['privacy_level'] === 'PUBLIC_TO_EVERYONE'
-                && $r['post_info']['disable_comment'] === false
-                && $r['post_info']['brand_content_toggle'] === false;
+                && $r['post_info'] === ['title' => 'Tiêu đề đã sửa', 'description' => "Nội dung đã sửa\n#a51 #ChânDung"];
         });
 
         // PNG được chuyển sang JPG trên disk tên miền đã xác minh
@@ -440,7 +433,12 @@ class TikTokPostTest extends TestCase
         $this->assertCount(2, $files);
         $this->assertSame('image/jpeg', (new \finfo(FILEINFO_MIME_TYPE))->buffer(Storage::disk('tiktok_media')->get($files[0])));
 
-        $this->sendWebhook('post.publish.complete', ['publish_id' => 'p_pub_1', 'publish_type' => 'DIRECT_PUBLISH'])->assertOk();
+        $this->sendWebhook('post.publish.inbox_delivered', ['publish_id' => 'p_pub_1'])->assertOk();
+        $this->actingAs($user)->getJson("/api/v1/tiktok/posts/{$post->id}")->assertJsonPath('data.status', 'inbox_delivered');
+        $this->actingAs($user)->deleteJson("/api/v1/tiktok/posts/{$post->id}")->assertStatus(409)->assertJsonPath('code', 'POST_NOT_DELETABLE');
+
+        // Người dùng đăng trong app TikTok
+        $this->sendWebhook('post.publish.complete', ['publish_id' => 'p_pub_1', 'publish_type' => 'INBOX_SHARE'])->assertOk();
         $this->sendWebhook('post.publish.publicly_available', ['publish_id' => 'p_pub_1', 'post_id' => '7300000000000000001'])->assertOk();
 
         $post->refresh();
@@ -469,6 +467,22 @@ class TikTokPostTest extends TestCase
         $this->sendWebhook('post.publish.complete', ['publish_id' => 'unknown'])->assertNotFound();
     }
 
+    public function test_draft_cancelled_in_tiktok_returns_post_to_review(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $post = $this->pendingPost($user);
+        $this->connectTikTok($user);
+        $this->fakePublishApis();
+        $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/publish", $this->publishBody($post))->assertOk();
+
+        $this->sendWebhook('post.publish.inbox_delivered', ['publish_id' => 'p_pub_1'])->assertOk();
+        $this->sendWebhook('post.publish.failed', ['publish_id' => 'p_pub_1', 'reason' => 'publish_cancelled'])->assertOk();
+
+        $this->actingAs($user)->getJson("/api/v1/tiktok/posts/{$post->id}")
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.last_error.code', 'publish_cancelled');
+    }
+
     public function test_publish_requires_connected_account(): void
     {
         $user = $this->buyer(credit: 5000);
@@ -478,32 +492,6 @@ class TikTokPostTest extends TestCase
             ->assertStatus(409)
             ->assertJsonPath('code', 'TIKTOK_NOT_CONNECTED');
         $this->assertSame(TikTokPostStatus::PendingReview, $post->fresh()->status);
-    }
-
-    public function test_publish_rejects_privacy_not_offered_by_creator(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $post = $this->pendingPost($user);
-        $this->connectTikTok($user);
-        $this->fakePublishApis(['privacy_level_options' => ['SELF_ONLY']]);
-
-        $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/publish", $this->publishBody($post))
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('privacy_level');
-        Http::assertNotSent(fn (HttpRequest $r) => str_contains($r->url(), 'content/init'));
-    }
-
-    public function test_comment_disabled_by_creator_forces_disable_comment(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $post = $this->pendingPost($user);
-        $this->connectTikTok($user);
-        $this->fakePublishApis(['comment_disabled' => true]);
-
-        $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/publish", $this->publishBody($post))
-            ->assertOk()
-            ->assertJsonPath('data.allow_comment', false);
-        Http::assertSent(fn (HttpRequest $r) => str_contains($r->url(), 'content/init') && $r['post_info']['disable_comment'] === true);
     }
 
     public function test_tiktok_rejecting_init_returns_friendly_error_and_post_stays_editable(): void
@@ -534,8 +522,7 @@ class TikTokPostTest extends TestCase
             'title' => str_repeat('a', 91),
             'hashtags' => array_map(fn ($i) => "tag{$i}", range(1, 11)),
             'images' => [],
-            'privacy_level' => 'EVERYONE',
-        ]))->assertStatus(422)->assertJsonValidationErrors(['title', 'hashtags', 'images', 'privacy_level']);
+        ]))->assertStatus(422)->assertJsonValidationErrors(['title', 'hashtags', 'images']);
     }
 
     // ---- Xem / xoá ----

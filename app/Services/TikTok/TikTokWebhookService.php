@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Sự kiện webhook TikTok (chỉ dùng webhook, không polling publish/status/fetch):
+ *   post.publish.inbox_delivered                             -> inbox_delivered (chờ người dùng đăng trong app TikTok)
  *   post.publish.complete / post.publish.publicly_available  -> published
  *   post.publish.failed                                      -> pending_review + last_error
  *   authorization.removed                                    -> tài khoản revoked
@@ -22,7 +23,7 @@ class TikTokWebhookService
         'picture_size_check_failed' => 'Kích thước ảnh không đạt yêu cầu của TikTok.',
         'photo_pull_failed' => 'TikTok không tải được ảnh, vui lòng đăng lại.',
         'video_pull_failed' => 'TikTok không tải được nội dung, vui lòng đăng lại.',
-        'publish_cancelled' => 'Bài đăng đã bị huỷ trên TikTok.',
+        'publish_cancelled' => 'Bài đã bị huỷ trên TikTok, có thể gửi lại.',
         'spam_risk_too_many_posts' => 'Tài khoản đã đạt giới hạn đăng bài trong ngày, thử lại sau.',
         'spam_risk_user_banned_from_posting' => 'Tài khoản TikTok này đang bị hạn chế đăng bài.',
         'spam_risk_text' => 'Tiêu đề hoặc nội dung bị TikTok đánh giá là spam, vui lòng sửa lại.',
@@ -64,20 +65,32 @@ class TikTokWebhookService
         }
 
         match ($event) {
+            'post.publish.inbox_delivered' => $this->inboxDelivered($post->id),
             'post.publish.complete' => $this->published($post->id, null),
             'post.publish.publicly_available' => $this->published($post->id, isset($content['post_id']) ? (string) $content['post_id'] : null),
             'post.publish.failed' => $this->failed($post->id, (string) ($content['reason'] ?? 'internal')),
-            default => null, // inbox_delivered, no_longer_publicaly_available...: không đổi trạng thái
+            default => null, // no_longer_publicaly_available...: không đổi trạng thái
         };
 
         return true;
+    }
+
+    private function inboxDelivered(int $postId): void
+    {
+        DB::transaction(function () use ($postId) {
+            $post = TikTokPost::query()->lockForUpdate()->findOrFail($postId);
+            // Sự kiện có thể đến sau complete: chỉ đổi khi còn đang gửi
+            if ($post->status === TikTokPostStatus::Publishing) {
+                $post->update(['status' => TikTokPostStatus::InboxDelivered, 'last_error' => null]);
+            }
+        });
     }
 
     private function published(int $postId, ?string $tiktokPostId): void
     {
         DB::transaction(function () use ($postId, $tiktokPostId) {
             $post = TikTokPost::query()->lockForUpdate()->findOrFail($postId);
-            if (! in_array($post->status, [TikTokPostStatus::Publishing, TikTokPostStatus::Published], true)) {
+            if (! in_array($post->status, [TikTokPostStatus::Publishing, TikTokPostStatus::InboxDelivered, TikTokPostStatus::Published], true)) {
                 return;
             }
 
@@ -101,7 +114,7 @@ class TikTokWebhookService
     {
         DB::transaction(function () use ($postId, $reason) {
             $post = TikTokPost::query()->lockForUpdate()->findOrFail($postId);
-            if ($post->status !== TikTokPostStatus::Publishing) {
+            if (! in_array($post->status, [TikTokPostStatus::Publishing, TikTokPostStatus::InboxDelivered], true)) {
                 return;
             }
 

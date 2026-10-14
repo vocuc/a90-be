@@ -9,7 +9,7 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * Cấp access token còn hạn cho mọi lời gọi TikTok (creator_info, đăng bài), tự làm mới khi sắp hết hạn.
+ * Cấp access token còn hạn cho mọi lời gọi TikTok (user/info, đăng bài), tự làm mới khi sắp hết hạn.
  */
 class TikTokTokenManager
 {

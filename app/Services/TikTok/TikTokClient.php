@@ -57,29 +57,16 @@ class TikTokClient
         ]));
     }
 
-    /** @return array{open_id?: string, union_id?: string, avatar_url?: string, display_name?: string} */
+    /** username cần scope user.info.profile. @return array{open_id?: string, union_id?: string, avatar_url?: string, display_name?: string, username?: string} */
     public function userInfo(string $accessToken): array
     {
         $response = $this->send(fn () => $this->http()->withToken($accessToken)
-            ->get(self::API.'/user/info/', ['fields' => 'open_id,union_id,avatar_url,display_name']));
+            ->get(self::API.'/user/info/', ['fields' => 'open_id,union_id,avatar_url,display_name,username']));
 
         return $this->data($response)['user'] ?? [];
     }
 
-    /**
-     * Thông tin creator, TikTok yêu cầu lấy mới mỗi lần hiển thị trang đăng bài.
-     *
-     * @return array{creator_avatar_url?: string, creator_username?: string, creator_nickname?: string, privacy_level_options?: string[], comment_disabled?: bool, duet_disabled?: bool, stitch_disabled?: bool, max_video_post_duration_sec?: int}
-     */
-    public function creatorInfo(string $accessToken): array
-    {
-        $response = $this->send(fn () => $this->http()->withToken($accessToken)->asJson()
-            ->post(self::API.'/post/publish/creator_info/query/', (object) []));
-
-        return $this->data($response);
-    }
-
-    /** Đăng ảnh Direct Post. @return string publish_id */
+    /** Gửi ảnh vào hộp thư TikTok của người dùng (MEDIA_UPLOAD). @return string publish_id */
     public function initPhotoPost(string $accessToken, array $body): string
     {
         $response = $this->send(fn () => $this->http()->withToken($accessToken)->asJson()

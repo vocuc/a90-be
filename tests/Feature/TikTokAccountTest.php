@@ -30,14 +30,14 @@ class TikTokAccountTest extends TestCase
 
         $this->assertStringStartsWith('https://www.tiktok.com/v2/auth/authorize/?', $url);
         $this->assertSame('client-key', $query['client_key']);
-        $this->assertSame('user.info.basic,video.publish', $query['scope']);
+        $this->assertSame('user.info.basic,user.info.profile,video.upload', $query['scope']);
         $this->assertSame('https://api.test/api/v1/tiktok/oauth/callback', $query['redirect_uri']);
         $this->assertGreaterThanOrEqual(32, strlen($query['state']));
 
         return $query['state'];
     }
 
-    private function fakeTokenExchange(string $scope = 'user.info.basic,video.publish', string $openId = 'open-abc'): void
+    private function fakeTokenExchange(string $scope = 'user.info.basic,user.info.profile,video.upload', string $openId = 'open-abc'): void
     {
         $this->fakeTikTok([
             '/oauth/token/' => Http::response([
@@ -45,7 +45,7 @@ class TikTokAccountTest extends TestCase
                 'refresh_token' => 'rft.new', 'refresh_expires_in' => 31536000, 'token_type' => 'Bearer',
             ]),
             '/user/info/*' => Http::response(['data' => ['user' => [
-                'open_id' => $openId, 'union_id' => 'union-1', 'avatar_url' => 'https://p16.test/a.jpg', 'display_name' => 'Shop A',
+                'open_id' => $openId, 'union_id' => 'union-1', 'avatar_url' => 'https://p16.test/a.jpg', 'display_name' => 'Shop A', 'username' => 'shop.a',
             ]], 'error' => ['code' => 'ok']]),
             '/oauth/revoke/' => Http::response([]),
         ]);
@@ -57,13 +57,14 @@ class TikTokAccountTest extends TestCase
         $state = $this->authorizeState($user);
         $this->fakeTokenExchange();
 
-        $this->get("/api/v1/tiktok/oauth/callback?code=abc&state={$state}&scopes=user.info.basic,video.publish")
+        $this->get("/api/v1/tiktok/oauth/callback?code=abc&state={$state}&scopes=user.info.basic,user.info.profile,video.upload")
             ->assertRedirect('https://app.test/tiktok/post/123?tiktok=connected');
 
         $account = TikTokAccount::query()->where('user_id', $user->id)->firstOrFail();
         $this->assertSame('open-abc', $account->open_id);
         $this->assertSame('act.new', $account->access_token);
         $this->assertSame('Shop A', $account->display_name);
+        $this->assertSame('shop.a', $account->username);
         $this->assertSame(TikTokAccountStatus::Active, $account->status);
         // Token mã hoá trong DB
         $raw = DB::table('tiktok_accounts')->where('id', $account->id)->first();
@@ -134,21 +135,20 @@ class TikTokAccountTest extends TestCase
     {
         $this->actingAs($this->buyer())->getJson('/api/v1/tiktok/account')
             ->assertOk()
-            ->assertExactJson(['data' => ['connected' => false, 'reason' => 'not_connected', 'account' => null, 'creator' => null]]);
+            ->assertExactJson(['data' => ['connected' => false, 'reason' => 'not_connected', 'account' => null]]);
     }
 
-    public function test_account_status_fetches_creator_info_every_time(): void
+    public function test_account_status_fetches_profile_every_time(): void
     {
         $user = $this->buyer();
         $this->connectTikTok($user, ['username' => null]);
-        $this->fakeTikTok(['/post/publish/creator_info/query/' => Http::response(self::creatorInfoResponse())]);
+        $this->fakeTikTok(['/user/info/*' => Http::response(self::userInfoResponse())]);
 
         $this->actingAs($user)->getJson('/api/v1/tiktok/account')
             ->assertOk()
             ->assertJsonPath('data.connected', true)
             ->assertJsonPath('data.account.username', 'a51.vn')
-            ->assertJsonPath('data.creator.privacy_level_options', ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'])
-            ->assertJsonPath('data.creator.can_post', true)
+            ->assertJsonMissingPath('data.creator')
             ->assertJsonMissingPath('data.account.access_token');
 
         Http::assertSent(fn (HttpRequest $r) => $r->hasHeader('Authorization', 'Bearer access-'.$user->id));
@@ -161,10 +161,10 @@ class TikTokAccountTest extends TestCase
         $this->connectTikTok($user, ['access_token_expires_at' => now()->addMinute()]);
         $this->fakeTikTok([
             '/oauth/token/' => Http::response([
-                'open_id' => 'open-1', 'scope' => 'user.info.basic,video.publish', 'access_token' => 'act.2', 'expires_in' => 86400,
+                'open_id' => 'open-1', 'scope' => 'user.info.basic,user.info.profile,video.upload', 'access_token' => 'act.2', 'expires_in' => 86400,
                 'refresh_token' => 'rft.2', 'refresh_expires_in' => 31536000,
             ]),
-            '/post/publish/creator_info/query/' => Http::response(self::creatorInfoResponse()),
+            '/user/info/*' => Http::response(self::userInfoResponse()),
         ]);
 
         $this->actingAs($user)->getJson('/api/v1/tiktok/account')->assertOk()->assertJsonPath('data.connected', true);
@@ -172,7 +172,7 @@ class TikTokAccountTest extends TestCase
         $account = $user->tiktokAccount()->first();
         $this->assertSame('act.2', $account->access_token);
         $this->assertSame('rft.2', $account->refresh_token);
-        Http::assertSent(fn (HttpRequest $r) => str_contains($r->url(), 'creator_info') && $r->hasHeader('Authorization', 'Bearer act.2'));
+        Http::assertSent(fn (HttpRequest $r) => str_contains($r->url(), '/user/info/') && $r->hasHeader('Authorization', 'Bearer act.2'));
     }
 
     public function test_invalid_refresh_marks_account_expired(): void
@@ -180,7 +180,7 @@ class TikTokAccountTest extends TestCase
         $user = $this->buyer();
         $this->connectTikTok($user);
         $this->fakeTikTok([
-            '/post/publish/creator_info/query/' => Http::response(self::tiktokError('access_token_invalid'), 401),
+            '/user/info/*' => Http::response(self::tiktokError('access_token_invalid'), 401),
             '/oauth/token/' => Http::response(['error' => 'invalid_grant', 'error_description' => 'expired'], 400),
         ]);
 
@@ -193,24 +193,24 @@ class TikTokAccountTest extends TestCase
         $this->assertSame(TikTokAccountStatus::Expired, $user->tiktokAccount()->first()->status);
     }
 
-    public function test_creator_blocked_from_posting_returns_can_post_false(): void
+    public function test_profile_rejected_keeps_cached_info_and_stays_connected(): void
     {
         $user = $this->buyer();
         $this->connectTikTok($user);
-        $this->fakeTikTok(['/post/publish/creator_info/query/' => Http::response(self::tiktokError('spam_risk_too_many_posts'), 403)]);
+        $this->fakeTikTok(['/user/info/*' => Http::response(self::tiktokError('scope_not_authorized'), 403)]);
 
         $this->actingAs($user)->getJson('/api/v1/tiktok/account')
             ->assertOk()
             ->assertJsonPath('data.connected', true)
-            ->assertJsonPath('data.creator.can_post', false)
-            ->assertJsonPath('data.creator.cannot_post_reason.code', 'spam_risk_too_many_posts');
+            ->assertJsonPath('data.account.username', 'a51.vn');
+        $this->assertSame('scope_not_authorized', $user->tiktokAccount()->first()->last_error['code']);
     }
 
     public function test_tiktok_outage_returns_502_not_disconnected(): void
     {
         $user = $this->buyer();
         $this->connectTikTok($user);
-        $this->fakeTikTok(['/post/publish/creator_info/query/' => Http::response('oops', 503)]);
+        $this->fakeTikTok(['/user/info/*' => Http::response('oops', 503)]);
 
         $this->actingAs($user)->getJson('/api/v1/tiktok/account')
             ->assertStatus(502)

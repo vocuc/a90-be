@@ -39,8 +39,6 @@ class TikTokPost extends Model
         return [
             'status' => TikTokPostStatus::class,
             'hashtags' => 'array',
-            'allow_comment' => 'boolean',
-            'auto_add_music' => 'boolean',
             'last_error' => 'array',
             'published_at' => 'datetime',
         ];

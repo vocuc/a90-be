@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class TikTokAccount extends Model
 {
-    public const REQUIRED_SCOPE = 'video.publish';
+    public const REQUIRED_SCOPE = 'video.upload';
 
     protected $table = 'tiktok_accounts';
 

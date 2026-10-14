@@ -27,8 +27,6 @@ use Illuminate\Validation\Rule;
  */
 class PostController extends Controller
 {
-    private const PRIVACY_LEVELS = ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'];
-
     public function __construct(
         private TikTokPostService $posts,
         private SettingService $settings,
@@ -150,7 +148,7 @@ class PostController extends Controller
         return response()->json(['data' => TikTokPostResource::image($image->load(['output', 'generation.creative']))], 202);
     }
 
-    /** "Duyệt và đăng": body là toàn bộ chỉnh sửa trên trang. */
+    /** "Duyệt và đăng": body là toàn bộ chỉnh sửa trên trang, ảnh được gửi vào hộp thư TikTok. */
     public function publish(Request $request, int $post, TikTokPublisher $publisher): TikTokPostResource
     {
         $post = $this->findPost($request, $post);
@@ -159,9 +157,6 @@ class PostController extends Controller
             'content' => ['nullable', 'string', 'max:'.TikTokPost::CONTENT_MAX],
             'hashtags' => ['nullable', 'array', 'max:'.TikTokPost::MAX_HASHTAGS],
             'hashtags.*' => ['string', 'max:50', 'regex:'.Hashtag::PATTERN],
-            'privacy_level' => ['required', 'string', Rule::in(self::PRIVACY_LEVELS)],
-            'allow_comment' => ['required', 'boolean'],
-            'auto_add_music' => ['required', 'boolean'],
             'images' => ['required', 'array', 'min:1', 'max:'.TikTokPost::MAX_IMAGES],
             'images.*' => ['array'],
             'images.*.image_id' => ['nullable', 'integer'],
@@ -172,8 +167,6 @@ class PostController extends Controller
             'hashtags.max' => 'Tối đa '.TikTokPost::MAX_HASHTAGS.' hashtag.',
         ]);
         $data['images'] = array_values($data['images']);
-        $data['allow_comment'] = (bool) $data['allow_comment'];
-        $data['auto_add_music'] = (bool) $data['auto_add_music'];
 
         return $this->resource($publisher->publish($request->user(), $post, $data));
     }
