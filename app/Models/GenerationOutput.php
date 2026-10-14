@@ -20,6 +20,12 @@ class GenerationOutput extends Model
         ];
     }
 
+    /** Ảnh tạo trước khi có thumbnail thì dùng lại ảnh gốc. */
+    public function thumbPathOrOriginal(): ?string
+    {
+        return $this->thumb_path ?? $this->image_path;
+    }
+
     public function generation(): BelongsTo
     {
         return $this->belongsTo(Generation::class);

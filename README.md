@@ -186,7 +186,7 @@ curl.exe -H "Accept: application/json" -H "Authorization: Bearer <TOKEN_NGƯỜI
 curl.exe -H "Accept: application/json" -H "Authorization: Bearer <TOKEN_NGƯỜI_MUA>" "$api/generations/<ID>/status"
 ```
 
-Kết quả trong `outputs[].image_url` là link có hạn 15 phút. Gọi `GET /generations/<ID>/outputs/<OUTPUT_ID>/download` để lấy link tải về.
+Kết quả trong `outputs[].image_url` (ảnh gốc) và `outputs[].thumb_url` (thumbnail WebP cạnh dài 600px, dùng cho danh sách) là link có hạn 15 phút. Gọi `GET /generations/<ID>/outputs/<OUTPUT_ID>/download` để lấy link tải ảnh gốc.
 
 Danh sách đầy đủ API: chạy `php artisan route:list --path=api`, hoặc xem `note/thiet-ke-mvp.md` mục 6.
 

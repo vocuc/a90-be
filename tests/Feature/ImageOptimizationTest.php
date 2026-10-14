@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\AiCreativeImage;
 use App\Models\Banner;
+use App\Models\GenerationOutput;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -46,6 +47,32 @@ class ImageOptimizationTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.cover_url', 'https://media.test/creatives/sample_600.webp')
             ->assertJsonPath('data.images.0.url', 'https://media.test/creatives/sample.png');
+    }
+
+    public function test_worker_output_keeps_original_and_gets_thumbnail(): void
+    {
+        $buyer = $this->buyer(credit: 10000);
+        $generationId = $this->generate($buyer, $this->publishedCreative($this->creator()))->assertStatus(202)->json('data.id');
+
+        $token = $this->workerToken();
+        $jobId = $this->claimJob($token)->assertOk()->json('data.id');
+        $upload = UploadedFile::fake()->image('result.png', 2048, 1024);
+        $this->withToken($token)->post("/api/v1/jobs/{$jobId}", ['status' => 'completed', 'image' => $upload],
+            ['Accept' => 'application/json'])->assertOk();
+
+        // Ảnh gốc giữ nguyên để tải về, thumbnail WebP 600px để hiển thị danh sách.
+        $output = GenerationOutput::query()->findOrFail($jobId);
+        $this->assertStringEndsWith('.png', $output->image_path);
+        $this->assertSame([2048, 1024], $this->dimensions($output->image_path));
+        $this->assertStringStartsWith('generations/outputs/', $output->thumb_path);
+        $this->assertStringEndsWith('.webp', $output->thumb_path);
+        $this->assertSame([600, 300], $this->dimensions($output->thumb_path));
+
+        $this->actingAs($buyer)->getJson("/api/v1/generations/{$generationId}")
+            ->assertJsonPath('data.outputs.0.image_url', "https://media.test/{$output->image_path}")
+            ->assertJsonPath('data.outputs.0.thumb_url', "https://media.test/{$output->thumb_path}");
+        $this->getJson("/api/v1/generations/{$generationId}/status")
+            ->assertJsonPath('data.outputs.0.thumb_url', "https://media.test/{$output->thumb_path}");
     }
 
     public function test_small_image_is_not_upscaled(): void

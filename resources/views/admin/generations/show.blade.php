@@ -66,7 +66,7 @@
                             <div class="col-md-6 col-xl-4 mb-3">
                                 <div class="card h-100 mb-0">
                                     @if ($output->image_path)
-                                        <img src="{{ $media->url($output->image_path) }}" class="card-img-top" style="aspect-ratio:1;object-fit:cover" alt="">
+                                        <img src="{{ $media->url($output->thumbPathOrOriginal()) }}" class="card-img-top" style="aspect-ratio:1;object-fit:cover" alt="">
                                     @else
                                         <div class="d-flex align-items-center justify-content-center bg-light text-muted" style="aspect-ratio:1">
                                             <i class="fas {{ $output->status->value === 'failed' ? 'fa-times-circle fa-2x text-danger' : 'fa-hourglass-half fa-2x' }}"></i>

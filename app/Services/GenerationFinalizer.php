@@ -29,9 +29,9 @@ class GenerationFinalizer
         private AuditLogger $audit,
     ) {}
 
-    public function complete(int $outputId, string $imagePath, string $mime, int $sizeBytes): void
+    public function complete(int $outputId, string $imagePath, ?string $thumbPath, string $mime, int $sizeBytes): void
     {
-        DB::transaction(function () use ($outputId, $imagePath, $mime, $sizeBytes) {
+        DB::transaction(function () use ($outputId, $imagePath, $thumbPath, $mime, $sizeBytes) {
             $output = GenerationOutput::query()->lockForUpdate()->find($outputId);
             if (! $output || $output->status->isFinal()) {
                 return;
@@ -42,6 +42,7 @@ class GenerationFinalizer
             $output->update([
                 'status' => OutputStatus::Completed,
                 'image_path' => $imagePath,
+                'thumb_path' => $thumbPath,
                 'mime' => $mime,
                 'size_bytes' => $sizeBytes,
                 'lease_expires_at' => null,

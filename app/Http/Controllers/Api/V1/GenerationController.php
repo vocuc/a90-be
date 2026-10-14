@@ -79,6 +79,7 @@ class GenerationController extends Controller
                 'position' => $o->position,
                 'status' => $o->status,
                 'image_url' => $o->status === OutputStatus::Completed ? $media->url($o->image_path) : null,
+                'thumb_url' => $o->status === OutputStatus::Completed ? $media->url($o->thumbPathOrOriginal()) : null,
                 'error_code' => $o->error_code,
             ]),
         ]]);

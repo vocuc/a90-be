@@ -17,6 +17,9 @@ use Illuminate\Support\Facades\DB;
  */
 class WorkerJobService
 {
+    /** Cạnh dài tối đa (px) của thumbnail ảnh kết quả. */
+    private const THUMB_MAX_SIDE = 600;
+
     public function __construct(
         private GenerationFinalizer $finalizer,
         private MediaStorage $media,
@@ -60,15 +63,27 @@ class WorkerJobService
         // Lưu ảnh trước, ngoài transaction, để không giữ khóa trong lúc upload lên S3.
         $directory = MediaStorage::datedDirectory('generations/outputs');
         $path = $this->media->storeUpload($image, $directory);
+        $thumbPath = $this->storeThumb($image, $directory);
 
         try {
-            DB::transaction(function () use ($worker, $output, $path, $image) {
+            DB::transaction(function () use ($worker, $output, $path, $thumbPath, $image) {
                 $this->assertAssigned($worker, $this->lockOutput($output));
-                $this->finalizer->complete($output->id, $path, $image->getMimeType() ?: 'application/octet-stream', $image->getSize());
+                $this->finalizer->complete($output->id, $path, $thumbPath, $image->getMimeType() ?: 'application/octet-stream', $image->getSize());
             });
         } catch (BusinessException $e) {
             $this->media->delete($path);
+            $this->media->delete($thumbPath);
             throw $e;
+        }
+    }
+
+    /** Ảnh gốc giữ nguyên để tải về/đăng TikTok; thumbnail chỉ để hiển thị danh sách. Lỗi tạo thumbnail không chặn kết quả. */
+    private function storeThumb(UploadedFile $image, string $directory): ?string
+    {
+        try {
+            return $this->media->storeOptimizedImage($image, $directory, [self::THUMB_MAX_SIDE])[0];
+        } catch (BusinessException) {
+            return null;
         }
     }
 

@@ -52,6 +52,7 @@ class GenerationResource extends JsonResource
                 'position' => $output->position,
                 'status' => $output->status,
                 'image_url' => $output->status === OutputStatus::Completed ? $media->url($output->image_path) : null,
+                'thumb_url' => $output->status === OutputStatus::Completed ? $media->url($output->thumbPathOrOriginal()) : null,
                 'error_code' => $output->error_code,
                 'error_message' => self::errorMessage($output->error_code),
                 'retry_of_output_id' => $output->retry_of_output_id,
