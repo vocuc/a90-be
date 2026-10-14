@@ -3,10 +3,11 @@
 namespace App\Http\Resources;
 
 use App\Enums\OutputStatus;
+use App\Models\ImageBatchImage;
 use App\Models\TikTokPost;
 use App\Models\TikTokPostImage;
+use App\Services\ImageBatchService;
 use App\Services\MediaStorage;
-use App\Services\TikTok\TikTokPostService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -27,6 +28,7 @@ class TikTokPostResource extends JsonResource
             'id' => $this->id,
             'status' => $this->status,
             'source' => $this->source,
+            'image_batch_id' => $this->image_batch_id,
             'title' => $this->title,
             'content' => $this->content ?? '',
             'hashtags' => $this->hashtags ?? [],
@@ -42,8 +44,8 @@ class TikTokPostResource extends JsonResource
         ];
     }
 
-    /** Một ảnh của bài: liên kết + dữ liệu lấy từ output và generation.creative. */
-    public static function image(TikTokPostImage $image): array
+    /** Một ảnh của bài / lô: liên kết + dữ liệu lấy từ output và generation.creative. */
+    public static function image(TikTokPostImage|ImageBatchImage $image): array
     {
         $output = $image->output;
         $creative = $image->generation?->creative;
@@ -59,7 +61,7 @@ class TikTokPostResource extends JsonResource
             'image_url' => $completed ? $media->url($output->image_path) : null,
             'thumb_url' => $completed ? $media->url($output->thumbPathOrOriginal()) : null,
             'error_message' => $output?->status === OutputStatus::Failed ? GenerationResource::errorMessage($output->error_code) : null,
-            'creative' => $creative ? TikTokPostService::creativeSummary($creative) : null,
+            'creative' => $creative ? ImageBatchService::creativeSummary($creative) : null,
         ];
     }
 }

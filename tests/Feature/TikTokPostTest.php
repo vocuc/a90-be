@@ -13,7 +13,6 @@ use App\Models\TikTokPost;
 use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Http\Client\Request as HttpRequest;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -52,20 +51,6 @@ class TikTokPostTest extends TestCase
             'images' => $images,
             'idempotency_key' => (string) Str::uuid(),
         ], $extra));
-    }
-
-    /** @param  AiCreative[]  $creatives */
-    private function fromCreatives(User $user, array $creatives, array $extra = []): TestResponse
-    {
-        $items = array_map(fn (AiCreative $creative) => [
-            'creative_id' => $creative->id,
-            'inputs' => ['product_image' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
-        ], $creatives);
-
-        return $this->actingAs($user)->post('/api/v1/tiktok/posts/from-creatives', array_merge([
-            'items' => $items,
-            'idempotency_key' => (string) Str::uuid(),
-        ], $extra), ['Accept' => 'application/json']);
     }
 
     private function claimContentJob(string $token): TestResponse
@@ -266,24 +251,6 @@ class TikTokPostTest extends TestCase
         $this->assertSame(0, TikTokContentJob::query()->count());
     }
 
-    public function test_without_ai_content_new_images_go_to_review_when_generated(): void
-    {
-        config(['ai90.tiktok.ai_content' => false]);
-        $user = $this->buyer(credit: 5000);
-
-        $id = $this->fromCreatives($user, [$this->publishedCreative($this->creator())], ['title' => 'Bài mới'])
-            ->assertCreated()
-            ->assertJsonPath('data.status', 'generating')
-            ->json('data.id');
-
-        $this->runWorker([null]);
-
-        $this->actingAs($user)->getJson("/api/v1/tiktok/posts/{$id}")
-            ->assertJsonPath('data.status', 'pending_review')
-            ->assertJsonPath('data.title', 'Bài mới');
-        $this->assertSame(0, TikTokContentJob::query()->count());
-    }
-
     public function test_manual_content_skips_worker_even_when_ai_content_enabled(): void
     {
         $user = $this->buyer(credit: 5000);
@@ -304,173 +271,6 @@ class TikTokPostTest extends TestCase
             'hashtags' => array_map(fn ($i) => "tag{$i}", range(1, 11)),
         ])->assertStatus(422)->assertJsonValidationErrors(['title', 'hashtags']);
         $this->assertSame(0, TikTokPost::query()->count());
-    }
-
-    // ---- Tạo bài bằng ảnh mới ----
-
-    public function test_post_from_creatives_charges_once_and_writes_content_after_all_images(): void
-    {
-        $creatorA = $this->creator();
-        $a = $this->publishedCreative($creatorA, price: 1000);
-        $b = $this->publishedCreative($this->creator(), price: 2500);
-        $user = $this->buyer(credit: 10000);
-
-        $response = $this->fromCreatives($user, [$a, $b])
-            ->assertCreated()
-            ->assertJsonPath('data.status', 'generating')
-            ->assertJsonPath('data.source', 'new')
-            ->assertJsonPath('data.image_count', 2)
-            ->assertJsonPath('data.images.0.status', 'queued')
-            ->assertJsonPath('data.images.1.creative.price_per_image', 2500)
-            ->assertJsonPath('data.cover_url', null);
-        $id = $response->json('data.id');
-
-        $this->assertSame(6500, $this->balance($user));
-        $this->assertSame(2, Generation::query()->where('user_id', $user->id)->where('quantity', 1)->count());
-
-        // Chưa xong ảnh: chưa có job nội dung
-        $this->runWorker([null]);
-        $this->assertSame(0, TikTokContentJob::query()->count());
-
-        // Ảnh thứ 2 lỗi: hoàn tiền ảnh đó, bài vẫn sang bước viết nội dung
-        $this->runWorker(['CONTENT_BLOCKED']);
-        $this->assertSame(1, TikTokContentJob::query()->count());
-        $this->assertSame(9000, $this->balance($user));
-        $this->assertLedgerMatchesBalance($user);
-
-        $this->writeContent();
-        $this->actingAs($user)->getJson("/api/v1/tiktok/posts/{$id}")
-            ->assertJsonPath('data.status', 'pending_review')
-            ->assertJsonPath('data.images.0.status', 'completed')
-            ->assertJsonPath('data.images.1.status', 'failed')
-            ->assertJsonPath('data.images.1.image_url', null)
-            ->assertJsonPath('data.images.1.error_message', 'Ảnh hoặc nội dung vi phạm chính sách an toàn của AI.');
-    }
-
-    public function test_insufficient_credit_for_total_creates_nothing(): void
-    {
-        $user = $this->buyer(credit: 1500);
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-
-        $this->fromCreatives($user, [$creative, $creative])
-            ->assertStatus(402)
-            ->assertJsonPath('code', 'INSUFFICIENT_CREDIT')
-            ->assertJsonPath('context.required', 2000);
-
-        $this->assertSame(0, TikTokPost::query()->count());
-        $this->assertSame(0, Generation::query()->count());
-        $this->assertSame(1500, $this->balance($user));
-    }
-
-    public function test_inputs_are_validated_per_item(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $creative = $this->publishedCreative($this->creator());
-
-        $this->actingAs($user)->post('/api/v1/tiktok/posts/from-creatives', [
-            'items' => [
-                ['creative_id' => $creative->id, 'inputs' => ['product_image' => UploadedFile::fake()->image('a.png'), 'aspectRatio' => '1:1']],
-                ['creative_id' => $creative->id, 'inputs' => ['aspectRatio' => '1:1']],
-            ],
-            'idempotency_key' => 'k1',
-        ], ['Accept' => 'application/json'])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('items.1.inputs.product_image')
-            ->assertJsonMissingValidationErrors('items.0.inputs.product_image');
-
-        $this->actingAs($user)->postJson('/api/v1/tiktok/posts/from-creatives', [
-            'items' => [['creative_id' => 999999]], 'idempotency_key' => 'k2',
-        ])->assertStatus(404)->assertJsonPath('code', 'CREATIVE_NOT_AVAILABLE');
-
-        $this->assertSame(5000, $this->balance($user));
-    }
-
-    // ---- Tạo lại / sửa nguyên liệu ----
-
-    public function test_regenerate_charges_and_replaces_image_in_same_position(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $post = $this->pendingPost($user);
-        $image = $post->images()->first();
-        $balance = $this->balance($user);
-
-        $new = $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/images/{$image->id}/regenerate", [
-            'idempotency_key' => 'regen-1',
-        ])->assertStatus(202)
-            ->assertJsonPath('data.position', 1)
-            ->assertJsonPath('data.status', 'queued')
-            ->json('data');
-
-        $this->assertNotSame($image->output_id, $new['output_id']);
-        $this->assertSame($balance - 1000, $this->balance($user));
-        $this->assertSame($image->generation_id, Generation::query()->find($new['generation_id'])->parent_generation_id);
-
-        // Đang tạo lại: chưa đăng được
-        $this->connectTikTok($user);
-        $this->fakePublishApis();
-        $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/publish", $this->publishBody($post))
-            ->assertStatus(409)->assertJsonPath('code', 'IMAGES_NOT_READY');
-
-        $this->runWorker([null]);
-        $this->actingAs($user)->getJson("/api/v1/tiktok/posts/{$post->id}")
-            ->assertJsonPath('data.status', 'pending_review')
-            ->assertJsonPath('data.images.0.status', 'completed')
-            ->assertJsonPath('data.images.0.output_id', $new['output_id']);
-    }
-
-    public function test_edit_inputs_keeps_old_file_and_changes_aspect_ratio(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $post = $this->pendingPost($user);
-        $image = $post->images()->first();
-        $oldGeneration = Generation::query()->find($image->generation_id);
-
-        $inputs = $this->actingAs($user)->getJson("/api/v1/tiktok/posts/{$post->id}/images/{$image->id}/inputs")
-            ->assertOk()
-            ->assertJsonPath('data.creative.title', 'Ảnh sản phẩm studio')
-            ->assertJsonPath('data.inputs.aspectRatio', '1:1')
-            ->json('data.inputs');
-        $fileId = $inputs['product_image'][0]['file_id'];
-        $this->assertStringStartsWith('f_', $fileId);
-
-        $new = $this->actingAs($user)->post("/api/v1/tiktok/posts/{$post->id}/images/{$image->id}/regenerate", [
-            'inputs' => ['aspectRatio' => '4:5'],
-            'keep_files' => ['product_image' => [$fileId]],
-            'idempotency_key' => 'edit-1',
-        ], ['Accept' => 'application/json'])->assertStatus(202)->json('data');
-
-        $generation = Generation::query()->find($new['generation_id']);
-        $this->assertSame('4:5', $generation->aspect_ratio);
-        $this->assertSame($oldGeneration->input_paths['product_image'], $generation->input_paths['product_image']);
-
-        // file_id sai -> lỗi theo trường
-        $this->actingAs($user)->post("/api/v1/tiktok/posts/{$post->id}/images/{$image->id}/regenerate", [
-            'inputs' => ['aspectRatio' => '1:1'],
-            'keep_files' => ['product_image' => ['f_wrong']],
-            'idempotency_key' => 'edit-2',
-        ], ['Accept' => 'application/json'])->assertStatus(422)->assertJsonValidationErrors('keep_files.product_image');
-    }
-
-    public function test_image_inputs_null_when_input_file_was_deleted(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $post = $this->pendingPost($user);
-        $image = $post->images()->first();
-        Storage::disk('media')->delete(Generation::query()->find($image->generation_id)->input_paths['product_image']);
-
-        $this->actingAs($user)->getJson("/api/v1/tiktok/posts/{$post->id}/images/{$image->id}/inputs")
-            ->assertOk()
-            ->assertJsonPath('data.inputs', null);
-    }
-
-    public function test_regenerate_only_while_pending_review(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $id = $this->fromImages($user, [$this->completedImage($user)])->json('data.id');
-        $image = TikTokPost::query()->find($id)->images()->first();
-
-        $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$id}/images/{$image->id}/regenerate", ['idempotency_key' => 'r'])
-            ->assertStatus(409)->assertJsonPath('code', 'POST_NOT_EDITABLE');
     }
 
     // ---- Đăng ----

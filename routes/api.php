@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Creator\DashboardController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
+use App\Http\Controllers\Api\V1\ImageBatchController;
 use App\Http\Controllers\Api\V1\MarketplaceController;
 use App\Http\Controllers\Api\V1\TikTok\AccountController as TikTokAccountController;
 use App\Http\Controllers\Api\V1\TikTok\PostController as TikTokPostController;
@@ -83,6 +84,18 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('wallet/transactions', [DashboardController::class, 'walletTransactions']);
         });
 
+        // Tạo ảnh theo lô (note/tach-lo-anh-dang-tiktok.txt)
+        Route::prefix('image-batches')->group(function () {
+            Route::get('/', [ImageBatchController::class, 'index']);
+            Route::post('/', [ImageBatchController::class, 'store'])->middleware('throttle:generations');
+            Route::get('{batch}', [ImageBatchController::class, 'show'])->whereNumber('batch');
+            Route::delete('{batch}', [ImageBatchController::class, 'destroy'])->whereNumber('batch');
+            Route::get('{batch}/images/{image}/inputs', [ImageBatchController::class, 'imageInputs'])->whereNumber(['batch', 'image']);
+            Route::post('{batch}/images/{image}/regenerate', [ImageBatchController::class, 'regenerate'])
+                ->whereNumber(['batch', 'image'])->middleware('throttle:generations');
+            Route::delete('{batch}/images/{image}', [ImageBatchController::class, 'destroyImage'])->whereNumber(['batch', 'image']);
+        });
+
         // Đăng bài TikTok
         Route::prefix('tiktok')->group(function () {
             Route::get('account', [TikTokAccountController::class, 'show']);
@@ -91,13 +104,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
 
             Route::get('posts', [TikTokPostController::class, 'index']);
             Route::post('posts/from-images', [TikTokPostController::class, 'storeFromImages']);
-            Route::post('posts/from-creatives', [TikTokPostController::class, 'storeFromCreatives'])->middleware('throttle:generations');
             Route::get('posts/{post}', [TikTokPostController::class, 'show'])->whereNumber('post');
             Route::delete('posts/{post}', [TikTokPostController::class, 'destroy'])->whereNumber('post');
             Route::post('posts/{post}/publish', [TikTokPostController::class, 'publish'])->whereNumber('post');
-            Route::get('posts/{post}/images/{image}/inputs', [TikTokPostController::class, 'imageInputs'])->whereNumber(['post', 'image']);
-            Route::post('posts/{post}/images/{image}/regenerate', [TikTokPostController::class, 'regenerate'])
-                ->whereNumber(['post', 'image'])->middleware('throttle:generations');
         });
 
         // Admin

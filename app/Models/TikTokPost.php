@@ -11,7 +11,8 @@ use Illuminate\Support\Str;
 
 class TikTokPost extends Model
 {
-    public const SOURCE_NEW = 'new';
+    /** Tạo từ nút "Đăng TikTok" của lô ảnh. */
+    public const SOURCE_BATCH = 'batch';
 
     public const SOURCE_EXISTING = 'existing';
 
@@ -23,9 +24,6 @@ class TikTokPost extends Model
     public const CONTENT_MAX = 4000;
 
     public const MAX_HASHTAGS = 10;
-
-    /** Mẫu tối đa mỗi lần "Tạo ảnh mới" (mỗi mẫu 1 ảnh). */
-    public const MAX_CREATIVES = 10;
 
     public const DEFAULT_TITLE = 'Ảnh mới từ A51';
 
@@ -122,6 +120,11 @@ class TikTokPost extends Model
     public function contentJob(): HasOne
     {
         return $this->hasOne(TikTokContentJob::class, 'tiktok_post_id');
+    }
+
+    public function imageBatch(): BelongsTo
+    {
+        return $this->belongsTo(ImageBatch::class, 'image_batch_id');
     }
 
     public function tiktokAccount(): BelongsTo
