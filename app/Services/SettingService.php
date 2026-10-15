@@ -15,7 +15,8 @@ class SettingService
     {
         $this->values ??= Setting::query()->pluck('value', 'key')->all();
 
-        return $this->values[$key] ?? config("ai90.defaults.{$key}", $default);
+        // Key có dấu chấm (generation.xxx) không đọc được bằng config("ai90.defaults.{$key}") -> lấy thẳng từ mảng
+        return $this->values[$key] ?? config('ai90.defaults')[$key] ?? $default;
     }
 
     public function int(string $key): int
