@@ -264,11 +264,12 @@ class TikTokPostTest extends TestCase
 
     // ---- Đăng (worker lưu nháp) ----
 
-    /** Worker giữ tài khoản TikTok của A51: trả token. */
-    private function publisherToken(string $name = 'tiktok-worker', bool $active = true): string
+    /** Admin gắn tài khoản A51 với một worker: trả token của worker. */
+    private function publisherToken(User $user, string $name = 'tiktok-worker', bool $active = true): string
     {
         $token = $this->workerToken($name);
         TikTokAccount::query()->create([
+            'user_id' => $user->id,
             'name' => 'A51 Official',
             'username' => 'a51.vn',
             'worker_id' => Worker::query()->where('name', $name)->value('id'),
@@ -309,10 +310,11 @@ class TikTokPostTest extends TestCase
         $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/publish", $body)->assertStatus(409)->assertJsonPath('code', 'POST_NOT_EDITABLE');
         $this->assertSame(1, TikTokPublishJob::query()->count());
 
-        // Worker chưa gắn tài khoản TikTok không nhận được job
+        // Worker chưa gắn tài khoản A51 không nhận được job; worker của tài khoản A51 khác không thấy job này
         $this->claimPublishJob($this->workerToken('no-account'))->assertStatus(409)->assertJsonPath('code', 'TIKTOK_ACCOUNT_NOT_ASSIGNED');
+        $this->claimPublishJob($this->publisherToken($this->buyer(), 'other-worker'))->assertNoContent();
 
-        $token = $this->publisherToken();
+        $token = $this->publisherToken($user);
         $job = $this->claimPublishJob($token)->assertOk()->json('data');
         $this->assertSame('tiktok_publish', $job['type']);
         $this->assertSame($post->id, $job['request']['post_id']);
@@ -327,7 +329,7 @@ class TikTokPostTest extends TestCase
         $post->refresh();
         $this->assertSame(TikTokPostStatus::Published, $post->status);
         $this->assertNotNull($post->published_at);
-        $this->assertSame(TikTokAccount::query()->value('id'), $post->tiktok_account_id);
+        $this->assertSame(TikTokAccount::query()->where('user_id', $user->id)->value('id'), $post->tiktok_account_id);
         $this->actingAs($user)->deleteJson("/api/v1/tiktok/posts/{$post->id}")->assertStatus(409)->assertJsonPath('code', 'POST_NOT_DELETABLE');
     }
 
@@ -335,7 +337,7 @@ class TikTokPostTest extends TestCase
     {
         $user = $this->buyer(credit: 5000);
         $post = $this->pendingPost($user);
-        $token = $this->publisherToken();
+        $token = $this->publisherToken($user);
         $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/publish", $this->publishBody($post))->assertOk();
 
         $jobId = $this->claimPublishJob($token)->json('data.id');
@@ -360,7 +362,7 @@ class TikTokPostTest extends TestCase
     {
         $user = $this->buyer(credit: 5000);
         $post = $this->pendingPost($user);
-        $token = $this->publisherToken();
+        $token = $this->publisherToken($user);
         $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/publish", $this->publishBody($post))->assertOk();
         $jobId = $this->claimPublishJob($token)->json('data.id');
 
@@ -377,7 +379,7 @@ class TikTokPostTest extends TestCase
     {
         $user = $this->buyer(credit: 5000);
         $post = $this->pendingPost($user);
-        $token = $this->publisherToken(active: false);
+        $token = $this->publisherToken($user, active: false);
         $this->actingAs($user)->postJson("/api/v1/tiktok/posts/{$post->id}/publish", $this->publishBody($post))->assertOk();
 
         $this->claimPublishJob($token)->assertStatus(409)->assertJsonPath('code', 'TIKTOK_ACCOUNT_NOT_ASSIGNED');

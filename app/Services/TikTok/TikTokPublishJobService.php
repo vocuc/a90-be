@@ -19,7 +19,8 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Đăng bài TikTok qua worker (note/dang-tiktok-qua-worker.txt ở repo frontend), không dùng API TikTok:
- * bấm đăng -> lưu chỉnh sửa, tạo job, bài sang queued. Worker giữ tài khoản TikTok của A51 nhận job (publishing),
+ * bấm đăng -> lưu chỉnh sửa, tạo job, bài sang queued. Admin gắn mỗi tài khoản A51 với 1 worker (TikTokAccount);
+ * chỉ worker đó nhận job của tài khoản A51 này (publishing),
  * lưu nháp trên TikTok Studio rồi báo completed (published). Lỗi / quá hạn không giao lại: bài về pending_review
  * với một thông báo chung, người dùng tự bấm đăng lại. Job chờ không hết hạn.
  */
@@ -71,19 +72,20 @@ class TikTokPublishJobService
     }
 
     /**
-     * Nhận job chờ cũ nhất. Chỉ worker được gắn tài khoản TikTok đang bật mới nhận được; bài vào tài khoản của worker đó.
-     * SKIP LOCKED để nhiều worker gọi cùng lúc không nhận trùng.
+     * Nhận job chờ cũ nhất của tài khoản A51 được gắn với worker (dòng TikTokAccount đang bật).
+     * SKIP LOCKED để worker gọi lặp / song song không nhận trùng.
      */
     public function claim(Worker $worker): ?TikTokPublishJob
     {
         $account = TikTokAccount::query()->where('worker_id', $worker->id)->first();
-        if (! $account?->is_active) {
-            throw new BusinessException('TIKTOK_ACCOUNT_NOT_ASSIGNED', 'Worker chưa được gắn tài khoản TikTok hoặc tài khoản đang tắt.', 409);
+        if (! $account?->is_active || ! $account->user_id) {
+            throw new BusinessException('TIKTOK_ACCOUNT_NOT_ASSIGNED', 'Worker chưa được gắn tài khoản A51 hoặc đang bị tắt.', 409);
         }
 
         return DB::transaction(function () use ($worker, $account) {
             $job = TikTokPublishJob::query()
                 ->where('status', OutputStatus::Queued)
+                ->whereHas('post', fn ($q) => $q->where('user_id', $account->user_id))
                 ->orderBy('id')
                 ->lock('for update skip locked')
                 ->first();

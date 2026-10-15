@@ -6,9 +6,12 @@
     <div class="card">
         <div class="card-header d-flex align-items-center">
             <p class="text-muted small mb-0">
-                Mỗi tài khoản gắn <b>1 worker</b> (máy đã đăng nhập sẵn tài khoản trên TikTok Studio). Worker nhận bài người dùng bấm đăng
-                và <b>lưu nháp</b> vào tài khoản của mình; vào TikTok để đăng các bài nháp.
+                Mỗi dòng gắn <b>1 tài khoản A51</b> với <b>1 worker</b> (máy đã đăng nhập sẵn tài khoản TikTok trên TikTok Studio).
+                Worker chỉ nhận bài của tài khoản A51 đó và <b>lưu nháp</b>; vào TikTok để đăng các bài nháp.
                 Đang có <b>{{ $queuedJobs }}</b> bài chờ worker nhận.
+                @if ($unassignedJobs)
+                    <span class="text-danger">Trong đó <b>{{ $unassignedJobs }}</b> bài của tài khoản A51 chưa được gắn worker.</span>
+                @endif
             </p>
             <a href="{{ route('admin.tiktok-accounts.create') }}" class="btn btn-sm btn-primary ml-auto text-nowrap">
                 <i class="fas fa-plus"></i> Thêm tài khoản
@@ -18,8 +21,8 @@
             <table class="table table-hover table-sm mb-0">
                 <thead>
                 <tr>
-                    <th>Tên</th>
-                    <th>Username</th>
+                    <th>Tài khoản TikTok</th>
+                    <th>Tài khoản A51</th>
                     <th>Worker</th>
                     <th class="text-center">Bài đã lưu nháp</th>
                     <th class="text-center">Trạng thái</th>
@@ -29,8 +32,17 @@
                 <tbody>
                 @forelse ($accounts as $account)
                     <tr class="{{ $account->is_active ? '' : 'text-muted' }}">
-                        <td><b>{{ $account->name }}</b></td>
-                        <td>{{ $account->username ? '@'.$account->username : '—' }}</td>
+                        <td>
+                            <b>{{ $account->name }}</b>
+                            @if ($account->username)<div class="small text-muted">{{ '@'.$account->username }}</div>@endif
+                        </td>
+                        <td>
+                            @if ($account->user)
+                                <a href="{{ route('admin.users.show', $account->user) }}">{{ $account->user->email }}</a>
+                            @else
+                                <span class="text-warning small">Chưa gắn tài khoản A51</span>
+                            @endif
+                        </td>
                         <td>
                             @if ($account->worker)
                                 {{ $account->worker->name }}
@@ -67,7 +79,7 @@
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="6" class="text-center text-muted py-3">Chưa có tài khoản TikTok. Bài người dùng bấm đăng sẽ chờ tới khi có worker giữ tài khoản.</td></tr>
+                    <tr><td colspan="6" class="text-center text-muted py-3">Chưa có tài khoản TikTok. Bài người dùng bấm đăng sẽ chờ tới khi tài khoản A51 của họ được gắn worker.</td></tr>
                 @endforelse
                 </tbody>
             </table>

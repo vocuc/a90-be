@@ -84,21 +84,33 @@ class AdminPanelTest extends TestCase
     public function test_admin_manages_tiktok_accounts_and_assigns_worker(): void
     {
         $this->workerToken('may-1');
+        $this->workerToken('may-2');
         $worker = Worker::query()->where('name', 'may-1')->firstOrFail();
+        $other = Worker::query()->where('name', 'may-2')->firstOrFail();
+        $user = $this->buyer();
         $this->actingAs($this->admin());
 
-        $this->post('/admin/tiktok-accounts', ['name' => 'A51 Official', 'username' => '@a51.vn', 'worker_id' => $worker->id, 'is_active' => 1])
-            ->assertRedirect('/admin/tiktok-accounts');
+        $this->post('/admin/tiktok-accounts', [
+            'name' => 'A51 Official', 'username' => '@a51.vn', 'user_email' => strtoupper($user->email), 'worker_id' => $worker->id, 'is_active' => 1,
+        ])->assertRedirect('/admin/tiktok-accounts');
         $account = TikTokAccount::query()->firstOrFail();
         $this->assertSame('a51.vn', $account->username);
+        $this->assertSame($user->id, $account->user_id);
         $this->assertSame($worker->id, $account->worker_id);
 
-        $this->get('/admin/tiktok-accounts')->assertOk()->assertSee('A51 Official')->assertSee('may-1');
-        $this->get("/admin/tiktok-accounts/{$account->id}/edit")->assertOk()->assertSee('Bài đã lưu nháp gần đây');
+        $this->get('/admin/tiktok-accounts')->assertOk()->assertSee('A51 Official')->assertSee($user->email)->assertSee('may-1');
+        $this->get("/admin/tiktok-accounts/{$account->id}/edit")->assertOk()->assertSee($user->email)->assertSee('Bài đã lưu nháp gần đây');
 
-        // Một worker chỉ giữ một tài khoản
-        $this->post('/admin/tiktok-accounts', ['name' => 'Khác', 'worker_id' => $worker->id, 'is_active' => 1])
+        // Bắt buộc email A51 có thật và worker; mỗi worker và mỗi tài khoản A51 chỉ gắn 1 lần
+        $this->post('/admin/tiktok-accounts', ['name' => 'Khác', 'user_email' => 'khong-co@a51.test', 'is_active' => 1])
+            ->assertSessionHasErrors(['user_email', 'worker_id']);
+        $this->post('/admin/tiktok-accounts', ['name' => 'Khác', 'user_email' => $this->buyer()->email, 'worker_id' => $worker->id, 'is_active' => 1])
             ->assertSessionHasErrors('worker_id');
+        $this->post('/admin/tiktok-accounts', ['name' => 'Khác', 'user_email' => $user->email, 'worker_id' => $other->id, 'is_active' => 1])
+            ->assertSessionHasErrors('user_email');
+        $this->put("/admin/tiktok-accounts/{$account->id}", ['name' => 'Đổi tên', 'user_email' => $user->email, 'worker_id' => $worker->id, 'is_active' => 1])
+            ->assertRedirect('/admin/tiktok-accounts');
+        $this->assertSame(1, TikTokAccount::query()->count());
 
         $this->post("/admin/tiktok-accounts/{$account->id}/toggle")->assertSessionHas('success');
         $this->assertFalse($account->fresh()->is_active);

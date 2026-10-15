@@ -36,15 +36,24 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="worker_id">Worker giữ tài khoản</label>
-                        <select id="worker_id" name="worker_id" class="form-control @error('worker_id') is-invalid @enderror">
-                            <option value="">— Chưa gắn —</option>
+                        <label for="user_email">Tài khoản A51 (email) <span class="text-danger">*</span></label>
+                        <input type="email" id="user_email" name="user_email" required
+                               value="{{ old('user_email', $account->user?->email) }}" placeholder="vd: khachhang@gmail.com"
+                               class="form-control @error('user_email') is-invalid @enderror">
+                        @error('user_email')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        <small class="form-text text-muted">Worker chỉ nhận bài TikTok của tài khoản A51 này. Mỗi tài khoản A51 gắn 1 worker.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="worker_id">Worker <span class="text-danger">*</span></label>
+                        <select id="worker_id" name="worker_id" required class="form-control @error('worker_id') is-invalid @enderror">
+                            <option value="">— Chọn worker —</option>
                             @foreach ($workers as $worker)
                                 @php
                                     $taken = $worker->tiktokAccount && $worker->tiktokAccount->id !== $account->id;
                                 @endphp
                                 <option value="{{ $worker->id }}" @selected((string) old('worker_id', $account->worker_id) === (string) $worker->id) @disabled($taken)>
-                                    {{ $worker->name }}{{ $taken ? ' (đang giữ '.$worker->tiktokAccount->name.')' : '' }}{{ $worker->is_active ? '' : ' (đã tắt)' }}
+                                    {{ $worker->name }}{{ $taken ? ' (đang gắn với '.$worker->tiktokAccount->name.')' : '' }}{{ $worker->is_active ? '' : ' (đã tắt)' }}
                                 </option>
                             @endforeach
                         </select>
