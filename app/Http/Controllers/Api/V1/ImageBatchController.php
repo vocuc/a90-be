@@ -23,6 +23,8 @@ use Illuminate\Http\UploadedFile;
  */
 class ImageBatchController extends Controller
 {
+    private const CROP_MAX_KB = 20480;
+
     public function __construct(
         private ImageBatchService $batches,
         private SettingService $settings,
@@ -124,6 +126,22 @@ class ImageBatchController extends Controller
         $image = $this->batches->regenerate($request->user(), $batch, $image, $input, $kept, $data['idempotency_key']);
 
         return response()->json(['data' => TikTokPostResource::image($image->load(['output', 'generation.creative']))], 202);
+    }
+
+    /** "Cắt ảnh": multipart image = ảnh đã cắt trên trình duyệt, ghi đè ảnh gốc. */
+    public function crop(Request $request, int $batch, int $image): JsonResponse
+    {
+        $batch = $this->findBatch($request, $batch);
+        $image = $this->findImage($batch, $image);
+        $request->validate([
+            'image' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:'.self::CROP_MAX_KB],
+        ], [
+            'image.max' => 'Ảnh đã cắt tối đa '.(self::CROP_MAX_KB / 1024).'MB.',
+        ]);
+
+        $image = $this->batches->crop($request->user(), $batch, $image, $request->file('image'));
+
+        return response()->json(['data' => TikTokPostResource::image($image->load(['output', 'generation.creative']))]);
     }
 
     public function destroyImage(Request $request, int $batch, int $image): Response

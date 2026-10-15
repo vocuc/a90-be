@@ -10,6 +10,7 @@ use App\Models\ImageBatch;
 use App\Models\ImageBatchImage;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -113,6 +114,53 @@ class ImageBatchService
 
             return $image;
         });
+    }
+
+    /**
+     * "Cắt ảnh": ảnh đã cắt trên trình duyệt ghi đè lên ảnh gốc của output (không tính phí). Ảnh trong lịch sử tạo
+     * ảnh và bài TikTok dùng cùng output cũng đổi theo. File mới có đường dẫn mới, file cũ bị xoá sau khi lưu xong.
+     */
+    public function crop(User $user, ImageBatch $batch, ImageBatchImage $image, UploadedFile $file): ImageBatchImage
+    {
+        // Lưu ảnh trước, ngoài transaction, để không giữ khóa trong lúc upload lên S3 (như WorkerJobService::complete)
+        $directory = MediaStorage::datedDirectory('generations/outputs');
+        $path = $this->media->storeUpload($file, $directory);
+        try {
+            $thumbPath = $this->media->storeOptimizedImage($file, $directory, [WorkerJobService::THUMB_MAX_SIDE])[0];
+        } catch (BusinessException) {
+            $thumbPath = null;
+        }
+
+        try {
+            $old = DB::transaction(function () use ($user, $batch, $image, $file, $path, $thumbPath) {
+                $image = $batch->images()->lockForUpdate()->findOrFail($image->id);
+                $output = GenerationOutput::query()->lockForUpdate()->findOrFail($image->output_id);
+                if ($output->status !== OutputStatus::Completed) {
+                    throw new BusinessException('IMAGE_NOT_READY', 'Chỉ cắt được ảnh đã tạo xong.', 409);
+                }
+
+                $old = [$output->image_path, $output->thumb_path];
+                $output->update([
+                    'image_path' => $path,
+                    'thumb_path' => $thumbPath,
+                    'mime' => $file->getMimeType() ?: 'application/octet-stream',
+                    'size_bytes' => $file->getSize(),
+                ]);
+                $this->audit->log('image_batch.crop', $batch, ['image_id' => $image->id, 'output_id' => $output->id], $user->id);
+
+                return $old;
+            });
+        } catch (\Throwable $e) {
+            $this->media->delete($path);
+            $this->media->delete($thumbPath);
+            throw $e;
+        }
+
+        foreach ($old as $oldPath) {
+            $this->media->delete($oldPath);
+        }
+
+        return $image;
     }
 
     /** Xoá một ảnh khỏi lô (ảnh vẫn còn trong lịch sử tạo ảnh). Ảnh đang tạo / ảnh cuối cùng: không xoá được. */

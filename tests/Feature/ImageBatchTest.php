@@ -213,6 +213,51 @@ class ImageBatchTest extends TestCase
             ->assertJsonPath('data.inputs', null);
     }
 
+    // ---- Cắt ảnh ----
+
+    public function test_crop_overwrites_original_image_free_of_charge(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $batch = $this->completedBatch($user);
+        $image = $batch->images()->with('output')->first();
+        $oldPath = $image->output->image_path;
+        $balance = $this->balance($user);
+
+        $data = $this->actingAs($user)->post("/api/v1/image-batches/{$batch->id}/images/{$image->id}/crop", [
+            'image' => UploadedFile::fake()->image('crop.jpg', 300, 400),
+        ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('data.id', $image->id)
+            ->assertJsonPath('data.output_id', $image->output_id)
+            ->assertJsonPath('data.status', 'completed')
+            ->json('data');
+
+        $output = $image->output->fresh();
+        $this->assertNotSame($oldPath, $output->image_path);
+        $this->assertStringContainsString($output->image_path, $data['image_url']);
+        $this->assertNotNull($output->thumb_path);
+        Storage::disk('media')->assertExists($output->image_path);
+        Storage::disk('media')->assertMissing($oldPath);
+        $this->assertSame($balance, $this->balance($user));
+    }
+
+    public function test_crop_rejects_busy_image_and_other_users(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $batch = $this->completedBatch($user);
+        $image = $batch->images()->first();
+        $url = "/api/v1/image-batches/{$batch->id}/images/{$image->id}/crop";
+        $file = fn () => ['image' => UploadedFile::fake()->image('crop.jpg', 30, 40)];
+
+        $this->actingAs($this->buyer())->post($url, $file(), ['Accept' => 'application/json'])->assertNotFound();
+        $this->actingAs($user)->post($url, [], ['Accept' => 'application/json'])->assertJsonValidationErrors('image');
+
+        $this->actingAs($user)->postJson("/api/v1/image-batches/{$batch->id}/images/{$image->id}/regenerate", ['idempotency_key' => 'r1'])
+            ->assertStatus(202);
+        $this->actingAs($user)->post($url, $file(), ['Accept' => 'application/json'])
+            ->assertStatus(409)->assertJsonPath('code', 'IMAGE_NOT_READY');
+    }
+
     // ---- Xoá ----
 
     public function test_delete_image_keeps_at_least_one(): void

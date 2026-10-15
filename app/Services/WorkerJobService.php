@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\DB;
 class WorkerJobService
 {
     /** Cạnh dài tối đa (px) của thumbnail ảnh kết quả. */
-    private const THUMB_MAX_SIDE = 600;
+    public const THUMB_MAX_SIDE = 600;
 
     public function __construct(
         private GenerationFinalizer $finalizer,

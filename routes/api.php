@@ -89,6 +89,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('{batch}/images/{image}/inputs', [ImageBatchController::class, 'imageInputs'])->whereNumber(['batch', 'image']);
             Route::post('{batch}/images/{image}/regenerate', [ImageBatchController::class, 'regenerate'])
                 ->whereNumber(['batch', 'image'])->middleware('throttle:generations');
+            Route::post('{batch}/images/{image}/crop', [ImageBatchController::class, 'crop'])->whereNumber(['batch', 'image']);
             Route::delete('{batch}/images/{image}', [ImageBatchController::class, 'destroyImage'])->whereNumber(['batch', 'image']);
         });
 
