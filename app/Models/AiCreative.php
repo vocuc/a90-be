@@ -60,6 +60,12 @@ class AiCreative extends Model
         return $this->hasMany(AiCreativeImage::class, 'creative_id')->orderBy('sort_order')->orderBy('id');
     }
 
+    /** Nguyên liệu ẩn (ảnh của các trường hidden_image). */
+    public function assets(): HasMany
+    {
+        return $this->hasMany(AiCreativeAsset::class, 'creative_id');
+    }
+
     /** Hashtag theo thứ tự Creator nhập. */
     public function hashtags(): BelongsToMany
     {

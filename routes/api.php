@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\Admin\CreditController as AdminCreditController;
 use App\Http\Controllers\Api\V1\AiModelController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\Creator\CreativeAssetController;
 use App\Http\Controllers\Api\V1\Creator\CreativeController;
 use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\DashboardController;
@@ -70,6 +71,10 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('creatives/{creative}/publish', [CreativeController::class, 'publish']);
             Route::post('creatives/{creative}/pause', [CreativeController::class, 'pause']);
             Route::post('creatives/{creative}/test', [CreativeController::class, 'test'])->middleware('throttle:generations');
+
+            // Nguyên liệu ẩn (trường hidden_image): tải ảnh trước, lưu Creative thì gắn vào
+            Route::get('template-limits', [CreativeAssetController::class, 'limits']);
+            Route::post('creative-assets', [CreativeAssetController::class, 'store']);
 
             Route::post('creatives/{creative}/images', [CreativeImageController::class, 'store']);
             Route::patch('creatives/{creative}/images/order', [CreativeImageController::class, 'reorder']);

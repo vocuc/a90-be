@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\AiCreative;
+use App\Services\CreativeTemplate;
 use App\Services\GenerationService;
 use App\Services\MediaStorage;
 use Illuminate\Http\Request;
@@ -22,8 +23,8 @@ class CreativeDetailResource extends CreativeCardResource
             ...parent::toArray($request),
             'description' => $this->description,
             'video_url' => $this->video_url,
-            // Form người mua. KHÔNG trả prompt_template.
-            'input_schema' => $this->config?->input_schema,
+            // Form người mua. KHÔNG trả prompt_template và nguyên liệu ẩn.
+            'input_schema' => $this->config ? CreativeTemplate::buyerFields($this->config->input_schema ?? []) : null,
             'images' => $this->images->map(fn ($image) => [
                 'id' => $image->id,
                 'url' => $media->url($image->path),

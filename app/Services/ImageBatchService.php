@@ -212,7 +212,7 @@ class ImageBatchService
         $paths = $generation->input_paths ?? [];
         $values = $generation->input_values ?? [];
         $inputs = [];
-        foreach ($creative->config->input_schema as $field) {
+        foreach (CreativeTemplate::buyerFields($creative->config->input_schema) as $field) {
             $key = $field['key'];
             if ($field['type'] !== 'image') {
                 if (array_key_exists($key, $values)) {

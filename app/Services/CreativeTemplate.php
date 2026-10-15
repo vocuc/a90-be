@@ -9,11 +9,15 @@ use Illuminate\Validation\Rule;
  * Khớp frontend src/components/template/templateSchema.js.
  *
  * input_schema là danh sách trường: { key, label, type, description?, required, sort_order, validation, options?, default_value? }.
+ * Trường hidden_image (nguyên liệu ẩn) có thêm asset_id: ảnh Creator tải lên, người mua không thấy, luôn gửi kèm tới model.
  */
 class CreativeTemplate
 {
     /** Loại trường backend xử lý được (frontend còn image_list/image_set nhưng chưa hỗ trợ khi tạo ảnh). */
-    public const TYPES = ['image', 'text', 'textarea', 'number', 'select', 'radio', 'multi_select', 'toggle', 'aspect_ratio'];
+    public const TYPES = ['image', 'text', 'textarea', 'number', 'select', 'radio', 'multi_select', 'toggle', 'aspect_ratio', self::HIDDEN_IMAGE];
+
+    /** Nguyên liệu ẩn: không có trong form người mua. */
+    public const HIDDEN_IMAGE = 'hidden_image';
 
     private const OPTION_TYPES = ['select', 'radio', 'multi_select'];
 
@@ -35,9 +39,10 @@ class CreativeTemplate
      *
      * @param  string[]  $supportedRatios  tỉ lệ model hỗ trợ
      * @param  int  $maxImageKb  dung lượng ảnh đầu vào tối đa (setting generation.input_max_size_kb)
+     * @param  int  $maxHiddenImages  số nguyên liệu ẩn tối đa (setting generation.max_hidden_images)
      * @return array<string, string> lỗi theo đường dẫn, rỗng = hợp lệ
      */
-    public static function errors(array $fields, ?string $prompt, array $supportedRatios, int $maxImageKb): array
+    public static function errors(array $fields, ?string $prompt, array $supportedRatios, int $maxImageKb, int $maxHiddenImages): array
     {
         $errors = [];
         $add = function (string $path, string $message) use (&$errors) {
@@ -55,6 +60,7 @@ class CreativeTemplate
 
         $keys = [];
         $ratioFields = 0;
+        $hiddenImages = 0;
         foreach ($fields as $i => $field) {
             $path = "input_schema.{$i}";
             if (! is_array($field)) {
@@ -100,6 +106,13 @@ class CreativeTemplate
                 $add("{$path}.description", "{$name}: mô tả tối đa 500 ký tự.");
             }
 
+            if ($type === self::HIDDEN_IMAGE) {
+                $hiddenImages++;
+                if (! is_int($field['asset_id'] ?? null)) {
+                    $add("{$path}.asset_id", "{$name}: chưa tải ảnh nguyên liệu.");
+                }
+            }
+
             $v = is_array($field['validation'] ?? null) ? $field['validation'] : [];
             if ($type === 'image') {
                 $types = $v['allowed_types'] ?? array_keys(self::IMAGE_MIMES);
@@ -142,6 +155,11 @@ class CreativeTemplate
         if ($ratioFields !== 1) {
             $add('input_schema', 'Template phải có đúng 1 trường tỉ lệ khung hình.');
         }
+        if ($hiddenImages > $maxHiddenImages) {
+            $add('input_schema', $maxHiddenImages > 0
+                ? "Tối đa {$maxHiddenImages} nguyên liệu ẩn."
+                : 'Hiện chưa cho phép dùng nguyên liệu ẩn.');
+        }
 
         $prompt = (string) $prompt;
         if (trim($prompt) === '') {
@@ -152,7 +170,7 @@ class CreativeTemplate
         foreach (self::variables($prompt) as $variable) {
             if (! isset($keys[$variable])) {
                 $add('prompt_template', "Prompt dùng biến {{{$variable}}} chưa khai báo trong Template.");
-            } elseif ($keys[$variable] === 'image') {
+            } elseif (in_array($keys[$variable], ['image', self::HIDDEN_IMAGE], true)) {
                 $add('prompt_template', "{{{$variable}}} là trường ảnh — ảnh được gửi kèm, không chèn vào prompt như chữ.");
             }
         }
@@ -183,7 +201,11 @@ class CreativeTemplate
             if ($type === 'aspect_ratio') {
                 $out['options'] = [['value' => $field['default_value'], 'label' => $field['default_value']]];
             }
-            if (array_key_exists('default_value', $field) && $type !== 'image') {
+            if ($type === self::HIDDEN_IMAGE) {
+                $out['required'] = false;
+                $out['asset_id'] = $field['asset_id'];
+            }
+            if (array_key_exists('default_value', $field) && ! in_array($type, ['image', self::HIDDEN_IMAGE], true)) {
                 $out['default_value'] = $field['default_value'];
             }
 
@@ -199,6 +221,18 @@ class CreativeTemplate
         return array_values(array_unique($matches[1]));
     }
 
+    /** Các trường người mua thấy (bỏ nguyên liệu ẩn). */
+    public static function buyerFields(array $fields): array
+    {
+        return array_values(array_filter($fields, fn (array $field) => $field['type'] !== self::HIDDEN_IMAGE));
+    }
+
+    /** @return array<string, int> asset_id theo tên trường của các nguyên liệu ẩn */
+    public static function hiddenAssetIds(array $fields): array
+    {
+        return collect($fields)->where('type', self::HIDDEN_IMAGE)->pluck('asset_id', 'key')->all();
+    }
+
     public static function aspectField(array $fields): ?array
     {
         return collect($fields)->firstWhere('type', 'aspect_ratio');
@@ -212,7 +246,7 @@ class CreativeTemplate
     public static function inputRules(array $fields, int $maxImageKb, array $ratios): array
     {
         $rules = ['inputs' => ['required', 'array']];
-        foreach ($fields as $field) {
+        foreach (self::buyerFields($fields) as $field) {
             $path = 'inputs.'.$field['key'];
             $required = $field['required'] ? 'required' : 'nullable';
             $v = (array) ($field['validation'] ?? []);
@@ -245,7 +279,7 @@ class CreativeTemplate
     }
 
     /**
-     * Thay {{key}} bằng giá trị người mua nhập. Biến của trường ảnh hoặc chưa có giá trị -> chuỗi rỗng.
+     * Thay {{key}} bằng giá trị người mua nhập. Biến của trường ảnh (kể cả ảnh ẩn) hoặc chưa có giá trị -> chuỗi rỗng.
      *
      * @param  array<string, mixed>  $values
      */
@@ -255,7 +289,7 @@ class CreativeTemplate
 
         $text = preg_replace_callback(self::VARIABLE_PATTERN, function ($m) use ($byKey, $values) {
             $field = $byKey->get($m[1]);
-            if (! $field || $field['type'] === 'image') {
+            if (! $field || in_array($field['type'], ['image', self::HIDDEN_IMAGE], true)) {
                 return '';
             }
 

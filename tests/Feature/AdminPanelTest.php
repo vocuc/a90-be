@@ -183,13 +183,14 @@ class AdminPanelTest extends TestCase
 
         $payload = [
             'creator_share_percent' => 15, 'revenue_hold_days' => 3, 'default_max_outputs' => 4,
-            'max_outputs_limit' => 8, 'input_max_size_kb' => 5120,
+            'max_outputs_limit' => 8, 'input_max_size_kb' => 5120, 'max_hidden_images' => 3,
         ];
         $this->put('/admin/settings', $payload)->assertSessionHas('success');
 
         $settings = app(SettingService::class);
         $this->assertSame('15', $settings->get('creator_share_percent'));
         $this->assertSame(8, $settings->int('generation.max_outputs_limit'));
+        $this->assertSame(3, $settings->int('generation.max_hidden_images'));
         $this->assertDatabaseHas('audit_logs', ['action' => 'admin.settings.update']);
 
         $this->put('/admin/settings', ['default_max_outputs' => 9] + $payload)->assertSessionHasErrors('default_max_outputs');

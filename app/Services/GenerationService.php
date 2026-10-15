@@ -89,12 +89,12 @@ class GenerationService
         }
 
         return $this->start($user, $creative, $type, $outputs->count(), $original->aspect_ratio, $idempotencyKey,
-            fn () => ['input_paths' => $original->input_paths, 'input_values' => $original->input_values],
+            fn () => ['input_paths' => $original->input_paths, 'asset_paths' => $original->asset_paths, 'input_values' => $original->input_values],
             $original, $outputs->pluck('id')->all());
     }
 
     /**
-     * @param  callable(): array{input_paths: array, input_values: ?array}  $resolveInput
+     * @param  callable(): array{input_paths: array, asset_paths?: ?array, input_values: ?array}  $resolveInput
      * @param  int[]  $retryOfOutputIds
      */
     private function start(
@@ -116,6 +116,10 @@ class GenerationService
         }
 
         $input = $resolveInput();
+        // Lần tạo lại dùng đúng nguyên liệu ẩn của lần gốc
+        if (! array_key_exists('asset_paths', $input)) {
+            $input['asset_paths'] = $this->assetPaths($creative);
+        }
 
         try {
             $generation = DB::transaction(function () use ($user, $creative, $type, $quantity, $aspectRatio, $idempotencyKey, $input, $parent, $retryOfOutputIds) {
@@ -211,6 +215,23 @@ class GenerationService
             ],
             'input_values' => $input->values,
         ];
+    }
+
+    /**
+     * Ảnh nguyên liệu ẩn hiện tại của Creative theo tên trường.
+     *
+     * @return array<string, string>|null
+     */
+    private function assetPaths(AiCreative $creative): ?array
+    {
+        $ids = CreativeTemplate::hiddenAssetIds($creative->config->input_schema ?? []);
+        if (! $ids) {
+            return null;
+        }
+
+        $paths = $creative->assets()->whereIn('id', $ids)->pluck('path', 'id');
+
+        return array_filter(array_map(fn (int $id) => $paths[$id] ?? null, $ids));
     }
 
     private function findExisting(User $user, string $idempotencyKey, int $creativeId): ?Generation

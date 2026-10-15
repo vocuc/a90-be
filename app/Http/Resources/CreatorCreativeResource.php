@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\AiCreative;
+use App\Services\CreativeTemplate;
 use App\Services\GenerationService;
 use App\Services\MediaStorage;
 use Illuminate\Http\Request;
@@ -46,7 +47,7 @@ class CreatorCreativeResource extends JsonResource
                     'sort_order' => $image->sort_order,
                 ])->values(),
                 'config' => [
-                    'input_schema' => $this->config?->input_schema,
+                    'input_schema' => $this->inputSchema($media),
                     'prompt_template' => $this->config?->prompt_template,
                     'max_outputs' => $this->config?->max_outputs,
                     'default_aspect_ratio' => $this->config?->default_aspect_ratio,
@@ -54,5 +55,20 @@ class CreatorCreativeResource extends JsonResource
                 'available_aspect_ratios' => GenerationService::allowedAspectRatios($this->resource),
             ]),
         ];
+    }
+
+    /** Nguyên liệu ẩn kèm link ảnh (asset_url) để Creator xem lại. */
+    private function inputSchema(MediaStorage $media): ?array
+    {
+        $fields = $this->config?->input_schema;
+        if ($fields === null) {
+            return null;
+        }
+
+        $paths = $this->assets->pluck('path', 'id');
+
+        return array_map(fn (array $field) => $field['type'] === CreativeTemplate::HIDDEN_IMAGE
+            ? [...$field, 'asset_url' => $media->url($paths[$field['asset_id']] ?? null)]
+            : $field, $fields);
     }
 }

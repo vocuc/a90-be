@@ -39,11 +39,11 @@ class WorkerJobController extends Controller
 
     /**
      * Yêu cầu gửi tới model dạng phẳng: mỗi ảnh đầu vào một khoá camelCase (product_image -> productImage),
-     * kèm prompt đã ghép, tỉ lệ khung hình và tên model.
+     * gồm cả ảnh nguyên liệu ẩn của Creator, kèm prompt đã ghép, tỉ lệ khung hình và tên model.
      */
     private function request(Generation $generation, MediaStorage $media): array
     {
-        $paths = $generation->input_paths ?? [];
+        $paths = [...($generation->asset_paths ?? []), ...($generation->input_paths ?? [])];
         // Cột JSON của MySQL không giữ thứ tự khoá -> xếp lại theo thứ tự trường trong form
         $order = array_flip(array_column($generation->creative->config?->input_schema ?? [], 'key'));
         uksort($paths, fn ($a, $b) => ($order[$a] ?? PHP_INT_MAX) <=> ($order[$b] ?? PHP_INT_MAX));

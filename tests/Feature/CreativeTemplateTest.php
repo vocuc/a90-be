@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\AiModel;
 use App\Models\Category;
 use App\Models\Generation;
+use App\Services\SettingService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -158,5 +159,92 @@ class CreativeTemplateTest extends TestCase
         $generation = Generation::query()->findOrFail($response->json('data.id'));
         $this->assertSame("Giày đẹp.\nNền màu be", $generation->prompt_snapshot);
         $this->assertEquals(['note' => 'Nền màu be', 'aspectRatio' => '9:16'], $generation->input_values);
+    }
+
+    private function uploadAsset(string $name = 'logo.png'): int
+    {
+        return $this->post('/api/v1/creator/creative-assets', ['image' => UploadedFile::fake()->image($name)],
+            ['Accept' => 'application/json'])->assertCreated()->json('data.id');
+    }
+
+    private function hiddenField(string $key, int $assetId): array
+    {
+        return ['key' => $key, 'label' => 'Ảnh '.$key, 'type' => 'hidden_image', 'asset_id' => $assetId];
+    }
+
+    public function test_hidden_images_are_sent_to_worker_but_not_shown_to_buyer(): void
+    {
+        $this->actingAs($creator = $this->creator());
+        $this->getJson('/api/v1/creator/template-limits')->assertOk()->assertJsonPath('data.max_hidden_images', 5);
+
+        $logo = $this->uploadAsset();
+        $id = $this->postJson('/api/v1/creator/creatives', $this->payload([
+            'input_schema' => $this->schema([$this->hiddenField('brand_logo', $logo)]),
+        ]))->assertCreated()
+            ->assertJsonPath('data.config.input_schema.3.type', 'hidden_image')
+            ->assertJsonPath('data.config.input_schema.3.asset_id', $logo)
+            ->json('data.id');
+        $this->assertNotNull($this->getJson("/api/v1/creator/creatives/{$id}")->json('data.config.input_schema.3.asset_url'));
+
+        $this->post("/api/v1/creator/creatives/{$id}/images", ['image' => UploadedFile::fake()->image('cover.jpg')],
+            ['Accept' => 'application/json'])->assertCreated();
+        $slug = $this->postJson("/api/v1/creator/creatives/{$id}/publish")->assertOk()->json('data.slug');
+
+        // Người mua không thấy trường ẩn và không gửi được giá trị cho nó
+        $this->app['auth']->forgetGuards();
+        $detail = $this->getJson("/api/v1/creatives/{$slug}")->assertOk();
+        $this->assertCount(3, $detail->json('data.input_schema'));
+        $this->assertStringNotContainsString('brand_logo', $detail->getContent());
+
+        $buyer = $this->buyer(credit: 5000);
+        $response = $this->actingAs($buyer)->post('/api/v1/generations', [
+            'creative_id' => $id,
+            'quantity' => 1,
+            'idempotency_key' => (string) Str::uuid(),
+            'inputs' => [
+                'product_image' => UploadedFile::fake()->image('shoe.png'),
+                'outfit_image' => UploadedFile::fake()->image('outfit.jpg'),
+                'brand_logo' => 'x',
+            ],
+        ], ['Accept' => 'application/json'])->assertStatus(202);
+        $this->assertArrayNotHasKey('brand_logo', $response->json('data.input_values') ?? []);
+        $this->assertCount(2, $response->json('data.input_images'));
+
+        $generation = Generation::query()->findOrFail($response->json('data.id'));
+        $this->assertSame(['brand_logo'], array_keys($generation->asset_paths));
+        $this->assertArrayNotHasKey('brand_logo', $generation->input_values);
+
+        $job = $this->claimJob($this->workerToken())->assertOk()->json('data.request');
+        $this->assertSame(['productImage', 'outfitImage', 'brandLogo', 'prompt', 'aspectRatio', 'modelDisplayName'], array_keys($job));
+        $this->assertSame("https://media.test/{$generation->asset_paths['brand_logo']}", $job['brandLogo']);
+    }
+
+    public function test_hidden_images_are_limited_and_must_belong_to_creator(): void
+    {
+        $this->actingAs($this->creator());
+        $foreign = $this->uploadAsset();
+
+        $this->actingAs($this->creator());
+        $post = fn (array $fields) => $this->postJson('/api/v1/creator/creatives', $this->payload(['input_schema' => $this->schema($fields)]));
+
+        // Ảnh của Creator khác / chưa tải ảnh
+        $post([$this->hiddenField('logo', $foreign)])->assertStatus(422)->assertJsonValidationErrors('input_schema.3.asset_id');
+        $post([['key' => 'logo', 'label' => 'Logo', 'type' => 'hidden_image']])
+            ->assertStatus(422)->assertJsonValidationErrors('input_schema.3.asset_id');
+        // Biến ảnh ẩn không chèn vào prompt như chữ
+        $logo = $this->uploadAsset();
+        $this->postJson('/api/v1/creator/creatives', $this->payload([
+            'input_schema' => $this->schema([$this->hiddenField('logo', $logo)]),
+            'prompt_template' => 'Gắn {{logo}}',
+        ]))->assertStatus(422)->assertJsonValidationErrors('prompt_template');
+
+        // Vượt giới hạn admin cấu hình
+        app(SettingService::class)->set('generation.max_hidden_images', 1);
+        $post([$this->hiddenField('logo', $logo), $this->hiddenField('logo_2', $this->uploadAsset())])
+            ->assertStatus(422)->assertJsonValidationErrors('input_schema');
+        $post([$this->hiddenField('logo', $logo)])->assertCreated();
+
+        // Ảnh đã gắn vào Creative này thì Creative khác không dùng được
+        $post([$this->hiddenField('logo', $logo)])->assertStatus(422)->assertJsonValidationErrors('input_schema.3.asset_id');
     }
 }

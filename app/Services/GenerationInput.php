@@ -53,7 +53,7 @@ final class GenerationInput
     {
         $creative->loadMissing(['config', 'model']);
         $config = $creative->config;
-        $fields = $config->input_schema;
+        $fields = CreativeTemplate::buyerFields($config->input_schema);
 
         $files = [];
         $values = [];

@@ -15,6 +15,8 @@ return [
         'generation.default_max_outputs' => 5,
         'generation.max_outputs_limit' => 10,
         'generation.input_max_size_kb' => 10240,
+        // Số nguyên liệu ẩn (trường hidden_image) tối đa của một Creative.
+        'generation.max_hidden_images' => 5,
     ],
 
     'generation' => [

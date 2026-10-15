@@ -18,7 +18,7 @@ use Illuminate\Validation\Rule;
 
 class CreativeController extends Controller
 {
-    private const DETAIL_RELATIONS = ['images', 'config', 'model', 'hashtags'];
+    private const DETAIL_RELATIONS = ['images', 'config', 'model', 'hashtags', 'assets'];
 
     public function __construct(private CreativeService $creatives) {}
 

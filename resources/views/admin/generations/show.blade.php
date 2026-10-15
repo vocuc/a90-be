@@ -39,6 +39,12 @@
                     @empty
                         <span class="text-muted">Không có ảnh.</span>
                     @endforelse
+                    @foreach($generation->asset_paths ?? [] as $key => $path)
+                        <figure class="d-inline-block mr-2">
+                            <img src="{{ $media->url($path) }}" class="thumb-lg" alt="">
+                            <figcaption class="small text-muted"><code>{{ $key }}</code> (ẩn)</figcaption>
+                        </figure>
+                    @endforeach
                     @if($generation->input_values)
                         <dl class="mt-2 mb-0 small">
                             @foreach($generation->input_values as $key => $value)

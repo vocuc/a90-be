@@ -21,6 +21,7 @@ class Generation extends Model
             'status' => GenerationStatus::class,
             'completed_at' => 'datetime',
             'input_paths' => 'array',
+            'asset_paths' => 'array',
             'input_values' => 'array',
         ];
     }

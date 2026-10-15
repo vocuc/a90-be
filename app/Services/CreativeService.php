@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\CreativeStatus;
 use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
+use App\Models\AiCreativeAsset;
 use App\Models\CreatorProfile;
 use App\Models\Hashtag;
 use App\Models\User;
@@ -41,6 +42,7 @@ class CreativeService
             ]);
 
             $this->syncHashtags($creative, $data['hashtags'] ?? []);
+            $this->attachAssets($creative, $data['input_schema'] ?? []);
             $this->audit->log('creative.create', $creative);
 
             return $creative;
@@ -57,6 +59,9 @@ class CreativeService
             $config = Arr::only($data, self::CONFIG_FIELDS);
             if ($config) {
                 $creative->config()->updateOrCreate([], $config);
+            }
+            if (array_key_exists('input_schema', $data)) {
+                $this->attachAssets($creative, $data['input_schema']);
             }
             if (array_key_exists('hashtags', $data)) {
                 $this->syncHashtags($creative, $data['hashtags']);
@@ -131,7 +136,8 @@ class CreativeService
         }
 
         $paths = $creative->images()->get(['path', 'thumb_path'])
-            ->flatMap(fn ($image) => [$image->path, $image->thumb_path]);
+            ->flatMap(fn ($image) => [$image->path, $image->thumb_path])
+            ->merge($creative->assets()->pluck('path'));
         DB::transaction(function () use ($creative) {
             $this->audit->log('creative.delete', $creative, ['title' => $creative->title]);
             $creative->delete();
@@ -187,6 +193,18 @@ class CreativeService
             $names->keys()->values()->mapWithKeys(fn ($slug, $i) => [$ids[$slug] => ['sort_order' => $i]])->all()
         );
         $creative->unsetRelation('hashtags');
+    }
+
+    /**
+     * Gắn ảnh nguyên liệu ẩn mới tải lên vào Creative (CreativeRequest đã kiểm tra quyền sở hữu).
+     * Ảnh không còn dùng vẫn giữ lại vì lượt tạo ảnh cũ có thể đang tham chiếu khi tạo lại.
+     */
+    private function attachAssets(AiCreative $creative, array $fields): void
+    {
+        $ids = array_values(CreativeTemplate::hiddenAssetIds($fields));
+        if ($ids) {
+            AiCreativeAsset::query()->whereIn('id', $ids)->whereNull('creative_id')->update(['creative_id' => $creative->id]);
+        }
     }
 
     /** Chuẩn hóa input_schema; tỉ lệ mặc định lấy từ trường tỉ lệ khung hình. */

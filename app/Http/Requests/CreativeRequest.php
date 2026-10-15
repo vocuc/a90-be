@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\AiCreativeAsset;
 use App\Models\AiModel;
 use App\Models\Hashtag;
 use App\Services\CreativeTemplate;
@@ -51,17 +52,53 @@ class CreativeRequest extends FormRequest
                 if ($validator->errors()->isNotEmpty() || ! is_array($this->input('input_schema'))) {
                     return;
                 }
+                $settings = app(SettingService::class);
                 $errors = CreativeTemplate::errors(
                     $this->input('input_schema'),
                     $this->input('prompt_template'),
                     $this->supportedRatios(),
-                    app(SettingService::class)->int('generation.input_max_size_kb'),
+                    $settings->int('generation.input_max_size_kb'),
+                    $settings->int('generation.max_hidden_images'),
                 );
+                $errors += $this->assetErrors($this->input('input_schema'));
                 foreach ($errors as $path => $message) {
                     $validator->errors()->add($path, $message);
                 }
             },
         ];
+    }
+
+    /**
+     * Ảnh nguyên liệu ẩn phải do chính Creator tải lên, chưa gắn Creative nào hoặc thuộc Creative đang sửa.
+     *
+     * @return array<string, string>
+     */
+    private function assetErrors(array $fields): array
+    {
+        $ids = [];
+        foreach ($fields as $i => $field) {
+            if (is_array($field) && ($field['type'] ?? null) === CreativeTemplate::HIDDEN_IMAGE && is_int($field['asset_id'] ?? null)) {
+                $ids[$i] = $field['asset_id'];
+            }
+        }
+        if (! $ids) {
+            return [];
+        }
+
+        $creativeId = $this->route('creative')?->id;
+        $valid = AiCreativeAsset::query()
+            ->whereIn('id', $ids)
+            ->where('creator_id', $this->user()->id)
+            ->where(fn ($q) => $q->whereNull('creative_id')->when($creativeId, fn ($q) => $q->orWhere('creative_id', $creativeId)))
+            ->pluck('id')
+            ->all();
+
+        $errors = [];
+        foreach (array_diff($ids, $valid) as $i => $id) {
+            $errors["input_schema.{$i}.asset_id"] = 'Ảnh nguyên liệu không tồn tại, hãy tải lại.';
+        }
+
+        return $errors;
     }
 
     /** Hashtag phải còn ký tự Latin/số sau khi bỏ dấu (dùng làm khóa so trùng). */
