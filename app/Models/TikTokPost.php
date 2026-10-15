@@ -69,7 +69,7 @@ class TikTokPost extends Model
         return array_slice(array_values($result), 0, self::MAX_HASHTAGS);
     }
 
-    /** Mô tả gửi TikTok: nội dung + dòng hashtag. */
+    /** Mô tả điền vào TikTok: nội dung + dòng hashtag. */
     public static function description(?string $content, array $hashtags): string
     {
         $tags = implode(' ', array_map(fn ($tag) => '#'.$tag, $hashtags));
@@ -122,11 +122,17 @@ class TikTokPost extends Model
         return $this->hasOne(TikTokContentJob::class, 'tiktok_post_id');
     }
 
+    public function publishJobs(): HasMany
+    {
+        return $this->hasMany(TikTokPublishJob::class, 'tiktok_post_id');
+    }
+
     public function imageBatch(): BelongsTo
     {
         return $this->belongsTo(ImageBatch::class, 'image_batch_id');
     }
 
+    /** Tài khoản TikTok của worker đã nhận job đăng gần nhất. */
     public function tiktokAccount(): BelongsTo
     {
         return $this->belongsTo(TikTokAccount::class, 'tiktok_account_id');

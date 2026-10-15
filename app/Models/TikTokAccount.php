@@ -2,49 +2,40 @@
 
 namespace App\Models;
 
-use App\Enums\TikTokAccountStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Tài khoản TikTok người dùng đã ủy quyền. Token mã hoá khi lưu, không bao giờ trả ra API hay ghi log.
+ * Tài khoản TikTok của A51 (admin quản lý). Worker giữ tài khoản (đã đăng nhập sẵn trong trình duyệt) nhận job đăng bài
+ * và lưu nháp vào tài khoản này. Người dùng không chọn tài khoản.
  */
 class TikTokAccount extends Model
 {
-    public const REQUIRED_SCOPE = 'video.upload';
-
     protected $table = 'tiktok_accounts';
 
     protected $guarded = ['id'];
 
-    protected $hidden = ['access_token', 'refresh_token'];
-
     protected function casts(): array
     {
         return [
-            'status' => TikTokAccountStatus::class,
-            'access_token' => 'encrypted',
-            'refresh_token' => 'encrypted',
-            'access_token_expires_at' => 'datetime',
-            'refresh_token_expires_at' => 'datetime',
-            'last_error' => 'array',
-            'connected_at' => 'datetime',
-            'last_refreshed_at' => 'datetime',
+            'is_active' => 'boolean',
         ];
     }
 
-    public static function hasRequiredScope(?string $scope): bool
+    public function worker(): BelongsTo
     {
-        return in_array(self::REQUIRED_SCOPE, array_map('trim', explode(',', (string) $scope)), true);
+        return $this->belongsTo(Worker::class);
     }
 
-    public function isUsable(): bool
+    /** Bài đã lưu nháp / đang đăng vào tài khoản này. */
+    public function posts(): HasMany
     {
-        return $this->status === TikTokAccountStatus::Active && $this->refresh_token !== null && self::hasRequiredScope($this->scope);
+        return $this->hasMany(TikTokPost::class, 'tiktok_account_id');
     }
 
-    public function user(): BelongsTo
+    public function publishJobs(): HasMany
     {
-        return $this->belongsTo(User::class);
+        return $this->hasMany(TikTokPublishJob::class, 'tiktok_account_id');
     }
 }

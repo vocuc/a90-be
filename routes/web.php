@@ -10,6 +10,7 @@ use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\FinanceController;
 use App\Http\Controllers\Admin\GenerationController;
 use App\Http\Controllers\Admin\SettingController;
+use App\Http\Controllers\Admin\TikTokAccountController;
 use App\Http\Controllers\Admin\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -43,6 +44,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
         Route::resource('banners', BannerController::class)->except('show');
         Route::post('banners/{banner}/toggle', [BannerController::class, 'toggle'])->name('banners.toggle');
+
+        Route::resource('tiktok-accounts', TikTokAccountController::class)->except('show')->parameters(['tiktok-accounts' => 'tiktokAccount']);
+        Route::post('tiktok-accounts/{tiktokAccount}/toggle', [TikTokAccountController::class, 'toggle'])->name('tiktok-accounts.toggle');
 
         Route::get('generations', [GenerationController::class, 'index'])->name('generations.index');
         Route::get('generations/{generation}', [GenerationController::class, 'show'])->name('generations.show');

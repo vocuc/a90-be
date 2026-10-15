@@ -36,9 +36,6 @@ class TikTokPostResource extends JsonResource
             'cover_url' => $images->firstWhere('thumb_url', '!==', null)['thumb_url'] ?? null,
             'images' => $images,
             'last_error' => $this->last_error,
-            'tiktok_publish_id' => $this->tiktok_publish_id,
-            'tiktok_username' => $this->tiktok_username,
-            'tiktok_post_url' => $this->tiktok_post_url,
             'created_at' => $this->created_at,
             'published_at' => $this->published_at,
         ];

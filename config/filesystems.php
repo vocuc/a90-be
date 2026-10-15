@@ -70,21 +70,6 @@ return [
             'report' => false,
         ],
 
-        // Ảnh JPG gửi TikTok (PULL_FROM_URL): bucket/prefix đọc công khai qua CDN gắn tên miền đã xác minh
-        // với TikTok (TIKTOK_MEDIA_URL). Nên đặt lifecycle rule xoá prefix tiktok/ sau vài ngày.
-        's3_tiktok' => [
-            'driver' => 's3',
-            'key' => env('AWS_ACCESS_KEY_ID'),
-            'secret' => env('AWS_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_DEFAULT_REGION'),
-            'bucket' => env('TIKTOK_MEDIA_BUCKET', env('AWS_BUCKET')),
-            'url' => env('TIKTOK_MEDIA_URL'),
-            'endpoint' => env('AWS_ENDPOINT'),
-            'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
-            'throw' => true,
-            'report' => false,
-        ],
-
     ],
 
     /*

@@ -11,11 +11,10 @@ use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\ImageBatchController;
 use App\Http\Controllers\Api\V1\MarketplaceController;
-use App\Http\Controllers\Api\V1\TikTok\AccountController as TikTokAccountController;
 use App\Http\Controllers\Api\V1\TikTok\PostController as TikTokPostController;
-use App\Http\Controllers\Api\V1\TikTok\WebhookController as TikTokWebhookController;
 use App\Http\Controllers\Api\V1\WorkerContentJobController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
+use App\Http\Controllers\Api\V1\WorkerPublishJobController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->middleware('throttle:api')->group(function () {
@@ -38,9 +37,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     Route::get('creatives', [MarketplaceController::class, 'creatives']);
     Route::get('creatives/{slug}', [MarketplaceController::class, 'creative']);
     Route::get('creators/{username}', [MarketplaceController::class, 'creator']);
-
-    // TikTok gọi về sau khi người dùng ủy quyền (không có Bearer, xác định người dùng qua state)
-    Route::get('tiktok/oauth/callback', [TikTokAccountController::class, 'callback']);
 
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
 
@@ -96,12 +92,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::delete('{batch}/images/{image}', [ImageBatchController::class, 'destroyImage'])->whereNumber(['batch', 'image']);
         });
 
-        // Đăng bài TikTok
+        // Đăng bài TikTok: bấm đăng tạo job cho worker lưu nháp (note/dang-tiktok-qua-worker.txt ở repo frontend)
         Route::prefix('tiktok')->group(function () {
-            Route::get('account', [TikTokAccountController::class, 'show']);
-            Route::delete('account', [TikTokAccountController::class, 'destroy']);
-            Route::post('oauth/authorize', [TikTokAccountController::class, 'authorizeUrl']);
-
             Route::get('posts', [TikTokPostController::class, 'index']);
             Route::post('posts/from-images', [TikTokPostController::class, 'storeFromImages']);
             Route::get('posts/{post}', [TikTokPostController::class, 'show'])->whereNumber('post');
@@ -128,5 +120,8 @@ Route::prefix('v1/content-jobs')->middleware('worker')->group(function () {
     Route::post('{id}', [WorkerContentJobController::class, 'submit'])->whereNumber('id');
 });
 
-// Webhook TikTok: xác thực bằng chữ ký TikTok-Signature.
-Route::post('v1/tiktok/webhook', TikTokWebhookController::class);
+// Worker đăng bài TikTok: giữ 1 tài khoản TikTok của A51 (admin gắn), lưu nháp bài qua TikTok Studio.
+Route::prefix('v1/publish-jobs')->middleware('worker')->group(function () {
+    Route::get('/', [WorkerPublishJobController::class, 'next']);
+    Route::post('{id}', [WorkerPublishJobController::class, 'submit'])->whereNumber('id');
+});

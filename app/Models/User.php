@@ -73,11 +73,6 @@ class User extends Authenticatable
         return $this->hasOne(CreatorWallet::class);
     }
 
-    public function tiktokAccount(): HasOne
-    {
-        return $this->hasOne(TikTokAccount::class);
-    }
-
     public function creatives(): HasMany
     {
         return $this->hasMany(AiCreative::class, 'creator_id');

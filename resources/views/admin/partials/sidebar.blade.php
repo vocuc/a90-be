@@ -10,6 +10,7 @@
         ['route' => 'admin.categories.index', 'pattern' => 'admin.categories.*', 'icon' => 'fas fa-tags', 'label' => 'Danh mục'],
         ['route' => 'admin.banners.index', 'pattern' => 'admin.banners.*', 'icon' => 'fas fa-image', 'label' => 'Banner'],
         ['route' => 'admin.generations.index', 'pattern' => 'admin.generations.*', 'icon' => 'fas fa-images', 'label' => 'Lượt tạo ảnh'],
+        ['route' => 'admin.tiktok-accounts.index', 'pattern' => 'admin.tiktok-accounts.*', 'icon' => 'fab fa-tiktok', 'label' => 'Tài khoản TikTok'],
         ['header' => 'TÀI CHÍNH'],
         ['route' => 'admin.transactions.index', 'pattern' => 'admin.transactions.*', 'icon' => 'fas fa-exchange-alt', 'label' => 'Transaction'],
         ['route' => 'admin.ledger.index', 'pattern' => 'admin.ledger.*', 'icon' => 'fas fa-book', 'label' => 'Sổ cái Credit'],

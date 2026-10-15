@@ -3,10 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 
 /**
- * Máy tạo ảnh nội bộ: lấy việc qua GET /api/v1/jobs, trả ảnh qua POST /api/v1/jobs/{id}.
+ * Máy nội bộ: tạo ảnh (GET /api/v1/jobs), viết nội dung (GET /api/v1/content-jobs),
+ * đăng bài TikTok (GET /api/v1/publish-jobs, chỉ worker được gắn tài khoản TikTok).
  */
 class Worker extends Model
 {
@@ -43,5 +45,11 @@ class Worker extends Model
     public static function hashToken(string $token): string
     {
         return hash('sha256', $token);
+    }
+
+    /** Tài khoản TikTok worker đang giữ (admin gắn ở trang Tài khoản TikTok). */
+    public function tiktokAccount(): HasOne
+    {
+        return $this->hasOne(TikTokAccount::class);
     }
 }

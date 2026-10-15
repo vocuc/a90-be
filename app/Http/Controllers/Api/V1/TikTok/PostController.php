@@ -8,7 +8,7 @@ use App\Http\Resources\TikTokPostResource;
 use App\Models\Hashtag;
 use App\Models\TikTokPost;
 use App\Services\TikTok\TikTokPostService;
-use App\Services\TikTok\TikTokPublisher;
+use App\Services\TikTok\TikTokPublishJobService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -54,7 +54,7 @@ class PostController extends Controller
             'images.*.output_id' => ['required', 'integer', 'distinct'],
             'image_batch_id' => ['nullable', 'integer', Rule::exists('image_batches', 'id')->where('user_id', $request->user()->id)],
             'idempotency_key' => ['required', 'string', 'max:80'],
-            ...self::contentRules(required: false),
+            ...self::contentRules(),
         ], [
             'images.max' => 'Tối đa '.TikTokPost::MAX_IMAGES.' ảnh mỗi bài.',
             'images.*.output_id.distinct' => 'Ảnh bị chọn trùng.',
@@ -67,12 +67,12 @@ class PostController extends Controller
         return $this->resource($post)->response()->setStatusCode(201);
     }
 
-    /** "Duyệt và đăng": body là toàn bộ chỉnh sửa trên trang, ảnh được gửi vào hộp thư TikTok. */
-    public function publish(Request $request, int $post, TikTokPublisher $publisher): TikTokPostResource
+    /** "Đăng TikTok": body là toàn bộ chỉnh sửa trên trang; tạo job cho worker lưu nháp, bài sang queued. */
+    public function publish(Request $request, int $post, TikTokPublishJobService $publisher): TikTokPostResource
     {
         $post = $this->findPost($request, $post);
         $data = $request->validate([
-            ...self::contentRules(required: true),
+            ...self::contentRules(),
             'images' => ['required', 'array', 'min:1', 'max:'.TikTokPost::MAX_IMAGES],
             'images.*' => ['array'],
             'images.*.image_id' => ['nullable', 'integer'],
@@ -94,11 +94,11 @@ class PostController extends Controller
         return response()->noContent();
     }
 
-    /** Tiêu đề / nội dung / hashtag: không bắt buộc khi tạo bài, tiêu đề bắt buộc khi đăng. */
-    private static function contentRules(bool $required): array
+    /** Tiêu đề / nội dung / hashtag: không bắt buộc. */
+    private static function contentRules(): array
     {
         return [
-            'title' => [$required ? 'required' : 'nullable', 'string', 'max:'.TikTokPost::TITLE_MAX],
+            'title' => ['nullable', 'string', 'max:'.TikTokPost::TITLE_MAX],
             'content' => ['nullable', 'string', 'max:'.TikTokPost::CONTENT_MAX],
             'hashtags' => ['nullable', 'array', 'max:'.TikTokPost::MAX_HASHTAGS],
             'hashtags.*' => ['string', 'max:50', 'regex:'.Hashtag::PATTERN],

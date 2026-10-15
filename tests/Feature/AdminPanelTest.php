@@ -5,7 +5,9 @@ namespace Tests\Feature;
 use App\Models\CreatorProfile;
 use App\Models\Generation;
 use App\Models\Setting;
+use App\Models\TikTokAccount;
 use App\Models\User;
+use App\Models\Worker;
 use App\Services\SettingService;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -77,6 +79,32 @@ class AdminPanelTest extends TestCase
         foreach ($pages as $url => $expected) {
             $this->get($url)->assertOk()->assertSee($expected, false);
         }
+    }
+
+    public function test_admin_manages_tiktok_accounts_and_assigns_worker(): void
+    {
+        $this->workerToken('may-1');
+        $worker = Worker::query()->where('name', 'may-1')->firstOrFail();
+        $this->actingAs($this->admin());
+
+        $this->post('/admin/tiktok-accounts', ['name' => 'A51 Official', 'username' => '@a51.vn', 'worker_id' => $worker->id, 'is_active' => 1])
+            ->assertRedirect('/admin/tiktok-accounts');
+        $account = TikTokAccount::query()->firstOrFail();
+        $this->assertSame('a51.vn', $account->username);
+        $this->assertSame($worker->id, $account->worker_id);
+
+        $this->get('/admin/tiktok-accounts')->assertOk()->assertSee('A51 Official')->assertSee('may-1');
+        $this->get("/admin/tiktok-accounts/{$account->id}/edit")->assertOk()->assertSee('Bài đã lưu nháp gần đây');
+
+        // Một worker chỉ giữ một tài khoản
+        $this->post('/admin/tiktok-accounts', ['name' => 'Khác', 'worker_id' => $worker->id, 'is_active' => 1])
+            ->assertSessionHasErrors('worker_id');
+
+        $this->post("/admin/tiktok-accounts/{$account->id}/toggle")->assertSessionHas('success');
+        $this->assertFalse($account->fresh()->is_active);
+
+        $this->delete("/admin/tiktok-accounts/{$account->id}")->assertRedirect('/admin/tiktok-accounts');
+        $this->assertSame(0, TikTokAccount::query()->count());
     }
 
     public function test_admin_adjusts_credit_idempotently(): void

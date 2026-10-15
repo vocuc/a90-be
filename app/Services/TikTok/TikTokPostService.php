@@ -126,7 +126,7 @@ class TikTokPostService
         ];
     }
 
-    /** Xoá bài khi đang chờ duyệt. Đang tạo nội dung / đang đăng / đã đăng: không xoá được. */
+    /** Xoá bài khi đang chờ gửi. Đang tạo nội dung / chờ đăng / đang đăng / đã lưu nháp: không xoá được. */
     public function delete(User $user, TikTokPost $post): void
     {
         DB::transaction(function () use ($user, $post) {
@@ -134,7 +134,8 @@ class TikTokPostService
             if ($post->status !== TikTokPostStatus::PendingReview) {
                 throw new BusinessException('POST_NOT_DELETABLE', match ($post->status) {
                     TikTokPostStatus::Generating => 'Bài đang được tạo nội dung, vui lòng chờ xong rồi xoá.',
-                    default => 'Bài đã gửi lên TikTok, không xoá được trên A51.',
+                    TikTokPostStatus::Queued, TikTokPostStatus::Publishing => 'Bài đang được đăng lên TikTok, không xoá được.',
+                    default => 'Bài đã lưu nháp TikTok, không xoá được trên A51.',
                 }, 409);
             }
 
