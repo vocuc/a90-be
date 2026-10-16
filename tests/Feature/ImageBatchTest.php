@@ -5,7 +5,7 @@ namespace Tests\Feature;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\ImageBatch;
-use App\Models\TikTokPost;
+use App\Models\SocialPost;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -283,15 +283,15 @@ class ImageBatchTest extends TestCase
         $this->actingAs($user)->deleteJson("/api/v1/image-batches/{$batch->id}")->assertNoContent();
 
         $this->assertSame(0, ImageBatch::query()->count());
-        $this->assertNull(TikTokPost::query()->find($postId)->image_batch_id);
+        $this->assertNull(SocialPost::query()->find($postId)->image_batch_id);
         $this->assertSame(1, Generation::query()->count());
     }
 
-    // ---- Đăng TikTok từ lô ----
+    // ---- Tạo bài đăng từ lô ----
 
     private function postFromBatch(User $user, ImageBatch $batch, array $images): TestResponse
     {
-        return $this->actingAs($user)->postJson('/api/v1/tiktok/posts/from-images', [
+        return $this->actingAs($user)->postJson('/api/v1/social/posts/from-images', [
             'images' => array_map(fn ($image) => ['generation_id' => $image->generation_id, 'output_id' => $image->output_id], $images),
             'image_batch_id' => $batch->id,
             'idempotency_key' => (string) Str::uuid(),
@@ -318,7 +318,7 @@ class ImageBatchTest extends TestCase
         // Tạo lại ảnh trong lô: bài đã tạo giữ ảnh cũ
         $this->actingAs($user)->postJson("/api/v1/image-batches/{$batch->id}/images/{$images[1]->id}/regenerate", ['idempotency_key' => 'r1'])
             ->assertStatus(202);
-        $this->assertSame($images[1]->output_id, TikTokPost::query()->orderBy('id')->first()->images()->first()->output_id);
+        $this->assertSame($images[1]->output_id, SocialPost::query()->orderBy('id')->first()->images()->first()->output_id);
     }
 
     public function test_cannot_use_batch_of_other_user(): void

@@ -1,14 +1,16 @@
 <?php
 
-namespace App\Services\TikTok;
+namespace App\Services\Social;
 
 use App\Enums\OutputStatus;
-use App\Enums\TikTokPostStatus;
+use App\Enums\PlatformPublishStatus;
+use App\Enums\SocialPlatform;
+use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
 use App\Models\GenerationOutput;
-use App\Models\TikTokContentJob;
-use App\Models\TikTokPost;
-use App\Models\TikTokPostImage;
+use App\Models\SocialContentJob;
+use App\Models\SocialPost;
+use App\Models\SocialPostImage;
 use App\Models\User;
 use App\Services\AuditLogger;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -17,10 +19,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Bài đăng TikTok: tạo bài từ ảnh có sẵn (của một lô hoặc lịch sử tạo ảnh), xoá bài. Xem note/nghiep-vu-dang-bai-tiktik.txt.
+ * Bài đăng (TikTok / Facebook / Instagram): tạo bài từ ảnh có sẵn (của một lô hoặc lịch sử tạo ảnh), xoá bài. Xem note/nghiep-vu-dang-bai-tiktik.txt.
  * Tạo ảnh / tạo lại ảnh nằm ở lô ảnh (ImageBatchService).
  */
-class TikTokPostService
+class SocialPostService
 {
     public function __construct(private AuditLogger $audit) {}
 
@@ -31,9 +33,9 @@ class TikTokPostService
      * @param  array<int, array{generation_id: int, output_id: int}>  $refs
      * @param  array{title?: ?string, content?: ?string, hashtags?: ?array}  $content  người dùng tự nhập (không bắt buộc)
      */
-    public function createFromImages(User $user, array $refs, string $idempotencyKey, array $content = [], ?int $batchId = null): TikTokPost
+    public function createFromImages(User $user, array $refs, string $idempotencyKey, array $content = [], ?int $batchId = null): SocialPost
     {
-        $source = $batchId ? TikTokPost::SOURCE_BATCH : TikTokPost::SOURCE_EXISTING;
+        $source = $batchId ? SocialPost::SOURCE_BATCH : SocialPost::SOURCE_EXISTING;
         if ($existing = $this->findExisting($user, $idempotencyKey, $source)) {
             return $existing;
         }
@@ -42,9 +44,9 @@ class TikTokPostService
 
         try {
             $post = DB::transaction(function () use ($user, $outputs, $idempotencyKey, $content, $source, $batchId) {
-                $post = TikTokPost::query()->create([
+                $post = SocialPost::query()->create([
                     'user_id' => $user->id,
-                    'status' => TikTokPostStatus::Generating,
+                    'status' => SocialPostStatus::Generating,
                     'source' => $source,
                     'image_batch_id' => $batchId,
                     'idempotency_key' => $idempotencyKey,
@@ -55,7 +57,7 @@ class TikTokPostService
                 }
                 $this->imagesReady($post);
 
-                $this->audit->log('tiktok_post.create', $post, ['source' => $source, 'image_batch_id' => $batchId, 'images' => $outputs->count()], $user->id);
+                $this->audit->log('social_post.create', $post, ['source' => $source, 'image_batch_id' => $batchId, 'images' => $outputs->count()], $user->id);
 
                 return $post;
             });
@@ -69,10 +71,10 @@ class TikTokPostService
     /** Một ảnh vừa xong: bài đang generating có đủ ảnh xong thì sang bước nội dung. */
     public function outputFinished(int $outputId): void
     {
-        $postIds = TikTokPostImage::query()
+        $postIds = SocialPostImage::query()
             ->where('output_id', $outputId)
-            ->whereHas('post', fn ($q) => $q->where('status', TikTokPostStatus::Generating))
-            ->pluck('tiktok_post_id');
+            ->whereHas('post', fn ($q) => $q->where('status', SocialPostStatus::Generating))
+            ->pluck('social_post_id');
 
         foreach ($postIds as $postId) {
             $this->advanceIfReady($postId);
@@ -83,8 +85,8 @@ class TikTokPostService
     public function advanceIfReady(int $postId): void
     {
         DB::transaction(function () use ($postId) {
-            $post = TikTokPost::query()->lockForUpdate()->find($postId);
-            if (! $post || $post->status !== TikTokPostStatus::Generating) {
+            $post = SocialPost::query()->lockForUpdate()->find($postId);
+            if (! $post || $post->status !== SocialPostStatus::Generating) {
                 return;
             }
 
@@ -101,18 +103,18 @@ class TikTokPostService
      * Ảnh của bài đã xong: giao worker viết nội dung (bật ai_content và người dùng chưa tự nhập),
      * không thì sang chờ duyệt ngay (chưa nhập gì: lấy tên mẫu + hashtag của mẫu).
      */
-    private function imagesReady(TikTokPost $post): void
+    private function imagesReady(SocialPost $post): void
     {
         $manual = $post->hasManualContent();
-        if (config('ai90.tiktok.ai_content') && ! $manual) {
-            TikTokContentJob::query()->firstOrCreate(['tiktok_post_id' => $post->id], ['status' => OutputStatus::Queued]);
+        if (config('ai90.social.ai_content') && ! $manual) {
+            SocialContentJob::query()->firstOrCreate(['social_post_id' => $post->id], ['status' => OutputStatus::Queued]);
 
             return;
         }
 
         $post->update([
             ...($manual ? [] : $post->defaultContent()),
-            'status' => TikTokPostStatus::PendingReview,
+            'status' => SocialPostStatus::PendingReview,
         ]);
     }
 
@@ -122,24 +124,25 @@ class TikTokPostService
         return [
             'title' => trim((string) ($content['title'] ?? '')),
             'content' => $content['content'] ?? null,
-            'hashtags' => TikTokPost::normalizeHashtags($content['hashtags'] ?? []) ?: null,
+            'hashtags' => SocialPost::normalizeHashtags($content['hashtags'] ?? []) ?: null,
         ];
     }
 
-    /** Xoá bài khi đang chờ gửi. Đang tạo nội dung / chờ đăng / đang đăng / đã lưu nháp: không xoá được. */
-    public function delete(User $user, TikTokPost $post): void
+    /** Xoá bài khi đang chờ gửi và chưa đăng xong nền tảng nào. Đang tạo nội dung / chờ đăng / đang đăng / đã đăng: không xoá được. */
+    public function delete(User $user, SocialPost $post): void
     {
         DB::transaction(function () use ($user, $post) {
-            $post = TikTokPost::query()->lockForUpdate()->findOrFail($post->id);
-            if ($post->status !== TikTokPostStatus::PendingReview) {
+            $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            $published = collect($post->platformStatuses())->filter(fn ($status) => $status === PlatformPublishStatus::Published)->keys();
+            if ($post->status !== SocialPostStatus::PendingReview || $published->isNotEmpty()) {
                 throw new BusinessException('POST_NOT_DELETABLE', match ($post->status) {
-                    TikTokPostStatus::Generating => 'Bài đang được tạo nội dung, vui lòng chờ xong rồi xoá.',
-                    TikTokPostStatus::Queued, TikTokPostStatus::Publishing => 'Bài đang được đăng lên TikTok, không xoá được.',
-                    default => 'Bài đã lưu nháp TikTok, không xoá được trên A51.',
+                    SocialPostStatus::Generating => 'Bài đang được tạo nội dung, vui lòng chờ xong rồi xoá.',
+                    SocialPostStatus::Queued, SocialPostStatus::Publishing => 'Bài đang được đăng, không xoá được.',
+                    default => 'Bài đã đăng lên '.$published->map(fn ($p) => SocialPlatform::from($p)->label())->implode(', ').', không xoá được trên A51.',
                 }, 409);
             }
 
-            $this->audit->log('tiktok_post.delete', $post, ['images' => $post->images()->count()], $user->id);
+            $this->audit->log('social_post.delete', $post, ['images' => $post->images()->count()], $user->id);
             $post->delete();
         });
     }
@@ -178,16 +181,16 @@ class TikTokPostService
         return $result;
     }
 
-    public function assertEditable(TikTokPost $post): void
+    public function assertEditable(SocialPost $post): void
     {
-        if ($post->status !== TikTokPostStatus::PendingReview) {
+        if ($post->status !== SocialPostStatus::PendingReview) {
             throw BusinessException::postNotEditable();
         }
     }
 
-    private function findExisting(User $user, string $idempotencyKey, string $source): ?TikTokPost
+    private function findExisting(User $user, string $idempotencyKey, string $source): ?SocialPost
     {
-        $existing = TikTokPost::query()
+        $existing = SocialPost::query()
             ->where('user_id', $user->id)
             ->where('idempotency_key', $idempotencyKey)
             ->first();

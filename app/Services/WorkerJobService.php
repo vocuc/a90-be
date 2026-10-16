@@ -77,7 +77,7 @@ class WorkerJobService
         }
     }
 
-    /** Ảnh gốc giữ nguyên để tải về/đăng TikTok; thumbnail chỉ để hiển thị danh sách. Lỗi tạo thumbnail không chặn kết quả. */
+    /** Ảnh gốc giữ nguyên để tải về / đăng bài; thumbnail chỉ để hiển thị danh sách. Lỗi tạo thumbnail không chặn kết quả. */
     private function storeThumb(UploadedFile $image, string $directory): ?string
     {
         try {

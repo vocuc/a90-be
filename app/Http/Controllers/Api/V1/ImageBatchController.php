@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ImageBatchResource;
-use App\Http\Resources\TikTokPostResource;
+use App\Http\Resources\SocialPostResource;
 use App\Models\AiCreative;
 use App\Models\ImageBatch;
 use App\Models\ImageBatchImage;
@@ -125,7 +125,7 @@ class ImageBatchController extends Controller
 
         $image = $this->batches->regenerate($request->user(), $batch, $image, $input, $kept, $data['idempotency_key']);
 
-        return response()->json(['data' => TikTokPostResource::image($image->load(['output', 'generation.creative']))], 202);
+        return response()->json(['data' => SocialPostResource::image($image->load(['output', 'generation.creative']))], 202);
     }
 
     /** "Cắt ảnh": multipart image = ảnh đã cắt trên trình duyệt, ghi đè ảnh gốc. */
@@ -141,7 +141,7 @@ class ImageBatchController extends Controller
 
         $image = $this->batches->crop($request->user(), $batch, $image, $request->file('image'));
 
-        return response()->json(['data' => TikTokPostResource::image($image->load(['output', 'generation.creative']))]);
+        return response()->json(['data' => SocialPostResource::image($image->load(['output', 'generation.creative']))]);
     }
 
     public function destroyImage(Request $request, int $batch, int $image): Response

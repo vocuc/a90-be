@@ -12,7 +12,7 @@ use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\ImageBatchController;
 use App\Http\Controllers\Api\V1\MarketplaceController;
-use App\Http\Controllers\Api\V1\TikTok\PostController as TikTokPostController;
+use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\WorkerContentJobController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
 use App\Http\Controllers\Api\V1\WorkerPublishJobController;
@@ -98,13 +98,14 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::delete('{batch}/images/{image}', [ImageBatchController::class, 'destroyImage'])->whereNumber(['batch', 'image']);
         });
 
-        // Đăng bài TikTok: bấm đăng tạo job cho worker lưu nháp (note/dang-tiktok-qua-worker.txt ở repo frontend)
-        Route::prefix('tiktok')->group(function () {
-            Route::get('posts', [TikTokPostController::class, 'index']);
-            Route::post('posts/from-images', [TikTokPostController::class, 'storeFromImages']);
-            Route::get('posts/{post}', [TikTokPostController::class, 'show'])->whereNumber('post');
-            Route::delete('posts/{post}', [TikTokPostController::class, 'destroy'])->whereNumber('post');
-            Route::post('posts/{post}/publish', [TikTokPostController::class, 'publish'])->whereNumber('post');
+        // Đăng bài lên TikTok / Facebook / Instagram: bấm đăng tạo 1 job / nền tảng cho worker (note/dang-bai-da-nen-tang.txt ở repo frontend)
+        Route::prefix('social')->group(function () {
+            Route::get('accounts', [PostController::class, 'accounts']);
+            Route::get('posts', [PostController::class, 'index']);
+            Route::post('posts/from-images', [PostController::class, 'storeFromImages']);
+            Route::get('posts/{post}', [PostController::class, 'show'])->whereNumber('post');
+            Route::delete('posts/{post}', [PostController::class, 'destroy'])->whereNumber('post');
+            Route::post('posts/{post}/publish', [PostController::class, 'publish'])->whereNumber('post');
         });
 
         // Admin
@@ -120,13 +121,13 @@ Route::prefix('v1/jobs')->middleware('worker')->group(function () {
     Route::post('{id}', [WorkerJobController::class, 'submit'])->whereNumber('id');
 });
 
-// Worker viết nội dung bài TikTok (cùng token worker, tách khỏi job ảnh).
+// Worker viết nội dung bài đăng (cùng token worker, tách khỏi job ảnh).
 Route::prefix('v1/content-jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerContentJobController::class, 'next']);
     Route::post('{id}', [WorkerContentJobController::class, 'submit'])->whereNumber('id');
 });
 
-// Worker đăng bài TikTok: giữ 1 tài khoản TikTok của A51 (admin gắn), lưu nháp bài qua TikTok Studio.
+// Worker đăng bài: giữ 1 tài khoản của 1 nền tảng (admin gắn), chỉ nhận job của nền tảng đó.
 Route::prefix('v1/publish-jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerPublishJobController::class, 'next']);
     Route::post('{id}', [WorkerPublishJobController::class, 'submit'])->whereNumber('id');

@@ -21,7 +21,7 @@ class ImageBatchResource extends JsonResource
     public function toArray(Request $request): array
     {
         if ($this->relationLoaded('images')) {
-            $images = $this->images->map(fn (ImageBatchImage $image) => TikTokPostResource::image($image))->values();
+            $images = $this->images->map(fn (ImageBatchImage $image) => SocialPostResource::image($image))->values();
             $statuses = $images->pluck('status');
             $counts = [
                 'image_count' => $images->count(),

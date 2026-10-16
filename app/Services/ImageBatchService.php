@@ -87,7 +87,7 @@ class ImageBatchService
 
     /**
      * "Tạo lại" (inputs null: dùng lại nguyên liệu cũ) hoặc "Sửa nguyên liệu". Tính phí như lần đầu,
-     * ảnh mới thay đúng vị trí ảnh cũ (ảnh cũ vẫn còn trong lịch sử tạo ảnh, bài TikTok đã tạo không đổi).
+     * ảnh mới thay đúng vị trí ảnh cũ (ảnh cũ vẫn còn trong lịch sử tạo ảnh, bài đăng đã tạo không đổi).
      *
      * @param  array<string, string>  $keptPaths  ảnh đầu vào giữ lại theo tên trường (chỉ khi sửa nguyên liệu)
      */
@@ -118,7 +118,7 @@ class ImageBatchService
 
     /**
      * "Cắt ảnh": ảnh đã cắt trên trình duyệt ghi đè lên ảnh gốc của output (không tính phí). Ảnh trong lịch sử tạo
-     * ảnh và bài TikTok dùng cùng output cũng đổi theo. File mới có đường dẫn mới, file cũ bị xoá sau khi lưu xong.
+     * ảnh và bài đăng dùng cùng output cũng đổi theo. File mới có đường dẫn mới, file cũ bị xoá sau khi lưu xong.
      */
     public function crop(User $user, ImageBatch $batch, ImageBatchImage $image, UploadedFile $file): ImageBatchImage
     {
@@ -180,7 +180,7 @@ class ImageBatchService
         });
     }
 
-    /** Xoá lô khi không còn ảnh đang tạo. Bài TikTok đã tạo từ lô và ảnh trong lịch sử tạo ảnh vẫn giữ. */
+    /** Xoá lô khi không còn ảnh đang tạo. Bài đăng đã tạo từ lô và ảnh trong lịch sử tạo ảnh vẫn giữ. */
     public function delete(User $user, ImageBatch $batch): void
     {
         DB::transaction(function () use ($user, $batch) {

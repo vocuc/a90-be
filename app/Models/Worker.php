@@ -8,7 +8,7 @@ use Illuminate\Support\Str;
 
 /**
  * Máy nội bộ: tạo ảnh (GET /api/v1/jobs), viết nội dung (GET /api/v1/content-jobs),
- * đăng bài TikTok (GET /api/v1/publish-jobs, chỉ worker được gắn tài khoản TikTok).
+ * đăng bài (GET /api/v1/publish-jobs, chỉ worker được gắn tài khoản đăng bài của một nền tảng).
  */
 class Worker extends Model
 {
@@ -47,9 +47,9 @@ class Worker extends Model
         return hash('sha256', $token);
     }
 
-    /** Tài khoản TikTok worker đang giữ (admin gắn ở trang Tài khoản TikTok). */
-    public function tiktokAccount(): HasOne
+    /** Tài khoản đăng bài worker đang giữ (admin gắn ở trang Tài khoản đăng bài): quyết định nền tảng worker đăng. */
+    public function publishAccount(): HasOne
     {
-        return $this->hasOne(TikTokAccount::class);
+        return $this->hasOne(PublishAccount::class);
     }
 }

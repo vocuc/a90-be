@@ -4,8 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\CreatorProfile;
 use App\Models\Generation;
+use App\Models\PublishAccount;
 use App\Models\Setting;
-use App\Models\TikTokAccount;
 use App\Models\User;
 use App\Models\Worker;
 use App\Services\SettingService;
@@ -81,7 +81,7 @@ class AdminPanelTest extends TestCase
         }
     }
 
-    public function test_admin_manages_tiktok_accounts_and_assigns_worker(): void
+    public function test_admin_manages_publish_accounts_and_assigns_worker(): void
     {
         $this->workerToken('may-1');
         $this->workerToken('may-2');
@@ -90,33 +90,40 @@ class AdminPanelTest extends TestCase
         $user = $this->buyer();
         $this->actingAs($this->admin());
 
-        $this->post('/admin/tiktok-accounts', [
-            'name' => 'A51 Official', 'username' => '@a51.vn', 'user_email' => strtoupper($user->email), 'worker_id' => $worker->id, 'is_active' => 1,
-        ])->assertRedirect('/admin/tiktok-accounts');
-        $account = TikTokAccount::query()->firstOrFail();
+        $this->post('/admin/publish-accounts', [
+            'platform' => 'tiktok', 'name' => 'A51 Official', 'username' => '@a51.vn', 'user_email' => strtoupper($user->email), 'worker_id' => $worker->id, 'is_active' => 1,
+        ])->assertRedirect('/admin/publish-accounts');
+        $account = PublishAccount::query()->firstOrFail();
         $this->assertSame('a51.vn', $account->username);
         $this->assertSame($user->id, $account->user_id);
         $this->assertSame($worker->id, $account->worker_id);
 
-        $this->get('/admin/tiktok-accounts')->assertOk()->assertSee('A51 Official')->assertSee($user->email)->assertSee('may-1');
-        $this->get("/admin/tiktok-accounts/{$account->id}/edit")->assertOk()->assertSee($user->email)->assertSee('Bài đã lưu nháp gần đây');
+        $this->get('/admin/publish-accounts')->assertOk()->assertSee('A51 Official')->assertSee($user->email)->assertSee('may-1');
+        $this->get("/admin/publish-accounts/{$account->id}/edit")->assertOk()->assertSee($user->email)->assertSee('Bài đã đăng gần đây');
 
-        // Bắt buộc email A51 có thật và worker; mỗi worker và mỗi tài khoản A51 chỉ gắn 1 lần
-        $this->post('/admin/tiktok-accounts', ['name' => 'Khác', 'user_email' => 'khong-co@a51.test', 'is_active' => 1])
-            ->assertSessionHasErrors(['user_email', 'worker_id']);
-        $this->post('/admin/tiktok-accounts', ['name' => 'Khác', 'user_email' => $this->buyer()->email, 'worker_id' => $worker->id, 'is_active' => 1])
+        // Bắt buộc nền tảng, email A51 có thật và worker; mỗi worker gắn 1 lần, mỗi tài khoản A51 có 1 tài khoản / nền tảng
+        $this->post('/admin/publish-accounts', ['name' => 'Khác', 'user_email' => 'khong-co@a51.test', 'is_active' => 1])
+            ->assertSessionHasErrors(['platform', 'user_email', 'worker_id']);
+        $this->post('/admin/publish-accounts', ['platform' => 'tiktok', 'name' => 'Khác', 'user_email' => $this->buyer()->email, 'worker_id' => $worker->id, 'is_active' => 1])
             ->assertSessionHasErrors('worker_id');
-        $this->post('/admin/tiktok-accounts', ['name' => 'Khác', 'user_email' => $user->email, 'worker_id' => $other->id, 'is_active' => 1])
+        $this->post('/admin/publish-accounts', ['platform' => 'tiktok', 'name' => 'Khác', 'user_email' => $user->email, 'worker_id' => $other->id, 'is_active' => 1])
             ->assertSessionHasErrors('user_email');
-        $this->put("/admin/tiktok-accounts/{$account->id}", ['name' => 'Đổi tên', 'user_email' => $user->email, 'worker_id' => $worker->id, 'is_active' => 1])
-            ->assertRedirect('/admin/tiktok-accounts');
-        $this->assertSame(1, TikTokAccount::query()->count());
+        // Facebook bắt buộc link nơi đăng bài; cùng tài khoản A51 thêm được tài khoản nền tảng khác
+        $this->post('/admin/publish-accounts', ['platform' => 'facebook', 'name' => 'Fanpage', 'user_email' => $user->email, 'worker_id' => $other->id, 'is_active' => 1])
+            ->assertSessionHasErrors('target_url');
+        $this->post('/admin/publish-accounts', [
+            'platform' => 'facebook', 'name' => 'Fanpage', 'target_url' => 'https://www.facebook.com/a51', 'user_email' => $user->email, 'worker_id' => $other->id, 'is_active' => 1,
+        ])->assertRedirect('/admin/publish-accounts');
+        $this->get('/admin/publish-accounts')->assertOk()->assertSee('Fanpage')->assertSee('https://www.facebook.com/a51');
+        $this->put("/admin/publish-accounts/{$account->id}", ['platform' => 'tiktok', 'name' => 'Đổi tên', 'user_email' => $user->email, 'worker_id' => $worker->id, 'is_active' => 1])
+            ->assertRedirect('/admin/publish-accounts');
+        $this->assertSame(2, PublishAccount::query()->count());
 
-        $this->post("/admin/tiktok-accounts/{$account->id}/toggle")->assertSessionHas('success');
+        $this->post("/admin/publish-accounts/{$account->id}/toggle")->assertSessionHas('success');
         $this->assertFalse($account->fresh()->is_active);
 
-        $this->delete("/admin/tiktok-accounts/{$account->id}")->assertRedirect('/admin/tiktok-accounts');
-        $this->assertSame(0, TikTokAccount::query()->count());
+        $this->delete("/admin/publish-accounts/{$account->id}")->assertRedirect('/admin/publish-accounts');
+        $this->assertSame(1, PublishAccount::query()->count());
     }
 
     public function test_admin_adjusts_credit_idempotently(): void

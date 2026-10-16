@@ -73,10 +73,10 @@ class User extends Authenticatable
         return $this->hasOne(CreatorWallet::class);
     }
 
-    /** Tài khoản TikTok + worker admin gắn cho người dùng (đăng bài TikTok). */
-    public function tiktokAccount(): HasOne
+    /** Tài khoản đăng bài (tối đa 1 / nền tảng) + worker admin gắn cho người dùng. */
+    public function publishAccounts(): HasMany
     {
-        return $this->hasOne(TikTokAccount::class);
+        return $this->hasMany(PublishAccount::class);
     }
 
     public function creatives(): HasMany

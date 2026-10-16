@@ -33,9 +33,10 @@ return [
         'password' => env('ADMIN_PASSWORD'),
     ],
 
-    'tiktok' => [
+    'social' => [
         // Bật: ảnh xong thì giao worker viết tiêu đề / nội dung / hashtag. Tắt: người dùng tự nhập, bài sang chờ duyệt ngay.
-        'ai_content' => (bool) env('TIKTOK_AI_CONTENT', false),
+        // TIKTOK_AI_CONTENT: tên cũ, vẫn đọc để không phải sửa .env đang chạy.
+        'ai_content' => (bool) env('SOCIAL_AI_CONTENT', env('TIKTOK_AI_CONTENT', false)),
     ],
 
     'auth' => [
@@ -47,9 +48,9 @@ return [
         'lease_minutes' => 15,
         // Số lần giao job tối đa; quá số lần này thì ảnh thất bại và hoàn Credit.
         'max_attempts' => 3,
-        // Job viết nội dung bài TikTok (GET /api/v1/content-jobs): thời gian worker phải trả kết quả.
+        // Job viết nội dung bài đăng (GET /api/v1/content-jobs): thời gian worker phải trả kết quả.
         'content_lease_minutes' => 5,
-        // Job đăng bài TikTok (GET /api/v1/publish-jobs): quá hạn thì bài về chờ gửi, không giao lại.
+        // Job đăng bài (GET /api/v1/publish-jobs, 1 job / nền tảng): quá hạn thì nền tảng đó thất bại, không giao lại.
         'publish_lease_minutes' => 15,
         // Dung lượng ảnh kết quả tối đa worker được gửi lên (KB).
         'output_max_size_kb' => 20480,

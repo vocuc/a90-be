@@ -3,26 +3,30 @@
 namespace App\Http\Resources;
 
 use App\Enums\OutputStatus;
+use App\Enums\PlatformPublishStatus;
 use App\Models\ImageBatchImage;
-use App\Models\TikTokPost;
-use App\Models\TikTokPostImage;
+use App\Models\SocialPost;
+use App\Models\SocialPostImage;
 use App\Services\ImageBatchService;
 use App\Services\MediaStorage;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
- * Cần load: images.output, images.generation.creative (TikTokPostResource::RELATIONS).
+ * Cần load: images.output, images.generation.creative, publishJobs (SocialPostResource::RELATIONS).
  *
- * @mixin TikTokPost
+ * @mixin SocialPost
  */
-class TikTokPostResource extends JsonResource
+class SocialPostResource extends JsonResource
 {
-    public const RELATIONS = ['images.output', 'images.generation.creative'];
+    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs'];
+
+    /** Thông báo người dùng thấy ở nền tảng đăng lỗi; mã lỗi chi tiết chỉ admin xem (social_publish_jobs). */
+    public const PLATFORM_FAILED_MESSAGE = 'Đăng thất bại, vui lòng thử lại.';
 
     public function toArray(Request $request): array
     {
-        $images = $this->images->map(fn (TikTokPostImage $image) => self::image($image))->values();
+        $images = $this->images->map(fn (SocialPostImage $image) => self::image($image))->values();
 
         return [
             'id' => $this->id,
@@ -35,14 +39,34 @@ class TikTokPostResource extends JsonResource
             'image_count' => $images->count(),
             'cover_url' => $images->firstWhere('thumb_url', '!==', null)['thumb_url'] ?? null,
             'images' => $images,
+            // Nền tảng đã chọn đăng: { tiktok: { status, post_url, error, finished_at }, ... }
+            'platforms' => $this->platforms(),
             'last_error' => $this->last_error,
             'created_at' => $this->created_at,
             'published_at' => $this->published_at,
         ];
     }
 
+    private function platforms(): object
+    {
+        // Job gần nhất của từng nền tảng
+        $jobs = $this->publishJobs->sortBy('id')->keyBy(fn ($job) => $job->platform->value);
+        $result = [];
+        foreach ($this->platformStatuses() as $platform => $status) {
+            $job = $jobs->get($platform);
+            $result[$platform] = [
+                'status' => $status,
+                'post_url' => $job?->post_url,
+                'error' => $status === PlatformPublishStatus::Failed ? self::PLATFORM_FAILED_MESSAGE : null,
+                'finished_at' => $job?->finished_at,
+            ];
+        }
+
+        return (object) $result;
+    }
+
     /** Một ảnh của bài / lô: liên kết + dữ liệu lấy từ output và generation.creative. */
-    public static function image(TikTokPostImage|ImageBatchImage $image): array
+    public static function image(SocialPostImage|ImageBatchImage $image): array
     {
         $output = $image->output;
         $creative = $image->generation?->creative;

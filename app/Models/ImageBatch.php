@@ -33,7 +33,7 @@ class ImageBatch extends Model
             ->whereHas('output', fn (Builder $o) => $o->where('status', OutputStatus::Completed)));
     }
 
-    /** Số ảnh / đang tạo / lỗi / số bài TikTok + ảnh bìa cho danh sách lô. */
+    /** Số ảnh / đang tạo / lỗi / số bài đăng + ảnh bìa cho danh sách lô. */
     public function scopeWithSummary(Builder $query): Builder
     {
         return $query
@@ -48,6 +48,6 @@ class ImageBatch extends Model
 
     public function posts(): HasMany
     {
-        return $this->hasMany(TikTokPost::class, 'image_batch_id');
+        return $this->hasMany(SocialPost::class, 'image_batch_id');
     }
 }

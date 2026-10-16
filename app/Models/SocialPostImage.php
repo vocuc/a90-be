@@ -6,15 +6,15 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /** Liên kết bài đăng <-> một output; ảnh, url, trạng thái luôn đọc từ output. */
-class TikTokPostImage extends Model
+class SocialPostImage extends Model
 {
-    protected $table = 'tiktok_post_images';
+    protected $table = 'social_post_images';
 
     protected $guarded = ['id'];
 
     public function post(): BelongsTo
     {
-        return $this->belongsTo(TikTokPost::class, 'tiktok_post_id');
+        return $this->belongsTo(SocialPost::class, 'social_post_id');
     }
 
     public function generation(): BelongsTo
