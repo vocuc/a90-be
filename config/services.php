@@ -33,6 +33,21 @@ return [
         'client_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('GOOGLE_CLIENT_ID', ''))))),
     ],
 
+    // Tạo đơn GHN: token + ShopId do từng shop tự nhập. Staging: https://dev-online-gateway.ghn.vn
+    'ghn' => [
+        'base_url' => rtrim(env('GHN_BASE_URL', 'https://online-gateway.ghn.vn'), '/').'/shiip/public-api',
+        'timeout' => 15,
+        // Danh mục tỉnh / quận / phường ít đổi
+        'catalog_cache_hours' => 24,
+    ],
+
+    // AI đọc ảnh chat để tạo đơn vận chuyển: gọi thẳng Claude API, không qua worker
+    'anthropic' => [
+        'api_key' => env('ANTHROPIC_API_KEY'),
+        'shipping_model' => env('ANTHROPIC_SHIPPING_MODEL', 'claude-haiku-5-5'),
+        'timeout' => 60,
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

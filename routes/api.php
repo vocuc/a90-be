@@ -12,6 +12,8 @@ use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\ImageBatchController;
 use App\Http\Controllers\Api\V1\MarketplaceController;
+use App\Http\Controllers\Api\V1\Shipping\GhnController;
+use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\WorkerContentJobController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
@@ -83,6 +85,23 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('dashboard', [DashboardController::class, 'dashboard']);
             Route::get('wallet', [DashboardController::class, 'wallet']);
             Route::get('wallet/transactions', [DashboardController::class, 'walletTransactions']);
+
+            // Tạo đơn GHN từ ảnh chat (note/tao-don-ghn-tu-anh.txt ở repo frontend). AI đọc ảnh gọi thẳng Claude API
+            Route::get('shipping/ghn-settings', [GhnController::class, 'settings']);
+            Route::put('shipping/ghn-settings', [GhnController::class, 'saveSettings']);
+            Route::get('shipping-orders', [ShippingOrderController::class, 'index']);
+            Route::post('shipping-orders/parse', [ShippingOrderController::class, 'parse'])->middleware('throttle:generations');
+            Route::get('shipping-orders/{order}', [ShippingOrderController::class, 'show'])->whereNumber('order');
+            Route::put('shipping-orders/{order}', [ShippingOrderController::class, 'update'])->whereNumber('order');
+            Route::delete('shipping-orders/{order}', [ShippingOrderController::class, 'destroy'])->whereNumber('order');
+            Route::post('shipping-orders/{order}/submit', [ShippingOrderController::class, 'submit'])->whereNumber('order');
+        });
+
+        // Danh mục địa chỉ GHN (gọi bằng token GHN của shop, có cache)
+        Route::prefix('shipping/ghn')->group(function () {
+            Route::get('provinces', [GhnController::class, 'provinces']);
+            Route::get('districts', [GhnController::class, 'districts']);
+            Route::get('wards', [GhnController::class, 'wards']);
         });
 
         // Tạo ảnh theo lô (note/tach-lo-anh-dang-tiktok.txt)

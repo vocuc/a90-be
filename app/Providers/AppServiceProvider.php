@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Services\Shipping\ClaudeShippingOrderReader;
+use App\Services\Shipping\ShippingOrderReader;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
@@ -14,7 +16,8 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // Tạo đơn GHN từ ảnh: AI đọc ảnh gọi thẳng Claude API (test thay bằng bản giả)
+        $this->app->bind(ShippingOrderReader::class, ClaudeShippingOrderReader::class);
     }
 
     public function boot(): void

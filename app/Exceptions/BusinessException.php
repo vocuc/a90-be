@@ -57,6 +57,17 @@ class BusinessException extends RuntimeException
         return new self('POST_NOT_EDITABLE', 'Bài đăng không còn ở trạng thái chờ gửi.', 409);
     }
 
+    public static function ghnSettingsRequired(): self
+    {
+        return new self('GHN_SETTINGS_REQUIRED', 'Bạn cần kết nối GHN (Token, ShopId) trong Quản lý cửa hàng trước.', 400);
+    }
+
+    /** GHN trả lỗi: message là lời báo của GHN. */
+    public static function ghnError(string $message): self
+    {
+        return new self('GHN_ERROR', $message, 422);
+    }
+
     public function render(): JsonResponse
     {
         return response()->json(array_filter([
