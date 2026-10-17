@@ -43,7 +43,7 @@ class ShippingOrderController extends Controller
         return $this->resource($this->findOrder($request, $order));
     }
 
-    /** Bước 1-4: tải 1-10 ảnh chat của 1 đơn -> AI đọc (gọi thẳng Claude API, đồng bộ) -> đơn nháp. */
+    /** Bước 1: tải 1-10 ảnh chat của 1 đơn -> đơn status reading, AI đọc ở job chạy ngầm rồi chuyển sang nháp. */
     public function parse(Request $request): JsonResponse
     {
         $data = $request->validate([

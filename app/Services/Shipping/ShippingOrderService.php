@@ -4,8 +4,10 @@ namespace App\Services\Shipping;
 
 use App\Enums\ShippingOrderStatus;
 use App\Exceptions\BusinessException;
+use App\Jobs\ReadShippingOrderImages;
 use App\Models\CreatorProfile;
 use App\Models\ShippingOrder;
+use App\Models\ShippingOrderImage;
 use App\Models\User;
 use App\Services\MediaStorage;
 use Illuminate\Http\UploadedFile;
@@ -15,7 +17,7 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Tạo đơn GHN từ ảnh (note/tao-don-ghn-tu-anh.txt ở repo frontend):
- * tải ảnh -> AI đọc -> khớp địa chỉ với danh mục GHN -> đơn nháp -> người dùng sửa -> gửi GHN.
+ * tải ảnh -> (job chạy ngầm) AI đọc -> khớp địa chỉ với danh mục GHN -> đơn nháp -> người dùng sửa -> gửi GHN.
  */
 class ShippingOrderService
 {
@@ -57,42 +59,64 @@ class ShippingOrderService
     }
 
     /**
-     * Bước 1-4: lưu ảnh, AI đọc, khớp địa chỉ, tạo đơn nháp. AI không đọc được -> vẫn tạo nháp với các trường trống.
+     * Bước 1: lưu ảnh, tạo đơn status reading rồi giao job chạy ngầm cho AI đọc (readImages), không bắt người dùng chờ.
      *
      * @param  UploadedFile[]  $files
      */
     public function createFromImages(User $user, array $files, string $addressType): ShippingOrder
     {
-        $catalog = $this->catalog($user);
+        // Chưa kết nối GHN thì báo ngay, không đợi tới lúc job chạy
+        $this->ghn($user);
 
         $paths = [];
-        $images = [];
         foreach ($files as $file) {
-            [$path] = $this->media->storeOptimizedImage($file, MediaStorage::datedDirectory("shipping-orders/{$user->id}"), [self::IMAGE_MAX_SIDE]);
-            $paths[] = $path;
-            $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-            $images[] = ['contents' => $this->media->get($path), 'mime' => self::MIME_TYPES[$extension] ?? 'image/jpeg'];
+            [$paths[]] = $this->media->storeOptimizedImage($file, MediaStorage::datedDirectory("shipping-orders/{$user->id}"), [self::IMAGE_MAX_SIDE]);
         }
 
-        $ai = $this->reader->read($images) ?? [];
-        $fields = $this->draftFields($catalog, $addressType, $ai);
-
-        return DB::transaction(function () use ($user, $addressType, $fields, $paths) {
+        return DB::transaction(function () use ($user, $addressType, $paths) {
             $order = ShippingOrder::query()->create([
                 'user_id' => $user->id,
-                'status' => ShippingOrderStatus::Draft,
+                'status' => ShippingOrderStatus::Reading,
                 'address_type' => $addressType,
                 'item_name' => ShippingOrder::DEFAULT_ITEM_NAME,
                 'weight' => ShippingOrder::DEFAULT_WEIGHT,
                 'required_note' => ShippingOrder::DEFAULT_REQUIRED_NOTE,
-                ...$fields,
             ]);
             foreach ($paths as $i => $path) {
                 $order->images()->create(['path' => $path, 'position' => $i]);
             }
+            ReadShippingOrderImages::dispatch($order->id)->afterCommit();
 
             return $order;
         });
+    }
+
+    /**
+     * Bước 2-4 (job ReadShippingOrderImages): AI đọc ảnh, khớp địa chỉ, chuyển đơn sang nháp.
+     * AI không đọc được -> vẫn thành nháp với các trường trống. Đơn đã bị xoá / không còn reading -> bỏ qua.
+     */
+    public function readImages(int $orderId): void
+    {
+        $order = ShippingOrder::query()->with(['images', 'user.creatorProfile'])->find($orderId);
+        if ($order?->status !== ShippingOrderStatus::Reading) {
+            return;
+        }
+
+        $images = $order->images->map(function (ShippingOrderImage $image) {
+            $extension = strtolower(pathinfo($image->path, PATHINFO_EXTENSION));
+
+            return ['contents' => $this->media->get($image->path), 'mime' => self::MIME_TYPES[$extension] ?? 'image/jpeg'];
+        })->all();
+
+        $ai = $this->reader->read($images) ?? [];
+        $fields = $this->draftFields($this->catalog($order->user), $order->address_type, $ai);
+
+        // Người dùng xoá đơn trong lúc AI đọc -> không còn đơn để cập nhật
+        ShippingOrder::query()
+            ->whereKey($order->id)
+            ->where('status', ShippingOrderStatus::Reading)
+            ->first()
+            ?->update([...$fields, 'status' => ShippingOrderStatus::Draft]);
     }
 
     /**
@@ -145,9 +169,12 @@ class ShippingOrderService
         return $order;
     }
 
+    /** Xoá được cả đơn đang đọc ảnh (job gặp đơn đã xoá thì bỏ qua). */
     public function delete(ShippingOrder $order): void
     {
-        $this->ensureEditable($order);
+        if ($order->status === ShippingOrderStatus::Submitted) {
+            throw BusinessException::invalidState('Đơn đã được gửi sang GHN, không xoá được nữa.');
+        }
         $paths = $order->images()->pluck('path');
         $order->delete();
         $paths->each(fn ($path) => $this->media->delete($path));
@@ -252,6 +279,9 @@ class ShippingOrderService
 
     private function ensureEditable(ShippingOrder $order): void
     {
+        if ($order->status === ShippingOrderStatus::Reading) {
+            throw BusinessException::invalidState('AI đang đọc ảnh, vui lòng chờ trong giây lát.');
+        }
         if (! $order->status->isEditable()) {
             throw BusinessException::invalidState('Đơn đã được gửi sang GHN, không sửa được nữa.');
         }

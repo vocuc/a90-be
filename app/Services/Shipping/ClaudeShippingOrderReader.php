@@ -27,8 +27,9 @@ class ClaudeShippingOrderReader implements ShippingOrderReader
         - to_phone: chỉ gồm chữ số, đổi +84 thành 0.
         - Địa chỉ: tách street (số nhà, tên đường, thôn/xóm/ấp, toà nhà), ward (phường/xã), district (quận/huyện,
           null nếu địa chỉ không có), province (tỉnh/thành phố). raw_address là địa chỉ nguyên văn như trong ảnh.
-        - cod_amount: tổng tiền người mua phải trả khi nhận hàng, đơn vị VND, số nguyên ("350k" = 350000,
-          "1tr2" = 1200000). Nếu chat ghi đã chuyển khoản / không thu tiền thì 0.
+        - cod_amount: tiền hàng người mua phải trả khi nhận hàng, đơn vị VND, số nguyên ("350k" = 350000,
+          "1tr2" = 1200000). KHÔNG cộng phí ship / phí vận chuyển: nếu chat ghi tổng đã gồm ship (vd. "300k + 30k ship
+          = 330k") thì chỉ lấy tiền hàng (300000). Nếu chat ghi đã chuyển khoản / không thu tiền thì 0.
         - note: yêu cầu giao hàng người mua dặn (giờ giao, gọi trước...), không có thì null.
         - Không bịa: không thấy thông tin thì để null.
         - low_confidence_fields: các trường bạn không chắc (ảnh mờ, nhiều giá trị mâu thuẫn, phải đoán).

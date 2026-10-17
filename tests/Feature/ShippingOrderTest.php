@@ -2,13 +2,16 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ReadShippingOrderImages;
 use App\Models\ShippingOrder;
 use App\Models\User;
 use App\Services\Shipping\GhnCatalog;
 use App\Services\Shipping\ShippingOrderReader;
+use App\Services\Shipping\ShippingOrderService;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
@@ -214,6 +217,48 @@ class ShippingOrderTest extends TestCase
         $this->parse($user, 'old', 11)->assertStatus(422)->assertJsonValidationErrors('images');
         $this->actingAs($user)->postJson('/api/v1/creator/shipping-orders/parse', ['address_type' => 'old'])
             ->assertStatus(422)->assertJsonValidationErrors('images');
+    }
+
+    public function test_parse_returns_immediately_and_ai_reads_in_background(): void
+    {
+        Queue::fake();
+        $this->aiResult = $this->aiOrder();
+
+        $id = $this->parse($this->connectedCreator())->assertCreated()
+            ->assertJsonPath('data.status', 'reading')
+            ->assertJsonPath('data.to_name', null)
+            ->assertJsonCount(2, 'data.images')
+            ->json('data.id');
+        $this->assertSame([], $this->aiCalls);
+        Queue::assertPushed(ReadShippingOrderImages::class, fn ($job) => $job->orderId === $id);
+
+        // Đang đọc ảnh: chưa sửa / gửi được
+        $this->putJson("/api/v1/creator/shipping-orders/{$id}", ['to_name' => 'B'])->assertStatus(409)->assertJsonPath('code', 'INVALID_STATE');
+        $this->postJson("/api/v1/creator/shipping-orders/{$id}/submit", ['payment_type_id' => 2])->assertStatus(409);
+
+        (new ReadShippingOrderImages($id))->handle(app(ShippingOrderService::class));
+
+        $this->getJson("/api/v1/creator/shipping-orders/{$id}")->assertOk()->assertJson(['data' => [
+            'status' => 'draft',
+            'to_name' => 'Nguyễn Văn A',
+            'to_ward_code' => '20101',
+        ]]);
+        $this->assertCount(2, $this->aiCalls[0]);
+    }
+
+    public function test_reading_order_can_be_deleted_and_failed_job_leaves_empty_draft(): void
+    {
+        Queue::fake();
+        $user = $this->connectedCreator();
+
+        $deleted = $this->parse($user)->json('data.id');
+        $this->deleteJson("/api/v1/creator/shipping-orders/{$deleted}")->assertNoContent();
+        (new ReadShippingOrderImages($deleted))->handle(app(ShippingOrderService::class));
+        $this->assertSame([], $this->aiCalls);
+
+        $id = $this->parse($user)->json('data.id');
+        (new ReadShippingOrderImages($id))->failed(new \RuntimeException('timeout'));
+        $this->getJson("/api/v1/creator/shipping-orders/{$id}")->assertJsonPath('data.status', 'draft');
     }
 
     // ---- Sửa đơn ----
