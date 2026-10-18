@@ -28,7 +28,8 @@ class CreatorStudioTest extends TestCase
                 ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '4:5'],
             ],
             'prompt_template' => 'Luxury cosmetic shot',
-        ])->assertCreated()->assertJsonPath('data.status', 'draft')->json('data.id');
+            'is_public' => true,
+        ])->assertCreated()->assertJsonPath('data.status', 'draft')->assertJsonPath('data.is_public', true)->json('data.id');
 
         $this->getJson("/api/v1/creator/creatives/{$creativeId}")->assertOk()
             ->assertJsonPath('data.config.prompt_template', 'Luxury cosmetic shot')
@@ -73,6 +74,43 @@ class CreatorStudioTest extends TestCase
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.slug', $slug);
         $this->getJson('/api/v1/creatives?creator=khong-co')->assertOk()->assertJsonCount(0, 'data');
+    }
+
+    public function test_private_creative_is_hidden_from_marketplace_but_usable_by_owner(): void
+    {
+        $creator = $this->creator(credit: 10000);
+        $creative = $this->publishedCreative($creator);
+        $creative->update(['is_public' => false]);
+
+        // Tạo mới không gửi is_public -> private
+        $this->actingAs($creator)->postJson('/api/v1/creator/creatives', [
+            'title' => 'Mẫu riêng',
+            'model_id' => AiModel::query()->firstOrFail()->id,
+            'price_per_image' => 0,
+            'input_schema' => [
+                ['key' => 'product_image', 'label' => 'Ảnh', 'type' => 'image', 'required' => true],
+                ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '1:1'],
+            ],
+            'prompt_template' => 'Studio shot',
+        ])->assertCreated()->assertJsonPath('data.is_public', false);
+
+        // Chủ sở hữu vẫn mở và tạo ảnh được
+        $this->getJson("/api/v1/creatives/{$creative->slug}")->assertOk();
+        $this->generate($creator, $creative)->assertStatus(202);
+
+        // Người khác không thấy, không tạo ảnh được
+        $buyer = $this->buyer(10000);
+        $this->app['auth']->forgetGuards();
+        $this->getJson('/api/v1/creatives')->assertOk()->assertJsonCount(0, 'data');
+        $this->getJson("/api/v1/creatives/{$creative->slug}")->assertNotFound();
+        $this->generate($buyer, $creative)->assertNotFound()->assertJsonPath('code', 'CREATIVE_NOT_AVAILABLE');
+
+        // Bật public -> hiện trên Marketplace và tính vào số Creative của cửa hàng
+        $this->actingAs($creator)->putJson("/api/v1/creator/creatives/{$creative->id}", ['is_public' => true])
+            ->assertOk()->assertJsonPath('data.is_public', true);
+        $this->app['auth']->forgetGuards();
+        $this->getJson("/api/v1/creatives/{$creative->slug}")->assertOk();
+        $this->assertSame(1, $creator->creatorProfile()->first()->creative_count);
     }
 
     public function test_api_key_endpoints_no_longer_exist(): void

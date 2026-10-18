@@ -89,9 +89,10 @@ class MarketplaceController extends Controller
         return CreativeCardResource::collection($query->orderByDesc('id')->paginate($filters['per_page'] ?? 20));
     }
 
-    public function creative(string $slug): CreativeDetailResource
+    /** Creative private chỉ chính Creator (đã đăng nhập) mở được. */
+    public function creative(Request $request, string $slug): CreativeDetailResource
     {
-        $creative = AiCreative::query()->listed()
+        $creative = AiCreative::query()->availableTo($request->user('sanctum'))
             ->with([...self::CARD_RELATIONS, 'config', 'model'])
             ->where('slug', $slug)
             ->firstOrFail();

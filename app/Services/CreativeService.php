@@ -33,6 +33,7 @@ class CreativeService
                 'creator_id' => $creator->id,
                 'slug' => $this->makeSlug($data['title']),
                 'status' => CreativeStatus::Draft,
+                'is_public' => $data['is_public'] ?? false,
             ]);
 
             $creative->config()->create([
@@ -55,6 +56,9 @@ class CreativeService
 
         DB::transaction(function () use ($creative, $data) {
             $creative->update(Arr::except($data, [...self::CONFIG_FIELDS, 'hashtags']));
+            if ($creative->wasChanged('is_public')) {
+                $this->refreshCreatorCount($creative->creator_id);
+            }
 
             $config = Arr::only($data, self::CONFIG_FIELDS);
             if ($config) {
@@ -226,6 +230,7 @@ class CreativeService
             'creative_count' => AiCreative::query()
                 ->where('creator_id', $creatorId)
                 ->where('status', CreativeStatus::Published)
+                ->where('is_public', true)
                 ->count(),
         ]);
     }

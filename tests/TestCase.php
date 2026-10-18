@@ -71,6 +71,7 @@ abstract class TestCase extends BaseTestCase
             'slug' => 'creative-'.Str::random(8),
             'price_per_image' => $price,
             'status' => CreativeStatus::Published,
+            'is_public' => true,
             'published_at' => now(),
         ]);
         $creative->config()->create(array_merge([

@@ -31,6 +31,7 @@ class CreatorCreativeResource extends JsonResource
             'price_per_image' => $this->price_per_image,
             'hashtags' => HashtagResource::collection($this->whenLoaded('hashtags')),
             'status' => $this->status,
+            'is_public' => $this->is_public,
             'is_hidden' => $this->hidden_at !== null,
             'usage_count' => $this->usage_count,
             'rating_avg' => (float) $this->rating_avg,

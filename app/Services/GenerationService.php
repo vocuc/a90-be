@@ -43,7 +43,7 @@ class GenerationService
             return $existing;
         }
 
-        $this->assertListed($creative);
+        $this->assertAvailable($creative, $user);
 
         // Creator tự dùng mẫu của mình cũng bị trừ Credit như người mua (tạo thử miễn phí dùng createTest)
         return $this->start($user, $creative, GenerationType::Paid, $quantity, $input->aspectRatio, $idempotencyKey,
@@ -84,7 +84,7 @@ class GenerationService
         if ($original->type === GenerationType::Test) {
             $type = GenerationType::Test;
         } else {
-            $this->assertListed($creative);
+            $this->assertAvailable($creative, $user);
             $type = GenerationType::Paid;
         }
 
@@ -248,9 +248,9 @@ class GenerationService
         return $existing?->load('outputs');
     }
 
-    private function assertListed(AiCreative $creative): void
+    private function assertAvailable(AiCreative $creative, User $user): void
     {
-        if (! $creative->isListed()) {
+        if (! $creative->isAvailableTo($user)) {
             throw BusinessException::creativeNotAvailable();
         }
     }

@@ -18,21 +18,36 @@ class AiCreative extends Model
     {
         return [
             'status' => CreativeStatus::class,
+            'is_public' => 'boolean',
             'hidden_at' => 'datetime',
             'published_at' => 'datetime',
             'rating_avg' => 'decimal:2',
         ];
     }
 
-    /** Creative đang hiển thị trên Marketplace. */
+    /** Creative đang hiển thị trên Marketplace (đang bán, public, không bị Admin ẩn). */
     public function scopeListed(Builder $query): Builder
     {
-        return $query->where('status', CreativeStatus::Published)->whereNull('hidden_at');
+        return $query->where('status', CreativeStatus::Published)->where('is_public', true)->whereNull('hidden_at');
+    }
+
+    /** Creative đang bán mà $user dùng được: Creative trên Marketplace, hoặc Creative private của chính $user. */
+    public function scopeAvailableTo(Builder $query, ?User $user): Builder
+    {
+        return $query->where(fn (Builder $q) => $q->listed()->when($user, fn (Builder $q) => $q->orWhere(
+            fn (Builder $q) => $q->where('creator_id', $user->id)->where('status', CreativeStatus::Published)->whereNull('hidden_at'),
+        )));
     }
 
     public function isListed(): bool
     {
-        return $this->status === CreativeStatus::Published && $this->hidden_at === null;
+        return $this->status === CreativeStatus::Published && $this->is_public && $this->hidden_at === null;
+    }
+
+    public function isAvailableTo(User $user): bool
+    {
+        return $this->isListed()
+            || ($this->creator_id === $user->id && $this->status === CreativeStatus::Published && $this->hidden_at === null);
     }
 
     public function creator(): BelongsTo

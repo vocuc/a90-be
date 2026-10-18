@@ -37,6 +37,8 @@ class CreativeRequest extends FormRequest
             'category_id' => ['nullable', 'integer', Rule::exists('categories', 'id')->where('is_active', true)],
             'model_id' => [$required, 'integer', Rule::exists('ai_models', 'id')->where('is_active', true)],
             'price_per_image' => [$required, 'integer', 'min:0', 'max:100000000'],
+            // false (mặc định khi tạo) = private: chỉ Creator thấy, không hiện trên Marketplace
+            'is_public' => ['sometimes', 'boolean'],
             'max_outputs' => ['sometimes', 'integer', 'min:1', "max:{$limit}"],
             // Gửi cả danh sách để thay thế; [] để xóa hết. Có hoặc không có # đều được.
             'hashtags' => ['sometimes', 'array', 'max:'.self::MAX_HASHTAGS],
