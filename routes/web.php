@@ -12,6 +12,7 @@ use App\Http\Controllers\Admin\GenerationController;
 use App\Http\Controllers\Admin\PublishAccountController;
 use App\Http\Controllers\Admin\SettingController;
 use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Admin\WorkerController;
 use Illuminate\Support\Facades\Route;
 
 Route::redirect('/', '/admin');
@@ -47,6 +48,10 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
         Route::resource('publish-accounts', PublishAccountController::class)->except('show')->parameters(['publish-accounts' => 'publishAccount']);
         Route::post('publish-accounts/{publishAccount}/toggle', [PublishAccountController::class, 'toggle'])->name('publish-accounts.toggle');
+
+        Route::resource('workers', WorkerController::class)->only(['index', 'create', 'store', 'show']);
+        Route::post('workers/{worker}/regenerate', [WorkerController::class, 'regenerate'])->name('workers.regenerate');
+        Route::post('workers/{worker}/toggle', [WorkerController::class, 'toggle'])->name('workers.toggle');
 
         Route::get('generations', [GenerationController::class, 'index'])->name('generations.index');
         Route::get('generations/{generation}', [GenerationController::class, 'show'])->name('generations.show');

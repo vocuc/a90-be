@@ -80,8 +80,9 @@
                         </select>
                         @error('worker_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
                         <small class="form-text text-muted">
-                            Máy chạy worker phải đăng nhập sẵn tài khoản này trên trình duyệt của worker. Tạo worker bằng
-                            <code>php artisan workers:create &lt;tên&gt;</code>.
+                            Máy chạy worker phải đăng nhập sẵn tài khoản này (trình duyệt hoặc app trên điện thoại).
+                            Chưa có worker: <a href="{{ route('admin.workers.create') }}" target="_blank">tạo worker</a>
+                            (lấy token ở trang Worker) rồi tải lại trang này.
                         </small>
                     </div>
 
