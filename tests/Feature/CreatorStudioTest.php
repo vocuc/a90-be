@@ -113,6 +113,25 @@ class CreatorStudioTest extends TestCase
         $this->assertSame(1, $creator->creatorProfile()->first()->creative_count);
     }
 
+    public function test_creator_can_search_and_filter_own_creatives_by_visibility(): void
+    {
+        $creator = $this->creator();
+        $private = $this->publishedCreative($creator);
+        $private->update(['title' => 'Áo thun riêng', 'is_public' => false]);
+        $public = $this->publishedCreative($creator);
+        $public->update(['title' => 'Cốc sứ', 'is_public' => true]);
+        $this->publishedCreative($this->creator())->update(['title' => 'Áo thun người khác', 'is_public' => false]);
+
+        $this->actingAs($creator)->getJson('/api/v1/creator/creatives?visibility=private')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $private->id);
+        $this->getJson('/api/v1/creator/creatives?visibility=public')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $public->id);
+        $this->getJson('/api/v1/creator/creatives?q=thun')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $private->id);
+        $this->getJson('/api/v1/creator/creatives?q='.urlencode('100%'))->assertOk()->assertJsonCount(0, 'data');
+        $this->getJson('/api/v1/creator/creatives?visibility=hidden')->assertStatus(422)->assertJsonValidationErrors('visibility');
+    }
+
     public function test_api_key_endpoints_no_longer_exist(): void
     {
         $this->actingAs($this->creator())->getJson('/api/v1/creator/api-keys')->assertNotFound();

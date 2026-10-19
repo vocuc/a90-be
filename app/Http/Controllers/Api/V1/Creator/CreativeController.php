@@ -26,12 +26,17 @@ class CreativeController extends Controller
     {
         $filters = $request->validate([
             'status' => ['nullable', Rule::in(['draft', 'published', 'paused'])],
+            // Tìm theo tên và lọc public/private (chọn mẫu của mình khi tạo lô ảnh)
+            'q' => ['nullable', 'string', 'max:100'],
+            'visibility' => ['nullable', Rule::in(['public', 'private'])],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
 
         $creatives = AiCreative::query()
             ->where('creator_id', $request->user()->id)
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
+            ->when($filters['visibility'] ?? null, fn ($q, $visibility) => $q->where('is_public', $visibility === 'public'))
+            ->when($filters['q'] ?? null, fn ($q, $term) => $q->where('title', 'like', '%'.addcslashes($term, '%_\\').'%'))
             ->with(['images', 'hashtags'])
             ->latest('updated_at')
             ->paginate($filters['per_page'] ?? 20);
