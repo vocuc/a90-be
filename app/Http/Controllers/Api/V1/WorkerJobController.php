@@ -27,14 +27,24 @@ class WorkerJobController extends Controller
             return response()->noContent();
         }
 
-        $generation = $output->generation()->with(['model', 'creative.config'])->firstOrFail();
+        $generation = $output->generation()->with(['model', 'creative.config', 'user.creatorProfile'])->firstOrFail();
 
         // id: mã job để gửi kết quả (POST /jobs/{id}); request: dữ liệu gửi tới model.
+        // logo: worker chèn vào ảnh trước khi gửi kết quả. Để ngoài request vì worker dán nguyên request cho model.
         // Phải trả kết quả trong ai90.worker.lease_minutes, quá hạn job được giao cho worker khác.
         return response()->json(['data' => [
             'id' => $output->id,
             'request' => $this->request($generation, $media),
+            'logo' => $this->logo($generation, $media),
         ]]);
+    }
+
+    /** Logo = ảnh đại diện HIỆN TẠI của shop chủ generation; null khi không chèn hoặc shop không còn ảnh đại diện. */
+    private function logo(Generation $generation, MediaStorage $media): ?array
+    {
+        $path = $generation->insert_logo ? $generation->user?->creatorProfile?->avatar_path : null;
+
+        return $path ? ['url' => $media->url($path)] : null;
     }
 
     /**

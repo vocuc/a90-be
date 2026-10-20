@@ -46,8 +46,9 @@ class GenerationService
         $this->assertAvailable($creative, $user);
 
         // Creator tự dùng mẫu của mình cũng bị trừ Credit như người mua (tạo thử miễn phí dùng createTest)
+        // Sửa nguyên liệu một ảnh của lô ($parent): giữ bật / tắt logo của ảnh cũ
         return $this->start($user, $creative, GenerationType::Paid, $quantity, $input->aspectRatio, $idempotencyKey,
-            fn () => $this->storeInput($input, $keptPaths), $parent);
+            fn () => [...$this->storeInput($input, $keptPaths), 'insert_logo' => (bool) $parent?->insert_logo], $parent);
     }
 
     /** Creator tạo thử (kể cả bản nháp): không trừ Credit. */
@@ -89,7 +90,12 @@ class GenerationService
         }
 
         return $this->start($user, $creative, $type, $outputs->count(), $original->aspect_ratio, $idempotencyKey,
-            fn () => ['input_paths' => $original->input_paths, 'asset_paths' => $original->asset_paths, 'input_values' => $original->input_values],
+            fn () => [
+                'input_paths' => $original->input_paths,
+                'asset_paths' => $original->asset_paths,
+                'input_values' => $original->input_values,
+                'insert_logo' => $original->insert_logo,
+            ],
             $original, $outputs->pluck('id')->all());
     }
 

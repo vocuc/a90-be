@@ -44,7 +44,9 @@ class GenerationTest extends TestCase
         $job = $this->claimJob($token)->assertOk()->json('data');
 
         $this->assertSame($generation->outputs[0]->id, $job['id']);
-        $this->assertSame(['id', 'request'], array_keys($job));
+        $this->assertSame(['id', 'request', 'logo'], array_keys($job));
+        // Tạo ảnh lẻ không chèn logo
+        $this->assertNull($job['logo']);
         $this->assertSame([
             'productImage' => "https://media.test/{$generation->input_paths['product_image']}",
             'prompt' => 'Place the product on a marble table. Avoid text and watermark.',

@@ -35,8 +35,9 @@ class ImageBatchService
      * generation dùng chung ảnh đầu vào (chỉ tải lên một lần).
      *
      * @param  array<int, array{creative: AiCreative, input: GenerationInput, quantity: int}>  $items
+     * @param  bool  $insertLogo  chèn logo shop vào mọi ảnh của lô (worker tạo ảnh chèn, note/logo-tao-anh.txt)
      */
-    public function create(User $user, array $items, string $idempotencyKey): ImageBatch
+    public function create(User $user, array $items, string $idempotencyKey, bool $insertLogo = false): ImageBatch
     {
         if ($existing = $this->findExisting($user, $idempotencyKey)) {
             return $existing;
@@ -45,7 +46,7 @@ class ImageBatchService
         $total = array_sum(array_map(fn (array $item) => $item['creative']->price_per_image * $item['quantity'], $items));
 
         try {
-            return DB::transaction(function () use ($user, $items, $idempotencyKey, $total) {
+            return DB::transaction(function () use ($user, $items, $idempotencyKey, $total, $insertLogo) {
                 // Kiểm tra tổng phí trước để báo đúng số tiền cần (không dừng giữa chừng ở mẫu thứ n)
                 $this->credits->assertSufficient($this->credits->lockWallet($user->id), $total);
 
@@ -61,6 +62,10 @@ class ImageBatchService
                     for ($done = 0, $part = 0; $done < $item['quantity']; $done += $chunk, $part++) {
                         $quantity = min($chunk, $item['quantity'] - $done);
                         $generation = $this->generations->create($user, $creative, $input, $quantity, "batch:{$batch->id}:{$i}:{$part}", $kept);
+                        // Cùng transaction với lúc tạo output nên worker chưa nhận job trước khi đặt cờ logo
+                        if ($insertLogo) {
+                            $generation->update(['insert_logo' => true]);
+                        }
 
                         foreach ($generation->outputs as $output) {
                             $batch->images()->create([

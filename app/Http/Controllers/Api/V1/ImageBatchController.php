@@ -17,6 +17,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Lô ảnh của người dùng, xem note/tach-lo-anh-dang-tiktok.txt. Lô của người khác -> 404.
@@ -56,9 +57,21 @@ class ImageBatchController extends Controller
             'items.*.creative_id' => ['required', 'integer', 'distinct'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
             'idempotency_key' => ['required', 'string', 'max:80'],
+            'insert_logo' => ['nullable', 'boolean'],
         ], [
             'items.*.creative_id.distinct' => 'Mỗi mẫu chỉ được chọn một lần trong lô.',
         ]);
+
+        // Logo = ảnh đại diện shop (note/logo-tao-anh.txt)
+        $insertLogo = (bool) ($data['insert_logo'] ?? false);
+        if ($insertLogo) {
+            $profile = $request->user()->creatorProfile;
+            if (! $profile?->avatar_path) {
+                throw ValidationException::withMessages(['insert_logo' => $profile
+                    ? 'Shop chưa có logo. Hãy thêm ảnh đại diện shop để dùng tính năng này.'
+                    : 'Bạn phải tạo shop để sử dụng tính năng này.']);
+            }
+        }
 
         $items = array_values($data['items']);
         $creatives = AiCreative::query()
@@ -86,7 +99,7 @@ class ImageBatchController extends Controller
             ];
         }
 
-        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key']);
+        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo);
 
         return $this->resource($batch)->response()->setStatusCode(201);
     }

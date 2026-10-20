@@ -135,6 +135,54 @@ class ImageBatchTest extends TestCase
         $this->assertSame(4000, $this->balance($user));
     }
 
+    // ---- Logo shop (note/logo-tao-anh.txt) ----
+
+    public function test_insert_logo_requires_shop_with_avatar(): void
+    {
+        $creative = $this->publishedCreative($this->creator());
+
+        $this->createBatch($this->buyer(credit: 5000), [[$creative, 1]], ['insert_logo' => 1])
+            ->assertStatus(422)
+            ->assertJsonPath('errors.insert_logo.0', 'Bạn phải tạo shop để sử dụng tính năng này.');
+
+        $this->createBatch($this->creator(credit: 5000), [[$creative, 1]], ['insert_logo' => 1])
+            ->assertStatus(422)
+            ->assertJsonPath('errors.insert_logo.0', 'Shop chưa có logo. Hãy thêm ảnh đại diện shop để dùng tính năng này.');
+
+        $this->assertSame(0, ImageBatch::query()->count());
+    }
+
+    public function test_worker_gets_current_shop_logo_outside_request_and_regenerate_keeps_it(): void
+    {
+        $user = $this->creator(credit: 5000);
+        $user->creatorProfile->update(['avatar_path' => 'avatars/logo-1.png']);
+        $creative = $this->publishedCreative($this->creator());
+        $batchId = $this->createBatch($user, [[$creative, 1]], ['insert_logo' => 1])->assertCreated()->json('data.id');
+        $token = $this->workerToken();
+
+        $job = $this->claimJob($token)->assertOk()->json('data');
+        $this->assertSame(['url' => 'https://media.test/avatars/logo-1.png'], $job['logo']);
+        $this->assertArrayNotHasKey('logo', $job['request']);
+        $this->completeJob($token, $job['id'])->assertOk();
+
+        // Đổi ảnh đại diện shop: ảnh tạo lại dùng logo mới
+        $user->creatorProfile->update(['avatar_path' => 'avatars/logo-2.png']);
+        $image = ImageBatch::query()->findOrFail($batchId)->images()->firstOrFail();
+        $this->actingAs($user)->postJson("/api/v1/image-batches/{$batchId}/images/{$image->id}/regenerate", ['idempotency_key' => 'regen-logo'])
+            ->assertStatus(202);
+
+        $this->assertSame(['url' => 'https://media.test/avatars/logo-2.png'], $this->claimJob($token)->assertOk()->json('data.logo'));
+    }
+
+    public function test_batch_without_insert_logo_sends_no_logo(): void
+    {
+        $user = $this->creator(credit: 5000);
+        $user->creatorProfile->update(['avatar_path' => 'avatars/logo-1.png']);
+        $this->createBatch($user, [[$this->publishedCreative($this->creator()), 1]], ['insert_logo' => 0])->assertCreated();
+
+        $this->assertNull($this->claimJob($this->workerToken())->assertOk()->json('data.logo'));
+    }
+
     // ---- Tạo lại / sửa nguyên liệu ----
 
     public function test_regenerate_charges_and_replaces_image_in_same_position(): void

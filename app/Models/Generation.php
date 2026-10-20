@@ -23,6 +23,7 @@ class Generation extends Model
             'input_paths' => 'array',
             'asset_paths' => 'array',
             'input_values' => 'array',
+            'insert_logo' => 'boolean',
         ];
     }
 
