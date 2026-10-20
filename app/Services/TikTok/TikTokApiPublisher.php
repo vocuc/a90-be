@@ -25,6 +25,11 @@ class TikTokApiPublisher
 {
     private const JPEG_QUALITY = 90;
 
+    /** Ảnh PHOTO tối đa 1080p: cạnh ngắn <= 1080, cạnh dài <= 1920 (lớn hơn -> picture_size_check_failed). */
+    private const MAX_SHORT_SIDE = 1080;
+
+    private const MAX_LONG_SIDE = 1920;
+
     /** Lỗi / fail_reason của TikTok -> thông báo tiếng Việt. */
     private const MESSAGES = [
         'spam_risk_too_many_posts' => 'Tài khoản TikTok đã đạt giới hạn gửi bài trong ngày, thử lại sau.',
@@ -222,15 +227,21 @@ class TikTokApiPublisher
         $this->cleanup($job);
     }
 
-    /** TikTok chỉ nhận JPG / WEBP qua PULL_FROM_URL: chuyển PNG sang JPG, đặt lên disk của tên miền đã xác minh. */
+    /**
+     * TikTok chỉ nhận JPG / WEBP tối đa 1080p qua PULL_FROM_URL: chuyển PNG / ảnh quá cỡ sang JPG (thu nhỏ giữ tỉ lệ),
+     * đặt lên disk của tên miền đã xác minh.
+     */
     private function prepareImage(SocialPublishJob $job, GenerationOutput $output): string
     {
         $contents = $this->media->get($output->image_path);
         $mime = (new \finfo(FILEINFO_MIME_TYPE))->buffer($contents) ?: $output->mime;
 
-        if ($mime === 'image/webp') {
+        $size = @getimagesizefromstring($contents);
+        $tooLarge = $size !== false && self::scale($size[0], $size[1]) < 1;
+
+        if ($mime === 'image/webp' && ! $tooLarge) {
             $extension = 'webp';
-        } elseif ($mime === 'image/jpeg') {
+        } elseif ($mime === 'image/jpeg' && ! $tooLarge) {
             $extension = 'jpg';
         } else {
             $contents = $this->toJpeg($contents);
@@ -265,10 +276,16 @@ class TikTokApiPublisher
             throw new BusinessException('INVALID_IMAGE', 'Không đọc được ảnh để gửi lên TikTok.', 422);
         }
 
+        $width = imagesx($image);
+        $height = imagesy($image);
+        $scale = self::scale($width, $height);
+        $newWidth = max(1, (int) round($width * $scale));
+        $newHeight = max(1, (int) round($height * $scale));
+
         // JPG không có kênh trong suốt: đặt nền trắng
-        $canvas = imagecreatetruecolor(imagesx($image), imagesy($image));
+        $canvas = imagecreatetruecolor($newWidth, $newHeight);
         imagefill($canvas, 0, 0, imagecolorallocate($canvas, 255, 255, 255));
-        imagecopy($canvas, $image, 0, 0, 0, 0, imagesx($image), imagesy($image));
+        imagecopyresampled($canvas, $image, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
         imagedestroy($image);
 
         ob_start();
@@ -276,6 +293,12 @@ class TikTokApiPublisher
         imagedestroy($canvas);
 
         return (string) ob_get_clean();
+    }
+
+    /** Tỉ lệ thu nhỏ để ảnh vừa 1080p (1 = giữ nguyên, không phóng to). */
+    private static function scale(int $width, int $height): float
+    {
+        return min(1, self::MAX_SHORT_SIDE / min($width, $height), self::MAX_LONG_SIDE / max($width, $height));
     }
 
     /** Mã lỗi cho admin: TIKTOK_ + mã TikTok viết hoa, vd TIKTOK_SPAM_RISK_TOO_MANY_POSTS. */
