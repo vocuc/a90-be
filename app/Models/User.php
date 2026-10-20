@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\PublishDriver;
+use App\Enums\SocialPlatform;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use Database\Factories\UserFactory;
@@ -73,10 +75,18 @@ class User extends Authenticatable
         return $this->hasOne(CreatorWallet::class);
     }
 
-    /** Tài khoản đăng bài (tối đa 1 / nền tảng) + worker admin gắn cho người dùng. */
+    /** Tài khoản đăng bài (tối đa 1 / nền tảng / driver): worker admin gắn, hoặc TikTok người dùng tự kết nối. */
     public function publishAccounts(): HasMany
     {
         return $this->hasMany(PublishAccount::class);
+    }
+
+    /** TikTok người dùng tự kết nối (OAuth, driver api). */
+    public function tiktokConnection(): HasOne
+    {
+        return $this->hasOne(PublishAccount::class)
+            ->where('platform', SocialPlatform::Tiktok)
+            ->where('driver', PublishDriver::Api);
     }
 
     public function creatives(): HasMany

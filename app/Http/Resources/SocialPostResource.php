@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Enums\OutputStatus;
 use App\Enums\PlatformPublishStatus;
+use App\Enums\PublishDriver;
 use App\Models\ImageBatchImage;
 use App\Models\SocialPost;
 use App\Models\SocialPostImage;
@@ -54,10 +55,16 @@ class SocialPostResource extends JsonResource
         $result = [];
         foreach ($this->platformStatuses() as $platform => $status) {
             $job = $jobs->get($platform);
+            $api = $job?->driver === PublishDriver::Api;
             $result[$platform] = [
                 'status' => $status,
+                // worker | api (TikTok người dùng tự kết nối: "Đã gửi vào hộp thư")
+                'driver' => $job?->driver?->value,
                 'post_url' => $job?->post_url,
-                'error' => $status === PlatformPublishStatus::Failed ? self::PLATFORM_FAILED_MESSAGE : null,
+                // Đăng qua API lỗi do tài khoản TikTok của chính người dùng (hết lượt, mất kết nối...): hiện thông báo cụ thể
+                'error' => $status === PlatformPublishStatus::Failed
+                    ? ($api && $job->error_message ? $job->error_message : self::PLATFORM_FAILED_MESSAGE)
+                    : null,
                 'finished_at' => $job?->finished_at,
             ];
         }

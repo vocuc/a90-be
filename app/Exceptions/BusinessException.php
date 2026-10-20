@@ -52,6 +52,17 @@ class BusinessException extends RuntimeException
         return new self('INVALID_STATE', $message, 409);
     }
 
+    /** reason: not_connected | expired | revoked | scope_missing (frontend hiện nút "Kết nối" / "Kết nối lại"). */
+    public static function tiktokNotConnected(string $reason = 'expired'): self
+    {
+        return new self('TIKTOK_NOT_CONNECTED', 'Mất kết nối TikTok, vui lòng kết nối lại rồi đăng.', 409, ['reason' => $reason]);
+    }
+
+    public static function tiktokUnavailable(): self
+    {
+        return new self('TIKTOK_UNAVAILABLE', 'Không kết nối được TikTok, vui lòng thử lại sau.', 502);
+    }
+
     public static function postNotEditable(): self
     {
         return new self('POST_NOT_EDITABLE', 'Bài đăng không còn ở trạng thái chờ gửi.', 409);

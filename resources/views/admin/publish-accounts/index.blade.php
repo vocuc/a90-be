@@ -47,7 +47,12 @@
                             @endif
                         </td>
                         <td>
-                            @if ($account->worker)
+                            @if ($account->isApi())
+                                <span class="badge badge-info">API</span> người dùng tự kết nối
+                                <div class="small {{ $account->isUsable() ? 'text-muted' : 'text-danger' }}">
+                                    {{ $account->isUsable() ? 'Đang kết nối' : 'Mất kết nối' }}{{ $account->connected_at ? ' · từ '.$account->connected_at->format('d/m/Y') : '' }}
+                                </div>
+                            @elseif ($account->worker)
                                 {{ $account->worker->name }}
                                 <div class="small text-muted">
                                     {{ $account->worker->last_seen_at ? 'Hoạt động '.$account->worker->last_seen_at->diffForHumans() : 'Chưa kết nối' }}
@@ -64,6 +69,7 @@
                             </span>
                         </td>
                         <td class="text-right text-nowrap">
+                            @unless ($account->isApi())
                             <a href="{{ route('admin.publish-accounts.edit', $account) }}" class="btn btn-xs btn-outline-primary">
                                 <i class="fas fa-edit"></i> Sửa
                             </a>
@@ -79,6 +85,7 @@
                                 @csrf @method('DELETE')
                                 <button class="btn btn-xs btn-outline-danger"><i class="fas fa-trash"></i> Xóa</button>
                             </form>
+                            @endunless
                         </td>
                     </tr>
                 @empty

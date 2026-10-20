@@ -15,6 +15,8 @@ use App\Http\Controllers\Api\V1\MarketplaceController;
 use App\Http\Controllers\Api\V1\Shipping\GhnController;
 use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
+use App\Http\Controllers\Api\V1\Social\TikTokController;
+use App\Http\Controllers\Api\V1\Social\TikTokWebhookController;
 use App\Http\Controllers\Api\V1\WorkerContentJobController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
 use App\Http\Controllers\Api\V1\WorkerPublishJobController;
@@ -32,6 +34,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('me', [AuthController::class, 'me']);
         });
     });
+
+    // Webhook TikTok (TikTok gọi, xác thực bằng chữ ký): kết quả gửi bài qua API, gỡ quyền ứng dụng
+    Route::post('social/tiktok/webhook', TikTokWebhookController::class);
 
     // Marketplace (công khai)
     Route::get('banners', [MarketplaceController::class, 'banners']);
@@ -125,6 +130,11 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('posts/{post}', [PostController::class, 'show'])->whereNumber('post');
             Route::delete('posts/{post}', [PostController::class, 'destroy'])->whereNumber('post');
             Route::post('posts/{post}/publish', [PostController::class, 'publish'])->whereNumber('post');
+
+            // Người dùng tự kết nối TikTok để đăng qua API (note/dang-tiktok-qua-api.txt ở repo frontend)
+            Route::post('tiktok/oauth/authorize', [TikTokController::class, 'authorizeUrl'])->middleware('throttle:auth');
+            Route::post('tiktok/oauth/callback', [TikTokController::class, 'callback'])->middleware('throttle:auth');
+            Route::delete('tiktok/account', [TikTokController::class, 'destroy']);
         });
 
         // Admin

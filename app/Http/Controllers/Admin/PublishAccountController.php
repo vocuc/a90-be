@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\OutputStatus;
+use App\Enums\PublishDriver;
 use App\Enums\SocialPlatform;
 use App\Http\Controllers\Controller;
 use App\Models\PublishAccount;
@@ -22,6 +23,7 @@ use Illuminate\View\View;
  * Tài khoản đăng bài: admin gắn 1 tài khoản A51 (email) với 1 worker (máy đã đăng nhập sẵn tài khoản TikTok /
  * Facebook / Instagram). Mỗi tài khoản A51 có tối đa 1 tài khoản / nền tảng. Worker chỉ nhận job đăng bài của
  * nền tảng và tài khoản A51 đó (TikTok: lưu nháp, nhân viên vào TikTok đăng các bài nháp).
+ * Dòng driver api (TikTok người dùng tự kết nối) chỉ hiện ở danh sách, admin không sửa / bật tắt / xoá ở đây.
  */
 class PublishAccountController extends Controller
 {
@@ -43,7 +45,9 @@ class PublishAccountController extends Controller
         $unassignedJobs = SocialPublishJob::query()
             ->join('social_posts', 'social_posts.id', '=', 'social_publish_jobs.social_post_id')
             ->where('social_publish_jobs.status', OutputStatus::Queued)
+            ->where('social_publish_jobs.driver', PublishDriver::Worker)
             ->whereNotExists(fn ($q) => $q->from('publish_accounts')
+                ->where('publish_accounts.driver', PublishDriver::Worker)
                 ->whereColumn('publish_accounts.user_id', 'social_posts.user_id')
                 ->whereColumn('publish_accounts.platform', 'social_publish_jobs.platform'))
             ->count();
@@ -68,6 +72,7 @@ class PublishAccountController extends Controller
 
     public function edit(PublishAccount $publishAccount): View
     {
+        abort_if($publishAccount->isApi(), 404);
         // Bài đã đăng gần đây: nhân viên đối chiếu (TikTok: vào TikTok đăng các bài nháp)
         $recentJobs = $publishAccount->publishJobs()
             ->with('post.user')
@@ -81,6 +86,7 @@ class PublishAccountController extends Controller
 
     public function update(Request $request, PublishAccount $publishAccount): RedirectResponse
     {
+        abort_if($publishAccount->isApi(), 404);
         $before = $publishAccount->only(self::FIELDS);
         $publishAccount->update($this->validated($request, $publishAccount));
         $this->audit->log('admin.publish_account.update', $publishAccount, ['before' => $before, 'after' => $publishAccount->only(self::FIELDS)]);
@@ -91,6 +97,7 @@ class PublishAccountController extends Controller
     /** Tắt: worker không nhận job đăng bài nữa, bài của tài khoản A51 nằm chờ tới khi bật lại. */
     public function toggle(PublishAccount $publishAccount): RedirectResponse
     {
+        abort_if($publishAccount->isApi(), 404);
         $publishAccount->update(['is_active' => ! $publishAccount->is_active]);
         $this->audit->log('admin.publish_account.toggle', $publishAccount, ['is_active' => $publishAccount->is_active]);
 
@@ -102,6 +109,7 @@ class PublishAccountController extends Controller
     /** Xoá khi worker không đang đăng bài vào tài khoản. Bài đã đăng giữ nguyên (job mất liên kết tài khoản). */
     public function destroy(PublishAccount $publishAccount): RedirectResponse
     {
+        abort_if($publishAccount->isApi(), 404);
         if ($publishAccount->publishJobs()->where('status', OutputStatus::Processing)->exists()) {
             throw ValidationException::withMessages([
                 'account' => "Worker đang đăng bài vào tài khoản \"{$publishAccount->name}\", vui lòng chờ xong rồi xóa.",
@@ -156,6 +164,7 @@ class PublishAccountController extends Controller
         // Mỗi tài khoản A51 chỉ có 1 tài khoản / nền tảng
         $data['user_id'] = User::query()->where('email', $data['user_email'])->value('id');
         $taken = PublishAccount::query()
+            ->where('driver', PublishDriver::Worker)
             ->where('user_id', $data['user_id'])
             ->where('platform', $data['platform'])
             ->when($account, fn ($q) => $q->whereKeyNot($account->id))

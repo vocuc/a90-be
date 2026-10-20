@@ -48,6 +48,25 @@ return [
         'timeout' => 60,
     ],
 
+    // Đăng TikTok qua API (người dùng tự kết nối): Login Kit + Content Posting API chế độ Upload (gửi vào hộp thư TikTok).
+    // Đặc tả: note/dang-tiktok-qua-api.txt ở repo frontend.
+    'tiktok' => [
+        'client_key' => env('TIKTOK_CLIENT_KEY'),
+        'client_secret' => env('TIKTOK_CLIENT_SECRET'),
+        // Trang frontend TikTok trả người dùng về (kèm code, state), khớp chính xác URI đăng ký trên Developer Portal.
+        // Frontend gửi code + state cho POST /api/v1/social/tiktok/oauth/callback.
+        'redirect_uri' => env('TIKTOK_REDIRECT_URI', 'https://a51.vn/mxh/tiktok/author'),
+        // user.info.profile: lấy username để hiện @username
+        'scopes' => 'user.info.basic,user.info.profile,video.upload',
+        'media_disk' => env('TIKTOK_MEDIA_DISK', 's3_tiktok'),
+        'media_url' => rtrim((string) env('TIKTOK_MEDIA_URL', ''), '/'),
+        // Webhook: chênh lệch thời gian tối đa của chữ ký (giây)
+        'webhook_tolerance_seconds' => 300,
+        // Job đang gửi: hỏi lại TikTok (status/fetch) mỗi bấy nhiêu phút khi webhook chưa về; quá hạn thì thất bại
+        'status_check_minutes' => 5,
+        'publish_timeout_minutes' => 60,
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

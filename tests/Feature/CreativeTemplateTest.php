@@ -34,6 +34,8 @@ class CreativeTemplateTest extends TestCase
             'title' => 'Người mẫu đi giày',
             'model_id' => AiModel::query()->where('code', 'gemini-3-pro-image')->value('id'),
             'price_per_image' => 2000,
+            // Creative mới mặc định riêng tư: các test ở đây cần người mua thấy mẫu sau khi xuất bản
+            'is_public' => true,
             'description' => 'Chụp giày trên nền trơn.',
             'category_id' => Category::query()->value('id'),
             'video_url' => 'https://www.tiktok.com/@shop/video/123',

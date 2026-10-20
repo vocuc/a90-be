@@ -4,8 +4,10 @@ namespace App\Services\Social;
 
 use App\Enums\OutputStatus;
 use App\Enums\PlatformPublishStatus;
+use App\Enums\PublishDriver;
 use App\Enums\SocialPlatform;
 use App\Exceptions\BusinessException;
+use App\Jobs\PublishTikTokViaApi;
 use App\Models\GenerationOutput;
 use App\Models\PublishAccount;
 use App\Models\SocialPost;
@@ -20,11 +22,14 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Đăng bài lên TikTok / Facebook / Instagram qua worker (note/dang-bai-da-nen-tang.txt ở repo frontend), không dùng API
- * của các nền tảng: bấm đăng -> lưu chỉnh sửa, tạo 1 job / nền tảng đã chọn, nền tảng sang queued.
- * Admin gắn tài khoản A51 với worker theo từng nền tảng (PublishAccount); worker chỉ nhận job của nền tảng và tài khoản
- * A51 được gắn (publishing), đăng xong báo completed (published). Lỗi / quá hạn không giao lại: nền tảng sang failed,
- * xong hết thì bài về pending_review với thông báo chung, người dùng bấm đăng lại các nền tảng lỗi. Job chờ không hết hạn.
+ * Đăng bài lên TikTok / Facebook / Instagram (note/dang-bai-da-nen-tang.txt ở repo frontend): bấm đăng -> lưu chỉnh sửa,
+ * tạo 1 job / nền tảng đã chọn, nền tảng sang queued.
+ * - Worker: admin gắn tài khoản A51 với worker theo từng nền tảng (PublishAccount driver worker); worker chỉ nhận job của
+ *   nền tảng và tài khoản A51 được gắn (publishing), đăng xong báo completed (published).
+ * - API (chỉ TikTok, note/dang-tiktok-qua-api.txt): người dùng đã tự kết nối TikTok thì MẶC ĐỊNH đăng qua API, không qua
+ *   worker. Job driver api do queue job PublishTikTokViaApi gửi (TikTokApiPublisher).
+ * Lỗi / quá hạn không giao lại: nền tảng sang failed, xong hết thì bài về pending_review với thông báo chung, người dùng
+ * bấm đăng lại các nền tảng lỗi. Job chờ worker không hết hạn.
  */
 class SocialPublishJobService
 {
@@ -35,7 +40,8 @@ class SocialPublishJobService
     ) {}
 
     /**
-     * Tài khoản đăng bài admin đã gắn cho người dùng, theo thứ tự nền tảng.
+     * Tài khoản đăng bài của người dùng, theo thứ tự nền tảng. Có cả dòng worker và dòng api của TikTok thì chỉ trả dòng
+     * api (dòng sẽ được dùng khi đăng).
      *
      * @return Collection<int, PublishAccount>
      */
@@ -43,7 +49,11 @@ class SocialPublishJobService
     {
         $order = array_flip(SocialPlatform::values());
 
-        return $user->publishAccounts()->get()->sortBy(fn (PublishAccount $account) => $order[$account->platform->value])->values()->toBase();
+        return $user->publishAccounts()->get()
+            ->sortBy(fn (PublishAccount $account) => [$order[$account->platform->value], $account->isApi() ? 0 : 1])
+            ->unique(fn (PublishAccount $account) => $account->platform->value)
+            ->values()
+            ->toBase();
     }
 
     /**
@@ -59,7 +69,14 @@ class SocialPublishJobService
 
         $images = $this->resolveImages($user, $post, $data['images']);
 
-        return DB::transaction(function () use ($user, $post, $data, $hashtags, $images, $platforms) {
+        // Đã tự kết nối TikTok: đăng qua API. Mất kết nối thì từ chối cả yêu cầu (không tự chuyển sang worker để
+        // tránh đăng nhầm vào tài khoản của A51); người dùng kết nối lại rồi bấm đăng một lần.
+        $tiktokApi = in_array(SocialPlatform::Tiktok, $platforms, true) ? $user->tiktokConnection : null;
+        if ($tiktokApi && ! $tiktokApi->isUsable()) {
+            throw BusinessException::tiktokNotConnected($tiktokApi->connectionReason() ?? 'expired');
+        }
+
+        $post = DB::transaction(function () use ($user, $post, $data, $hashtags, $images, $platforms, $tiktokApi) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
             // Bấm đăng 2 lần: lần sau gặp bài đã queued -> 409, không tạo job thứ 2
             $this->posts->assertEditable($post);
@@ -75,7 +92,17 @@ class SocialPublishJobService
             $jobs = [];
             foreach ($platforms as $platform) {
                 $post->{$platform->statusColumn()} = PlatformPublishStatus::Queued;
-                $jobs[$platform->value] = $post->publishJobs()->create(['platform' => $platform, 'status' => OutputStatus::Queued])->id;
+                $api = $platform === SocialPlatform::Tiktok && $tiktokApi;
+                $job = $post->publishJobs()->create([
+                    'platform' => $platform,
+                    'status' => OutputStatus::Queued,
+                    'driver' => $api ? PublishDriver::Api : PublishDriver::Worker,
+                    'publish_account_id' => $api ? $tiktokApi->id : null,
+                ]);
+                $jobs[$platform->value] = $job->id;
+                if ($api) {
+                    PublishTikTokViaApi::dispatch($job->id)->afterCommit();
+                }
             }
             $post->syncStatus();
             $post->save();
@@ -83,6 +110,63 @@ class SocialPublishJobService
             $this->audit->log('social_post.publish', $post, ['jobs' => $jobs, 'images' => count($images)], $user->id);
 
             return $post;
+        });
+
+        // Queue chạy đồng bộ (sync) có thể đã gửi xong job api: trả trạng thái mới nhất
+        return $post->refresh();
+    }
+
+    /**
+     * Job api bắt đầu gửi: queued -> processing (nền tảng publishing), hạn publish_timeout_minutes.
+     * Queue thử lại khi TikTok tạm lỗi: job đang processing mà chưa có publish_id thì gửi tiếp.
+     * Trả null khi job không còn cần gửi (đã xong / đã gửi / không phải job api).
+     */
+    public function startApiJob(int $jobId): ?SocialPublishJob
+    {
+        return DB::transaction(function () use ($jobId) {
+            $job = SocialPublishJob::query()->lockForUpdate()->find($jobId);
+            if (! $job || $job->driver !== PublishDriver::Api) {
+                return null;
+            }
+            if ($job->status === OutputStatus::Processing && $job->external_id === null) {
+                return $job;
+            }
+            if ($job->status !== OutputStatus::Queued) {
+                return null;
+            }
+
+            $job->update([
+                'status' => OutputStatus::Processing,
+                'lease_expires_at' => now()->addMinutes(config('services.tiktok.publish_timeout_minutes')),
+            ]);
+            SocialPost::query()->lockForUpdate()->findOrFail($job->social_post_id)
+                ->setPlatformStatus($job->platform, PlatformPublishStatus::Publishing);
+
+            return $job;
+        });
+    }
+
+    /** TikTok báo ảnh đã vào hộp thư: job completed, nền tảng published. Đã xong thì bỏ qua (webhook + status/fetch cùng báo). */
+    public function completeApiJob(SocialPublishJob $job): void
+    {
+        DB::transaction(function () use ($job) {
+            $job = SocialPublishJob::query()->lockForUpdate()->findOrFail($job->id);
+            if ($job->driver !== PublishDriver::Api || $job->status !== OutputStatus::Processing) {
+                return;
+            }
+            $this->completeJob($job, null);
+        });
+    }
+
+    /** Job api lỗi. error_message là thông báo tiếng Việt cho người dùng (SocialPostResource). */
+    public function failApiJob(SocialPublishJob $job, string $errorCode, string $errorMessage): void
+    {
+        DB::transaction(function () use ($job, $errorCode, $errorMessage) {
+            $job = SocialPublishJob::query()->lockForUpdate()->findOrFail($job->id);
+            if ($job->driver !== PublishDriver::Api || $job->status->isFinal()) {
+                return;
+            }
+            $this->failJob($job, $errorCode, $errorMessage);
         });
     }
 
@@ -103,6 +187,7 @@ class SocialPublishJobService
         return DB::transaction(function () use ($worker, $account) {
             $job = SocialPublishJob::query()
                 ->where('status', OutputStatus::Queued)
+                ->where('driver', PublishDriver::Worker)
                 ->where('platform', $account->platform)
                 ->whereHas('post', fn ($q) => $q->where('user_id', $account->user_id))
                 ->orderBy('id')
@@ -151,18 +236,7 @@ class SocialPublishJobService
     public function complete(Worker $worker, SocialPublishJob $job, ?string $postUrl = null): void
     {
         DB::transaction(function () use ($worker, $job, $postUrl) {
-            $job = $this->lockAssigned($worker, $job);
-            $job->update([
-                'status' => OutputStatus::Completed,
-                'post_url' => $postUrl,
-                'lease_expires_at' => null,
-                'finished_at' => now(),
-            ]);
-
-            $post = SocialPost::query()->lockForUpdate()->findOrFail($job->social_post_id);
-            if ($post->platformStatus($job->platform) === PlatformPublishStatus::Publishing) {
-                $post->setPlatformStatus($job->platform, PlatformPublishStatus::Published);
-            }
+            $this->completeJob($this->lockAssigned($worker, $job), $postUrl);
         });
     }
 
@@ -189,12 +263,29 @@ class SocialPublishJobService
                 if (! $job || $job->status !== OutputStatus::Processing || $job->lease_expires_at?->isFuture()) {
                     return;
                 }
-                $this->failJob($job, 'WORKER_TIMEOUT', 'Worker không trả kết quả trong thời gian cho phép.');
+                $job->driver === PublishDriver::Api
+                    ? $this->failJob($job, 'TIKTOK_TIMEOUT', 'TikTok xử lý quá lâu, vui lòng thử lại.')
+                    : $this->failJob($job, 'WORKER_TIMEOUT', 'Worker không trả kết quả trong thời gian cho phép.');
                 $failed++;
             });
         }
 
         return $failed;
+    }
+
+    private function completeJob(SocialPublishJob $job, ?string $postUrl): void
+    {
+        $job->update([
+            'status' => OutputStatus::Completed,
+            'post_url' => $postUrl,
+            'lease_expires_at' => null,
+            'finished_at' => now(),
+        ]);
+
+        $post = SocialPost::query()->lockForUpdate()->findOrFail($job->social_post_id);
+        if ($post->platformStatus($job->platform) === PlatformPublishStatus::Publishing) {
+            $post->setPlatformStatus($job->platform, PlatformPublishStatus::Published);
+        }
     }
 
     private function failJob(SocialPublishJob $job, string $errorCode, string $errorMessage): void
