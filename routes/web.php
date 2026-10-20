@@ -11,6 +11,7 @@ use App\Http\Controllers\Admin\FinanceController;
 use App\Http\Controllers\Admin\GenerationController;
 use App\Http\Controllers\Admin\PublishAccountController;
 use App\Http\Controllers\Admin\SettingController;
+use App\Http\Controllers\Admin\TikTokStatusController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\WorkerController;
 use Illuminate\Support\Facades\Route;
@@ -48,6 +49,8 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
         Route::resource('publish-accounts', PublishAccountController::class)->except('show')->parameters(['publish-accounts' => 'publishAccount']);
         Route::post('publish-accounts/{publishAccount}/toggle', [PublishAccountController::class, 'toggle'])->name('publish-accounts.toggle');
+
+        Route::get('tiktok-status', TikTokStatusController::class)->name('tiktok-status');
 
         Route::resource('workers', WorkerController::class)->only(['index', 'create', 'store', 'show']);
         Route::post('workers/{worker}/regenerate', [WorkerController::class, 'regenerate'])->name('workers.regenerate');

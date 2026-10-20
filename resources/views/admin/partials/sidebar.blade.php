@@ -11,6 +11,7 @@
         ['route' => 'admin.banners.index', 'pattern' => 'admin.banners.*', 'icon' => 'fas fa-image', 'label' => 'Banner'],
         ['route' => 'admin.generations.index', 'pattern' => 'admin.generations.*', 'icon' => 'fas fa-images', 'label' => 'Lượt tạo ảnh'],
         ['route' => 'admin.publish-accounts.index', 'pattern' => 'admin.publish-accounts.*', 'icon' => 'fas fa-share-alt', 'label' => 'Tài khoản đăng bài'],
+        ['route' => 'admin.tiktok-status', 'pattern' => 'admin.tiktok-status', 'icon' => 'fab fa-tiktok', 'label' => 'Tra trạng thái TikTok'],
         ['route' => 'admin.workers.index', 'pattern' => 'admin.workers.*', 'icon' => 'fas fa-robot', 'label' => 'Worker'],
         ['header' => 'TÀI CHÍNH'],
         ['route' => 'admin.transactions.index', 'pattern' => 'admin.transactions.*', 'icon' => 'fas fa-exchange-alt', 'label' => 'Transaction'],

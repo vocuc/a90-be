@@ -279,6 +279,29 @@ class TikTokApiTest extends TestCase
         Http::assertSent(fn (HttpRequest $request) => str_ends_with($request->url(), '/content/init/') && $request->hasHeader('Authorization', 'Bearer access-new'));
     }
 
+    public function test_admin_looks_up_publish_status_by_publish_id(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $this->connectTikTok($user);
+        $post = $this->pendingPost($user);
+        $this->fakeTikTok(['/post/publish/content/init/' => self::tiktokOk(['publish_id' => 'p_inbox_url~v2.1'])]);
+        $this->publish($user, $post)->assertOk();
+
+        $this->get('/admin/tiktok-status')->assertRedirect('/admin/login');
+        $admin = $this->buyer();
+        $admin->forceFill(['role' => 'admin'])->save();
+        $this->actingAs($admin)->get('/admin/tiktok-status')->assertOk()->assertSee('publish_id');
+
+        $this->fakeTikTok(['/post/publish/status/fetch/' => self::tiktokOk(['status' => 'SEND_TO_USER_INBOX'])]);
+        $this->get('/admin/tiktok-status?publish_id='.urlencode('p_inbox_url~v2.1'))
+            ->assertOk()->assertSee('SEND_TO_USER_INBOX')->assertSee('@shophoa');
+        Http::assertSent(fn (HttpRequest $request) => str_ends_with($request->url(), '/status/fetch/') && $request['publish_id'] === 'p_inbox_url~v2.1');
+        // Chỉ xem: job vẫn đang gửi, chờ webhook / sweep
+        $this->assertSame(PlatformPublishStatus::Publishing, $post->fresh()->tiktok_status);
+
+        $this->get('/admin/tiktok-status?publish_id=khong-co')->assertOk()->assertSee('Không tìm thấy job');
+    }
+
     public function test_sweep_fetches_status_when_webhook_is_missing_then_times_out(): void
     {
         $user = $this->buyer(credit: 5000);
