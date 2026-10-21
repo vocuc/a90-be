@@ -93,4 +93,10 @@ class AiCreative extends Model
     {
         return $this->hasMany(Generation::class, 'creative_id');
     }
+
+    /** Nhóm tạo lô tự động chứa Creative (tối đa một nhóm). */
+    public function groups(): BelongsToMany
+    {
+        return $this->belongsToMany(CreativeGroup::class, 'creative_group_items', 'creative_id', 'creative_group_id');
+    }
 }

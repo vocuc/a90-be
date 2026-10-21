@@ -34,10 +34,12 @@ class ImageBatchService
      * Trừ tổng phí ngay, đủ hoặc không tạo gì. Số ảnh một mẫu vượt max_outputs của mẫu thì chia thành nhiều
      * generation dùng chung ảnh đầu vào (chỉ tải lên một lần).
      *
-     * @param  array<int, array{creative: AiCreative, input: GenerationInput, quantity: int}>  $items
+     * @param  array<int, array{creative: AiCreative, input: GenerationInput, quantity: int, kept?: array<string, string>}>  $items
+     *                                                                                                                               kept: ảnh đầu vào đã lưu sẵn theo tên trường (lô tự động dùng ảnh sản phẩm, không tải lên lại)
      * @param  bool  $insertLogo  chèn logo shop vào mọi ảnh của lô (worker tạo ảnh chèn, note/logo-tao-anh.txt)
+     * @param  array<string, mixed>  $attributes  cột thêm của lô (lô tự động: source, product_id, creative_group_id)
      */
-    public function create(User $user, array $items, string $idempotencyKey, bool $insertLogo = false): ImageBatch
+    public function create(User $user, array $items, string $idempotencyKey, bool $insertLogo = false, array $attributes = []): ImageBatch
     {
         if ($existing = $this->findExisting($user, $idempotencyKey)) {
             return $existing;
@@ -46,18 +48,18 @@ class ImageBatchService
         $total = array_sum(array_map(fn (array $item) => $item['creative']->price_per_image * $item['quantity'], $items));
 
         try {
-            return DB::transaction(function () use ($user, $items, $idempotencyKey, $total, $insertLogo) {
+            return DB::transaction(function () use ($user, $items, $idempotencyKey, $total, $insertLogo, $attributes) {
                 // Kiểm tra tổng phí trước để báo đúng số tiền cần (không dừng giữa chừng ở mẫu thứ n)
                 $this->credits->assertSufficient($this->credits->lockWallet($user->id), $total);
 
-                $batch = ImageBatch::query()->create(['user_id' => $user->id, 'idempotency_key' => $idempotencyKey]);
+                $batch = ImageBatch::query()->create([...$attributes, 'user_id' => $user->id, 'idempotency_key' => $idempotencyKey]);
                 $position = 0;
 
                 foreach (array_values($items) as $i => $item) {
                     $creative = $item['creative']->loadMissing('config');
                     $chunk = max(1, (int) $creative->config->max_outputs);
                     $input = $item['input'];
-                    $kept = [];
+                    $kept = $item['kept'] ?? [];
 
                     for ($done = 0, $part = 0; $done < $item['quantity']; $done += $chunk, $part++) {
                         $quantity = min($chunk, $item['quantity'] - $done);

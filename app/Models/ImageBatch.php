@@ -13,6 +13,10 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 /** Lô ảnh: tạo một lần từ nhiều mẫu, sau đó chỉ tạo lại / sửa nguyên liệu / xoá từng ảnh. */
 class ImageBatch extends Model
 {
+    public const SOURCE_MANUAL = 'manual';
+
+    public const SOURCE_AUTO = 'auto';
+
     protected $guarded = ['id'];
 
     public function user(): BelongsTo
@@ -37,13 +41,24 @@ class ImageBatch extends Model
     public function scopeWithSummary(Builder $query): Builder
     {
         return $query
-            ->with('coverImage.output')
+            ->with(['coverImage.output', 'product.coverImage', 'group'])
             ->withCount([
                 'images',
                 'images as generating_count' => fn (Builder $q) => $q->whereHas('output', fn (Builder $o) => $o->whereIn('status', ImageBatchService::BUSY)),
                 'images as failed_count' => fn (Builder $q) => $q->whereHas('output', fn (Builder $o) => $o->where('status', OutputStatus::Failed)),
                 'posts',
             ]);
+    }
+
+    /** Lô tạo tự động (source = auto): sản phẩm và nhóm đã dùng, null khi lô tạo tay hoặc đã xoá. */
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class);
+    }
+
+    public function group(): BelongsTo
+    {
+        return $this->belongsTo(CreativeGroup::class, 'creative_group_id');
     }
 
     public function posts(): HasMany

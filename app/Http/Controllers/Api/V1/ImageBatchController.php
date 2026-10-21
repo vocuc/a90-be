@@ -9,8 +9,11 @@ use App\Http\Resources\SocialPostResource;
 use App\Models\AiCreative;
 use App\Models\ImageBatch;
 use App\Models\ImageBatchImage;
+use App\Models\Product;
+use App\Services\AutoBatchService;
 use App\Services\GenerationInput;
 use App\Services\ImageBatchService;
+use App\Services\MediaStorage;
 use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -62,16 +65,7 @@ class ImageBatchController extends Controller
             'items.*.creative_id.distinct' => 'Mỗi mẫu chỉ được chọn một lần trong lô.',
         ]);
 
-        // Logo = ảnh đại diện shop (note/logo-tao-anh.txt)
-        $insertLogo = (bool) ($data['insert_logo'] ?? false);
-        if ($insertLogo) {
-            $profile = $request->user()->creatorProfile;
-            if (! $profile?->avatar_path) {
-                throw ValidationException::withMessages(['insert_logo' => $profile
-                    ? 'Shop chưa có logo. Hãy thêm ảnh đại diện shop để dùng tính năng này.'
-                    : 'Bạn phải tạo shop để sử dụng tính năng này.']);
-            }
-        }
+        $insertLogo = $this->insertLogo($request, $data);
 
         $items = array_values($data['items']);
         $creatives = AiCreative::query()
@@ -102,6 +96,51 @@ class ImageBatchController extends Controller
         $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo);
 
         return $this->resource($batch)->response()->setStatusCode(201);
+    }
+
+    /** Xem trước "Tạo tự động" (note/auto-tao-lo.txt ở repo frontend): count lô sẽ tạo + tổng tiền, không tạo gì. */
+    public function autoPreview(Request $request, AutoBatchService $auto): JsonResponse
+    {
+        $data = $request->validate(['count' => ['required', 'integer', 'min:1', 'max:'.AutoBatchService::MAX_COUNT]]);
+        $user = $request->user();
+        $media = app(MediaStorage::class);
+
+        $plans = array_map(fn (array $plan) => [
+            'product' => self::productSummary($plan['product'], $media),
+            'group' => ['id' => $plan['group']->id, 'name' => $plan['group']->name],
+            'creatives' => array_map(fn (array $item) => ImageBatchService::creativeSummary($item['creative']), $plan['items']),
+            'cost' => $plan['cost'],
+        ], $auto->preview($user, (int) $data['count']));
+
+        return response()->json(['data' => [
+            'batches' => $plans,
+            'total_cost' => array_sum(array_column($plans, 'cost')),
+            'balance' => $auto->balance($user),
+        ]]);
+    }
+
+    /** "Tạo tự động": tạo lần lượt tới count lô, hết tiền / hết cặp hợp lệ thì dừng. */
+    public function autoStore(Request $request, AutoBatchService $auto): JsonResponse
+    {
+        $data = $request->validate([
+            'count' => ['required', 'integer', 'min:1', 'max:'.AutoBatchService::MAX_COUNT],
+            'idempotency_key' => ['required', 'string', 'max:80'],
+            'insert_logo' => ['nullable', 'boolean'],
+        ]);
+
+        $result = $auto->create($request->user(), (int) $data['count'], $this->insertLogo($request, $data), $data['idempotency_key']);
+        $batches = ImageBatch::query()
+            ->whereKey(array_map(fn (ImageBatch $b) => $b->id, $result['batches']))
+            ->withSummary()
+            ->orderBy('id')
+            ->get();
+
+        return response()->json(['data' => [
+            'batches' => ImageBatchResource::collection($batches)->resolve($request),
+            'requested' => (int) $data['count'],
+            'stopped' => $result['stopped'],
+            'required' => $result['required'],
+        ]], 201);
     }
 
     /** Popup "Sửa nguyên liệu": nguyên liệu đã dùng để tạo ảnh. */
@@ -170,6 +209,27 @@ class ImageBatchController extends Controller
         $this->batches->delete($request->user(), $this->findBatch($request, $batch));
 
         return response()->noContent();
+    }
+
+    /** Logo = ảnh đại diện shop (note/logo-tao-anh.txt). */
+    private function insertLogo(Request $request, array $data): bool
+    {
+        $insertLogo = (bool) ($data['insert_logo'] ?? false);
+        if ($insertLogo) {
+            $profile = $request->user()->creatorProfile;
+            if (! $profile?->avatar_path) {
+                throw ValidationException::withMessages(['insert_logo' => $profile
+                    ? 'Shop chưa có logo. Hãy thêm ảnh đại diện shop để dùng tính năng này.'
+                    : 'Bạn phải tạo shop để sử dụng tính năng này.']);
+            }
+        }
+
+        return $insertLogo;
+    }
+
+    private static function productSummary(Product $product, MediaStorage $media): array
+    {
+        return ['id' => $product->id, 'name' => $product->name, 'cover_url' => $media->url($product->images->first()?->path)];
     }
 
     private function findBatch(Request $request, int $id): ImageBatch

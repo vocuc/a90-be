@@ -5,8 +5,10 @@ use App\Http\Controllers\Api\V1\AiModelController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\Creator\CreativeAssetController;
 use App\Http\Controllers\Api\V1\Creator\CreativeController;
+use App\Http\Controllers\Api\V1\Creator\CreativeGroupController;
 use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\DashboardController;
+use App\Http\Controllers\Api\V1\Creator\ProductController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
@@ -87,6 +89,17 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::patch('creatives/{creative}/images/order', [CreativeImageController::class, 'reorder']);
             Route::delete('creatives/{creative}/images/{image}', [CreativeImageController::class, 'destroy']);
 
+            // Tạo lô tự động: sản phẩm + nhóm creative (note/auto-tao-lo.txt ở repo frontend)
+            Route::get('products', [ProductController::class, 'index']);
+            Route::post('products', [ProductController::class, 'store']);
+            Route::get('products/{product}', [ProductController::class, 'show'])->whereNumber('product');
+            Route::post('products/{product}', [ProductController::class, 'update'])->whereNumber('product');
+            Route::delete('products/{product}', [ProductController::class, 'destroy'])->whereNumber('product');
+            Route::get('creative-groups', [CreativeGroupController::class, 'index']);
+            Route::post('creative-groups', [CreativeGroupController::class, 'store']);
+            Route::put('creative-groups/{group}', [CreativeGroupController::class, 'update'])->whereNumber('group');
+            Route::delete('creative-groups/{group}', [CreativeGroupController::class, 'destroy'])->whereNumber('group');
+
             Route::get('dashboard', [DashboardController::class, 'dashboard']);
             Route::get('wallet', [DashboardController::class, 'wallet']);
             Route::get('wallet/transactions', [DashboardController::class, 'walletTransactions']);
@@ -113,6 +126,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         Route::prefix('image-batches')->group(function () {
             Route::get('/', [ImageBatchController::class, 'index']);
             Route::post('/', [ImageBatchController::class, 'store'])->middleware('throttle:generations');
+            Route::get('auto/preview', [ImageBatchController::class, 'autoPreview']);
+            Route::post('auto', [ImageBatchController::class, 'autoStore'])->middleware('throttle:generations');
             Route::get('{batch}', [ImageBatchController::class, 'show'])->whereNumber('batch');
             Route::delete('{batch}', [ImageBatchController::class, 'destroy'])->whereNumber('batch');
             Route::get('{batch}/images/{image}/inputs', [ImageBatchController::class, 'imageInputs'])->whereNumber(['batch', 'image']);

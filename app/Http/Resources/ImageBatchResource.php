@@ -16,7 +16,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class ImageBatchResource extends JsonResource
 {
-    public const RELATIONS = ['images.output', 'images.generation.creative'];
+    public const RELATIONS = ['images.output', 'images.generation.creative', 'product.coverImage', 'group'];
 
     public function toArray(Request $request): array
     {
@@ -42,6 +42,14 @@ class ImageBatchResource extends JsonResource
         return [
             'id' => $this->id,
             'status' => $counts['generating_count'] > 0 ? 'generating' : 'completed',
+            // Lô tạo tự động (note/auto-tao-lo.txt ở repo frontend): sản phẩm / nhóm null khi lô tạo tay hoặc đã xoá
+            'source' => $this->source ?? ImageBatch::SOURCE_MANUAL,
+            'product' => $this->product ? [
+                'id' => $this->product->id,
+                'name' => $this->product->name,
+                'cover_url' => app(MediaStorage::class)->url($this->product->coverImage?->path),
+            ] : null,
+            'group' => $this->group ? ['id' => $this->group->id, 'name' => $this->group->name] : null,
             ...$counts,
             'cover_url' => $cover,
             'post_count' => (int) ($this->posts_count ?? $this->posts()->count()),

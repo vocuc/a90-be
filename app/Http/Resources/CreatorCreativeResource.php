@@ -36,6 +36,8 @@ class CreatorCreativeResource extends JsonResource
             'usage_count' => $this->usage_count,
             'rating_avg' => (float) $this->rating_avg,
             'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),
+            // Nhóm tạo lô tự động đang chứa Creative (chỉ có ở danh sách)
+            'group' => $this->whenLoaded('groups', fn () => ($group = $this->groups->first()) ? ['id' => $group->id, 'name' => $group->name] : null),
             'published_at' => $this->published_at,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,

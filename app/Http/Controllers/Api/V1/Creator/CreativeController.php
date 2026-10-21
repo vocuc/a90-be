@@ -37,7 +37,7 @@ class CreativeController extends Controller
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($filters['visibility'] ?? null, fn ($q, $visibility) => $q->where('is_public', $visibility === 'public'))
             ->when($filters['q'] ?? null, fn ($q, $term) => $q->where('title', 'like', '%'.addcslashes($term, '%_\\').'%'))
-            ->with(['images', 'hashtags'])
+            ->with(['images', 'hashtags', 'groups'])
             ->latest('updated_at')
             ->paginate($filters['per_page'] ?? 20);
 
