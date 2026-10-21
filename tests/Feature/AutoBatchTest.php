@@ -6,6 +6,7 @@ use App\Enums\CreativeStatus;
 use App\Models\AiCreative;
 use App\Models\CreativeGroup;
 use App\Models\Generation;
+use App\Models\Hashtag;
 use App\Models\ImageBatch;
 use App\Models\Product;
 use App\Models\User;
@@ -19,20 +20,37 @@ class AutoBatchTest extends TestCase
 {
     // ---- Helpers ----
 
-    /** @param  string[]  $keys */
-    private function product(User $user, array $keys = ['product_image'], ?string $name = null): Product
+    /**
+     * @param  string[]  $keys
+     * @param  string[]  $hashtags  mặc định khớp hashtag mà group() gắn cho creative
+     */
+    private function product(User $user, array $keys = ['product_image'], ?string $name = null, array $hashtags = ['Giày']): Product
     {
         $id = $this->actingAs($user)->post('/api/v1/creator/products', [
             'name' => $name,
+            'hashtags' => $hashtags,
             'images' => array_map(fn (string $key) => ['file' => UploadedFile::fake()->image("{$key}.png", 32, 32), 'field_key' => $key], $keys),
         ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
 
         return Product::query()->findOrFail($id);
     }
 
-    /** @param  AiCreative[]  $creatives */
+    /** @param  string[]  $names */
+    private function tag(AiCreative $creative, array $names): AiCreative
+    {
+        $creative->hashtags()->sync(Hashtag::syncPivot($names));
+
+        return $creative;
+    }
+
+    /** @param  AiCreative[]  $creatives  creative chưa có hashtag được gắn #giay (khớp product() mặc định) */
     private function group(User $user, array $creatives, string $name = 'Nhóm'): CreativeGroup
     {
+        foreach ($creatives as $creative) {
+            if (! $creative->hashtags()->exists()) {
+                $this->tag($creative, ['giay']);
+            }
+        }
         $id = $this->actingAs($user)->postJson('/api/v1/creator/creative-groups', [
             'name' => $name,
             'creative_ids' => array_map(fn (AiCreative $c) => $c->id, $creatives),
@@ -68,6 +86,7 @@ class AutoBatchTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.name', 'Áo thun')
             ->assertJsonPath('data.images.1.field_key', 'back_image')
+            ->assertJsonPath('data.hashtags.0.slug', 'giay')
             ->assertJsonPath('data.auto_batch_count', 0);
 
         // Giữ ảnh đầu (đổi key), bỏ ảnh sau, thêm ảnh mới
@@ -81,7 +100,9 @@ class AutoBatchTest extends TestCase
             ->assertJsonPath('data.name', null)
             ->assertJsonCount(2, 'data.images')
             ->assertJsonPath('data.images.0.field_key', 'main')
-            ->assertJsonPath('data.images.1.field_key', 'product_image');
+            ->assertJsonPath('data.images.1.field_key', 'product_image')
+            // Không gửi hashtags -> bỏ hết
+            ->assertJsonCount(0, 'data.hashtags');
 
         $this->assertSame($images[0]->path, $product->images()->get()[0]->path);
 
@@ -106,6 +127,31 @@ class AutoBatchTest extends TestCase
 
         // Không phải Creator -> middleware creator chặn
         $this->actingAs($this->buyer())->getJson('/api/v1/creator/products')->assertForbidden();
+    }
+
+    public function test_product_hashtags_dedupe_and_share_creative_hashtags(): void
+    {
+        $user = $this->creator();
+        $creative = $this->tag($this->publishedCreative($user), ['Giày']);
+
+        $this->actingAs($user)->post('/api/v1/creator/products', [
+            'hashtags' => ['#giay', 'GIÀY', 'Sale_50'],
+            'images' => [['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'product_image']],
+        ], ['Accept' => 'application/json'])
+            ->assertCreated()
+            ->assertJsonCount(2, 'data.hashtags')
+            // Hashtag đã có (của creative) giữ tên cũ
+            ->assertJsonPath('data.hashtags.0.name', 'Giày')
+            ->assertJsonPath('data.hashtags.1.slug', 'sale_50');
+        $this->assertSame(2, Hashtag::query()->count());
+        $this->assertSame($creative->hashtags()->value('hashtags.id'), Product::query()->first()->hashtags()->value('hashtags.id'));
+
+        $this->actingAs($user)->post('/api/v1/creator/products', [
+            'hashtags' => ['a b', '#'],
+            'images' => [['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'product_image']],
+        ], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['hashtags.0', 'hashtags.1']);
     }
 
     // ---- Nhóm ----
@@ -222,6 +268,33 @@ class AutoBatchTest extends TestCase
         $this->assertSame(['product_image' => $path], $generations[0]->input_paths);
         $this->assertSame('Sale', $generations[1]->input_values['slogan']);
         $this->assertLedgerMatchesBalance($user);
+    }
+
+    public function test_product_only_pairs_with_groups_sharing_a_hashtag(): void
+    {
+        $user = $this->creator(credit: 100000);
+        $shoe = $this->tag($this->publishedCreative($user), ['giay']);
+        $bag = $this->tag($this->publishedCreative($user), ['tui']);
+        $shirt = $this->tag($this->publishedCreative($user), ['ao']);
+        $pausedShoe = $this->tag($this->publishedCreative($user), ['giay']);
+        $pausedShoe->update(['status' => CreativeStatus::Paused]);
+
+        // Khớp nhờ $shoe: tạo cả nhóm, kể cả $bag không trùng hashtag
+        $g1 = $this->group($user, [$shoe, $bag], 'G1');
+        $g2 = $this->group($user, [$shirt], 'G2');
+        // Creative trùng hashtag đang tạm dừng: nhóm không khớp
+        $this->group($user, [$pausedShoe, $this->tag($this->publishedCreative($user), ['tui'])], 'G3');
+
+        $shoes = $this->product($user, hashtags: ['#Giày', 'sale']);
+        $shirts = $this->product($user, hashtags: ['ao']);
+        // Không có hashtag: bỏ qua
+        $plain = $this->product($user, hashtags: []);
+
+        $this->auto($user, 3)->assertCreated()->assertJsonCount(3, 'data.batches');
+
+        $this->assertSame([[$shoes->id, $g1->id], [$shirts->id, $g2->id], [$shoes->id, $g1->id]], $this->pairs($user));
+        $this->assertSame([$shoe->id, $bag->id], Generation::query()->orderBy('id')->limit(2)->pluck('creative_id')->all());
+        $this->assertSame(0, $plain->fresh()->auto_batch_count);
     }
 
     public function test_pair_without_valid_creative_is_skipped_and_not_counted(): void

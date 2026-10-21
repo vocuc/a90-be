@@ -27,6 +27,7 @@ class ProductResource extends JsonResource
                 'url' => $media->url($image->path),
                 'field_key' => $image->field_key,
             ])->values(),
+            'hashtags' => HashtagResource::collection($this->whenLoaded('hashtags')),
             'auto_batch_count' => (int) $this->auto_batch_count,
             'created_at' => $this->created_at,
         ];

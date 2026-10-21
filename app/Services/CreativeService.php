@@ -171,31 +171,13 @@ class CreativeService
     }
 
     /**
-     * Thay toàn bộ hashtag của Creative, giữ thứ tự nhập. Trùng nhau (khác hoa/thường, dấu) chỉ lấy lần đầu.
-     * Hashtag mới được tạo với tên hiển thị như Creator nhập; hashtag đã có giữ tên cũ.
+     * Thay toàn bộ hashtag của Creative, giữ thứ tự nhập (xem Hashtag::syncPivot).
      *
      * @param  string[]  $names
      */
     private function syncHashtags(AiCreative $creative, array $names): void
     {
-        // [slug => tên hiển thị]
-        $names = collect($names)
-            ->map(fn (string $name) => Hashtag::cleanName($name))
-            ->unique(fn (string $name) => Hashtag::slugFor($name))
-            ->mapWithKeys(fn (string $name) => [Hashtag::slugFor($name) => $name]);
-
-        if ($names->isNotEmpty()) {
-            $now = now();
-            // insertOrIgnore: an toàn khi 2 Creator cùng tạo một hashtag mới
-            Hashtag::query()->insertOrIgnore($names->map(fn ($name, $slug) => [
-                'name' => $name, 'slug' => $slug, 'created_at' => $now, 'updated_at' => $now,
-            ])->values()->all());
-        }
-
-        $ids = Hashtag::query()->whereIn('slug', $names->keys())->pluck('id', 'slug');
-        $creative->hashtags()->sync(
-            $names->keys()->values()->mapWithKeys(fn ($slug, $i) => [$ids[$slug] => ['sort_order' => $i]])->all()
-        );
+        $creative->hashtags()->sync(Hashtag::syncPivot($names));
         $creative->unsetRelation('hashtags');
     }
 

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
@@ -27,6 +28,14 @@ class Product extends Model
     public function coverImage(): HasOne
     {
         return $this->hasOne(ProductImage::class)->ofMany(['position' => 'min', 'id' => 'min']);
+    }
+
+    /** Hashtag theo thứ tự nhập: tạo lô tự động chỉ ghép với nhóm có creative trùng hashtag. */
+    public function hashtags(): BelongsToMany
+    {
+        return $this->belongsToMany(Hashtag::class, 'product_hashtag')
+            ->withPivot('sort_order')
+            ->orderByPivot('sort_order');
     }
 
     public function scopeOwnedBy(Builder $query, User $user): Builder

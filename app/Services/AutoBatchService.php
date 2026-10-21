@@ -18,6 +18,9 @@ use Illuminate\Support\Facades\DB;
  * Tạo lô tự động (note/auto-tao-lo.txt ở repo frontend): người dùng bấm "Tạo tự động" với số lô, mỗi lô = 1 sản phẩm
  * x các creative của 1 nhóm (mỗi creative 1 ảnh), ảnh sản phẩm điền vào trường ảnh có key = field_key.
  *
+ * Hashtag: sản phẩm không có hashtag thì bỏ qua; nhóm chỉ ghép với sản phẩm khi có creative dùng được trùng ít nhất
+ * một hashtag với sản phẩm, khi đó tạo cả nhóm (mọi creative dùng được, kể cả creative không trùng hashtag).
+ *
  * Thứ tự: sản phẩm có ít lượt tự động nhất trước (bằng nhau thì sản phẩm tạo trước), rồi nhóm mà sản phẩm đó
  * chạy ít nhất (bằng nhau thì chọn ngẫu nhiên, xem AutoBatchPlanner::shuffle). Cặp không có creative nào dùng được thì bỏ qua, không tính lượt.
  * Hết tiền giữa chừng thì dừng; lô là đơn vị nhỏ nhất (trừ tiền cả lô như lô tạo tay).
@@ -127,10 +130,10 @@ class AutoBatchService
 
     private function planner(User $user): AutoBatchPlanner
     {
-        $products = Product::query()->ownedBy($user)->with('images')->orderBy('id')->get();
+        $products = Product::query()->ownedBy($user)->has('hashtags')->with(['images', 'hashtags'])->orderBy('id')->get();
         $groups = CreativeGroup::query()
             ->where('user_id', $user->id)
-            ->with(['creatives.config', 'creatives.model'])
+            ->with(['creatives.config', 'creatives.model', 'creatives.hashtags'])
             ->orderBy('id')
             ->get();
         $counts = DB::table('auto_batch_counts')
@@ -145,6 +148,7 @@ class AutoBatchService
     /**
      * Creative dùng được của nhóm với sản phẩm, kèm nguyên liệu. Bỏ qua (không báo): không Đang bán / bị ẩn / không phải
      * của người dùng / model tạm tắt; không có trường ảnh nào trùng key; còn trường bắt buộc không có giá trị.
+     * Không creative dùng được nào trùng hashtag với sản phẩm thì nhóm không ghép với sản phẩm này (trả rỗng).
      *
      * @param  Collection<int, AiCreative>  $creatives
      * @return array<int, array{creative: AiCreative, input: GenerationInput, quantity: int, kept: array<string, string>}>
@@ -164,7 +168,14 @@ class AutoBatchService
             }
         }
 
-        return $items;
+        $hashtagIds = $product->hashtags->modelKeys();
+        foreach ($items as $item) {
+            if (array_intersect($hashtagIds, $item['creative']->hashtags->modelKeys())) {
+                return $items;
+            }
+        }
+
+        return [];
     }
 
     /** @param  array<string, string>  $paths  ảnh sản phẩm theo field_key */

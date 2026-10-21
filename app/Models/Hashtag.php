@@ -13,6 +13,37 @@ class Hashtag extends Model
 
     protected $guarded = ['id'];
 
+    /**
+     * Dữ liệu sync() cho bảng nối hashtag (Creative, sản phẩm): [hashtag_id => ['sort_order' => i]] theo thứ tự nhập.
+     * Trùng nhau (khác hoa/thường, dấu) chỉ lấy lần đầu. Hashtag mới được tạo với tên hiển thị như người dùng nhập;
+     * hashtag đã có giữ tên cũ.
+     *
+     * @param  string[]  $names
+     * @return array<int, array{sort_order: int}>
+     */
+    public static function syncPivot(array $names): array
+    {
+        // [slug => tên hiển thị]
+        $names = collect($names)
+            ->map(fn (string $name) => static::cleanName($name))
+            ->unique(fn (string $name) => static::slugFor($name))
+            ->mapWithKeys(fn (string $name) => [static::slugFor($name) => $name]);
+
+        if ($names->isEmpty()) {
+            return [];
+        }
+
+        $now = now();
+        // insertOrIgnore: an toàn khi 2 người cùng tạo một hashtag mới
+        static::query()->insertOrIgnore($names->map(fn ($name, $slug) => [
+            'name' => $name, 'slug' => $slug, 'created_at' => $now, 'updated_at' => $now,
+        ])->values()->all());
+
+        $ids = static::query()->whereIn('slug', $names->keys())->pluck('id', 'slug');
+
+        return $names->keys()->values()->mapWithKeys(fn ($slug, $i) => [$ids[$slug] => ['sort_order' => $i]])->all();
+    }
+
     public function creatives(): BelongsToMany
     {
         return $this->belongsToMany(AiCreative::class, 'ai_creative_hashtag', 'hashtag_id', 'creative_id');
