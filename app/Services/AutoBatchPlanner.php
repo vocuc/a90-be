@@ -41,7 +41,8 @@ final class AutoBatchPlanner
         $products = $this->products->sort(fn (Product $a, Product $b) => [$this->productCounts[$a->id], $a->id] <=> [$this->productCounts[$b->id], $b->id]);
 
         foreach ($products as $product) {
-            $groups = $this->groups->sort(fn (CreativeGroup $a, CreativeGroup $b) => [$this->pairCount($product, $a), $a->id] <=> [$this->pairCount($product, $b), $b->id]);
+            // Nhóm sản phẩm này chạy ít nhất, bằng nhau thì ngẫu nhiên
+            $groups = $this->groups->sort(fn (CreativeGroup $a, CreativeGroup $b) => [$this->pairCount($product, $a), $this->shuffle($product, $a), $a->id] <=> [$this->pairCount($product, $b), $this->shuffle($product, $b), $b->id]);
             foreach ($groups as $group) {
                 $key = "{$product->id}:{$group->id}";
                 $this->items[$key] ??= ($this->resolveItems)($product, $group);
@@ -72,5 +73,14 @@ final class AutoBatchPlanner
     private function pairCount(Product $product, CreativeGroup $group): int
     {
         return $this->pairCounts["{$product->id}:{$group->id}"] ?? 0;
+    }
+
+    /**
+     * Thứ tự ngẫu nhiên giữa các nhóm bằng lượt: băm theo sản phẩm, nhóm và lượt hiện tại của sản phẩm nên đổi sau
+     * mỗi lô của sản phẩm, nhưng cùng dữ liệu thì xem trước và tạo thật chọn cùng nhóm (tổng tiền xem trước đúng).
+     */
+    private function shuffle(Product $product, CreativeGroup $group): int
+    {
+        return (int) hexdec(substr(md5("{$product->id}:{$group->id}:{$this->productCounts[$product->id]}"), 0, 7));
     }
 }

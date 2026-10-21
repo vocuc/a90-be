@@ -137,31 +137,54 @@ class AutoBatchTest extends TestCase
 
     // ---- Tạo tự động ----
 
-    public function test_order_runs_all_products_per_group_then_wraps_and_new_product_first(): void
+    public function test_order_runs_each_product_then_wraps_with_unused_group_first_and_new_product_first(): void
     {
         $user = $this->creator(credit: 100000);
         $g1 = $this->group($user, [$this->publishedCreative($user)], 'G1');
         $g2 = $this->group($user, [$this->publishedCreative($user)], 'G2');
         [$p1, $p2, $p3] = [$this->product($user), $this->product($user), $this->product($user)];
 
+        $preview = $this->actingAs($user)->getJson('/api/v1/image-batches/auto/preview?count=7')
+            ->json('data.batches');
+
         $this->auto($user, 7)
             ->assertCreated()
             ->assertJsonCount(7, 'data.batches')
             ->assertJsonPath('data.stopped', null)
-            ->assertJsonPath('data.batches.0.source', 'auto')
-            ->assertJsonPath('data.batches.0.group.name', 'G1');
+            ->assertJsonPath('data.batches.0.source', 'auto');
 
-        $this->assertSame([
-            [$p1->id, $g1->id], [$p2->id, $g1->id], [$p3->id, $g1->id],
-            [$p1->id, $g2->id], [$p2->id, $g2->id], [$p3->id, $g2->id],
-            [$p1->id, $g1->id],
-        ], $this->pairs($user));
+        $pairs = $this->pairs($user);
+        // Xem trước chọn đúng các cặp sẽ tạo
+        $this->assertSame(array_map(fn ($b) => [$b['product']['id'], $b['group']['id']], $preview), $pairs);
+        // Mỗi vòng đủ các sản phẩm theo thứ tự tạo; vòng 2 mỗi sản phẩm sang nhóm chưa dùng
+        $this->assertSame([$p1->id, $p2->id, $p3->id, $p1->id, $p2->id, $p3->id, $p1->id], array_column($pairs, 0));
+        foreach ([0, 1, 2] as $i) {
+            $this->assertEqualsCanonicalizing([$g1->id, $g2->id], [$pairs[$i][1], $pairs[$i + 3][1]]);
+        }
 
         // Sản phẩm mới (0 lượt) chạy liền các nhóm tới khi bằng lượt sản phẩm khác, rồi tới P2 (2 lượt, ít hơn P1)
         $p4 = $this->product($user);
         $this->auto($user, 3)->assertCreated();
-        $this->assertSame([[$p4->id, $g1->id], [$p4->id, $g2->id], [$p2->id, $g1->id]], array_slice($this->pairs($user), 7));
+        $next = array_slice($this->pairs($user), 7);
+        $this->assertSame([$p4->id, $p4->id, $p2->id], array_column($next, 0));
+        $this->assertEqualsCanonicalizing([$g1->id, $g2->id], array_column(array_slice($next, 0, 2), 1));
         $this->assertSame(3, $p1->fresh()->auto_batch_count);
+    }
+
+    public function test_tied_groups_are_picked_randomly(): void
+    {
+        $user = $this->creator(credit: 1000000);
+        foreach (range(1, 4) as $i) {
+            $this->group($user, [$this->publishedCreative($user)], "G{$i}");
+        }
+        foreach (range(1, 20) as $i) {
+            $this->product($user);
+        }
+
+        $this->auto($user, 20)->assertCreated()->assertJsonCount(20, 'data.batches');
+
+        // 20 sản phẩm đều 0 lượt với mọi nhóm: không phải lúc nào cũng nhóm tạo trước
+        $this->assertGreaterThan(1, count(array_unique(array_column($this->pairs($user), 1))));
     }
 
     public function test_product_image_fills_linked_field_and_invalid_creatives_are_skipped(): void

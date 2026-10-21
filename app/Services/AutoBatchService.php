@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\DB;
  * x các creative của 1 nhóm (mỗi creative 1 ảnh), ảnh sản phẩm điền vào trường ảnh có key = field_key.
  *
  * Thứ tự: sản phẩm có ít lượt tự động nhất trước (bằng nhau thì sản phẩm tạo trước), rồi nhóm mà sản phẩm đó
- * chạy ít nhất (bằng nhau thì nhóm tạo trước). Cặp không có creative nào dùng được thì bỏ qua, không tính lượt.
+ * chạy ít nhất (bằng nhau thì chọn ngẫu nhiên, xem AutoBatchPlanner::shuffle). Cặp không có creative nào dùng được thì bỏ qua, không tính lượt.
  * Hết tiền giữa chừng thì dừng; lô là đơn vị nhỏ nhất (trừ tiền cả lô như lô tạo tay).
  */
 class AutoBatchService
