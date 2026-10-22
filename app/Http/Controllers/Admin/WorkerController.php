@@ -8,6 +8,7 @@ use App\Models\Worker;
 use App\Services\AuditLogger;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 /**
@@ -59,6 +60,28 @@ class WorkerController extends Controller
         }
 
         return view('admin.workers.show', compact('worker'));
+    }
+
+    /** Đổi tên: chỉ để hiển thị (worker xác thực bằng token), máy đang chạy không bị ảnh hưởng. */
+    public function rename(Request $request, Worker $worker): RedirectResponse
+    {
+        $request->merge(['name' => trim((string) $request->input('name'))]);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:100', Rule::unique('workers', 'name')->ignore($worker->id)],
+        ], [
+            'name.required' => 'Vui lòng nhập tên worker.',
+            'name.max' => 'Tên worker tối đa 100 ký tự.',
+            'name.unique' => 'Tên worker đã tồn tại.',
+        ]);
+
+        $old = $worker->name;
+        if ($old === $data['name']) {
+            return back();
+        }
+        $worker->update(['name' => $data['name']]);
+        $this->audit->log('admin.worker.rename', $worker, ['from' => $old, 'to' => $worker->name]);
+
+        return back()->with('success', "Đã đổi tên worker \"{$old}\" thành \"{$worker->name}\".");
     }
 
     /** Đổi token: máy đang dùng token cũ bị từ chối ngay, phải dán token mới. */

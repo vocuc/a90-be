@@ -53,6 +53,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('tiktok-status', TikTokStatusController::class)->name('tiktok-status');
 
         Route::resource('workers', WorkerController::class)->only(['index', 'create', 'store', 'show']);
+        Route::patch('workers/{worker}/name', [WorkerController::class, 'rename'])->name('workers.rename');
         Route::post('workers/{worker}/regenerate', [WorkerController::class, 'regenerate'])->name('workers.regenerate');
         Route::post('workers/{worker}/toggle', [WorkerController::class, 'toggle'])->name('workers.toggle');
         Route::post('workers/{worker}/users', [WorkerController::class, 'attachUser'])->name('workers.users.attach');

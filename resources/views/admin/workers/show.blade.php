@@ -93,6 +93,18 @@
         <div class="col-lg-4">
             <div class="card">
                 <div class="card-body">
+                    <form method="POST" action="{{ route('admin.workers.rename', $worker) }}" class="mb-3">
+                        @csrf @method('PATCH')
+                        <label for="worker-name" class="mb-1">Tên worker</label>
+                        <div class="input-group">
+                            <input type="text" id="worker-name" name="name" value="{{ old('name', $worker->name) }}" maxlength="100"
+                                   class="form-control @error('name') is-invalid @enderror" required>
+                            <div class="input-group-append">
+                                <button class="btn btn-primary"><i class="fas fa-save"></i> Lưu</button>
+                            </div>
+                            @error('name')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                    </form>
                     <dl class="mb-0">
                         <dt>Tài khoản đăng bài</dt>
                         <dd>

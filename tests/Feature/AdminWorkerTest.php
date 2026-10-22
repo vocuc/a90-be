@@ -61,6 +61,24 @@ class AdminWorkerTest extends TestCase
         $this->assertSame(1, Worker::query()->count());
     }
 
+    public function test_admin_renames_worker_without_touching_token(): void
+    {
+        [$worker, $token] = Worker::register('phone1-tiktok');
+        Worker::register('phone2-tiktok');
+        $this->actingAs($this->admin());
+
+        $this->patch("/admin/workers/{$worker->id}/name", ['name' => '  phone1-facebook  '])->assertRedirect();
+        $this->assertSame('phone1-facebook', $worker->fresh()->name);
+        $this->assertTokenWorks($token);
+        $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.rename')->exists());
+
+        // Bắt buộc tên, không trùng worker khác; giữ nguyên tên của chính nó thì được
+        $this->patch("/admin/workers/{$worker->id}/name", ['name' => ''])->assertSessionHasErrors('name');
+        $this->patch("/admin/workers/{$worker->id}/name", ['name' => 'phone2-tiktok'])->assertSessionHasErrors('name');
+        $this->patch("/admin/workers/{$worker->id}/name", ['name' => 'phone1-facebook'])->assertSessionHasNoErrors();
+        $this->assertSame('phone1-facebook', $worker->fresh()->name);
+    }
+
     public function test_regenerate_token_invalidates_old_token(): void
     {
         [$worker, $old] = Worker::register('phone1-facebook');
