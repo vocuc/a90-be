@@ -47,6 +47,48 @@
                     <a href="{{ route('admin.workers.index') }}" class="btn btn-link ml-auto">Về danh sách</a>
                 </div>
             </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Tài khoản nhận job tạo ảnh</h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small">
+                        Worker tạo ảnh chỉ nhận job do các tài khoản dưới đây tạo. <b>Chưa gắn tài khoản nào thì worker không nhận job ảnh nào.</b>
+                    </p>
+                    <form method="POST" action="{{ route('admin.workers.users.attach', $worker) }}" class="mb-3">
+                        @csrf
+                        <div class="input-group">
+                            <input type="email" name="email" value="{{ old('email') }}" placeholder="Email tài khoản A51"
+                                   class="form-control @error('email') is-invalid @enderror" required>
+                            <div class="input-group-append">
+                                <button class="btn btn-primary"><i class="fas fa-plus"></i> Gắn</button>
+                            </div>
+                            @error('email')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                    </form>
+                    @if ($worker->imageUsers->isEmpty())
+                        <div class="text-muted">Chưa gắn tài khoản nào.</div>
+                    @else
+                        <table class="table table-sm mb-0">
+                            <tbody>
+                            @foreach ($worker->imageUsers as $user)
+                                <tr>
+                                    <td><b>{{ $user->name }}</b> <span class="text-muted">{{ $user->email }}</span></td>
+                                    <td class="text-right">
+                                        <form method="POST" action="{{ route('admin.workers.users.detach', [$worker, $user]) }}" class="d-inline"
+                                              data-confirm="Bỏ {{ $user->email }} khỏi worker &quot;{{ $worker->name }}&quot;? Job ảnh của tài khoản này sẽ không giao cho worker này nữa.">
+                                            @csrf @method('DELETE')
+                                            <button class="btn btn-xs btn-outline-danger"><i class="fas fa-times"></i> Bỏ</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            @endforeach
+                            </tbody>
+                        </table>
+                    @endif
+                </div>
+            </div>
         </div>
         <div class="col-lg-4">
             <div class="card">

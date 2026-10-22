@@ -159,7 +159,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     });
 });
 
-// Worker tạo ảnh nội bộ (xác thực bằng token worker, không giới hạn theo user).
+// Worker tạo ảnh nội bộ (xác thực bằng token worker): chỉ nhận job của các tài khoản admin gắn với worker.
 Route::prefix('v1/jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerJobController::class, 'next']);
     Route::post('{id}', [WorkerJobController::class, 'submit'])->whereNumber('id');

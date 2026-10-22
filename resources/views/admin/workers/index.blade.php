@@ -31,6 +31,9 @@
                         <td>
                             <b>{{ $worker->name }}</b>
                             <div class="small text-muted">Tạo {{ $worker->created_at?->format('d/m/Y H:i') }}</div>
+                            <div class="small text-muted">
+                                Job tạo ảnh: {{ $worker->image_users_count ? $worker->image_users_count.' tài khoản' : 'chưa gắn tài khoản (không nhận)' }}
+                            </div>
                         </td>
                         <td>
                             @if ($account = $worker->publishAccount)
@@ -50,7 +53,7 @@
                         </td>
                         <td class="text-right text-nowrap">
                             <a href="{{ route('admin.workers.show', $worker) }}" class="btn btn-xs btn-outline-primary">
-                                <i class="fas fa-key"></i> Token
+                                <i class="fas fa-key"></i> Token / tài khoản
                             </a>
                             <form method="POST" action="{{ route('admin.workers.toggle', $worker) }}" class="d-inline"
                                   @if ($worker->is_active) data-confirm="Tắt worker &quot;{{ $worker->name }}&quot;? Máy đang chạy worker này sẽ bị từ chối tới khi bật lại." @endif>

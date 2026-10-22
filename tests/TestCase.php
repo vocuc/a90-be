@@ -137,8 +137,13 @@ abstract class TestCase extends BaseTestCase
         return Worker::register($name)[1];
     }
 
-    protected function claimJob(string $token): TestResponse
+    /** Nhận job ảnh. Mặc định gắn mọi tài khoản hiện có vào worker trước (worker chỉ nhận job của tài khoản được gắn). */
+    protected function claimJob(string $token, bool $allUsers = true): TestResponse
     {
+        if ($allUsers) {
+            Worker::findActiveByToken($token)?->imageUsers()->syncWithoutDetaching(User::query()->pluck('id'));
+        }
+
         return $this->withToken($token)->getJson('/api/v1/jobs');
     }
 

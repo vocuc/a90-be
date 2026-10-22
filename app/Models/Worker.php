@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 
@@ -73,5 +74,11 @@ class Worker extends Model
     public function publishAccount(): HasOne
     {
         return $this->hasOne(PublishAccount::class);
+    }
+
+    /** Tài khoản A51 worker nhận job tạo ảnh (admin gắn ở trang Worker). Chưa gắn tài khoản nào -> không nhận job ảnh. */
+    public function imageUsers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'worker_user')->withPivot('created_at');
     }
 }

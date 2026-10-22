@@ -55,6 +55,8 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::resource('workers', WorkerController::class)->only(['index', 'create', 'store', 'show']);
         Route::post('workers/{worker}/regenerate', [WorkerController::class, 'regenerate'])->name('workers.regenerate');
         Route::post('workers/{worker}/toggle', [WorkerController::class, 'toggle'])->name('workers.toggle');
+        Route::post('workers/{worker}/users', [WorkerController::class, 'attachUser'])->name('workers.users.attach');
+        Route::delete('workers/{worker}/users/{user}', [WorkerController::class, 'detachUser'])->name('workers.users.detach');
 
         Route::get('generations', [GenerationController::class, 'index'])->name('generations.index');
         Route::get('generations/{generation}', [GenerationController::class, 'show'])->name('generations.show');

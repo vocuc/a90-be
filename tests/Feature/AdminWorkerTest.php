@@ -100,4 +100,28 @@ class AdminWorkerTest extends TestCase
         $this->assertTrue($worker->fresh()->is_active);
         $this->assertTokenWorks($token);
     }
+
+    public function test_admin_attaches_and_detaches_image_job_users(): void
+    {
+        [$worker] = Worker::register('may-tao-anh');
+        $shop = $this->buyer();
+        $this->actingAs($this->admin());
+
+        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee('Chưa gắn tài khoản nào');
+
+        $this->post("/admin/workers/{$worker->id}/users", ['email' => "  {$shop->email} "])->assertSessionHas('success');
+        // Gắn lại không bị trùng
+        $this->post("/admin/workers/{$worker->id}/users", ['email' => $shop->email])->assertSessionHas('success');
+        $this->assertSame([$shop->id], $worker->imageUsers()->pluck('users.id')->all());
+        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee($shop->email);
+        $this->get('/admin/workers')->assertOk()->assertSee('1 tài khoản');
+        $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.attach_user')->exists());
+
+        $this->post("/admin/workers/{$worker->id}/users", ['email' => 'khong-co@example.com'])->assertSessionHasErrors('email');
+        $this->post("/admin/workers/{$worker->id}/users", ['email' => ''])->assertSessionHasErrors('email');
+
+        $this->delete("/admin/workers/{$worker->id}/users/{$shop->id}")->assertSessionHas('success');
+        $this->assertSame(0, $worker->imageUsers()->count());
+        $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.detach_user')->exists());
+    }
 }

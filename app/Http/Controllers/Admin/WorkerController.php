@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Models\Worker;
 use App\Services\AuditLogger;
 use Illuminate\Http\RedirectResponse;
@@ -11,7 +12,8 @@ use Illuminate\View\View;
 
 /**
  * Worker: máy nội bộ (tạo ảnh, viết nội dung, đăng bài) xác thực bằng token. Admin tạo worker, xem lại / đổi token
- * (dán vào .env của máy), bật / tắt. Gắn worker với tài khoản TikTok / Facebook / Instagram ở trang Tài khoản đăng bài.
+ * (dán vào .env của máy), bật / tắt, gắn tài khoản A51 mà worker nhận job tạo ảnh (chưa gắn -> không nhận job ảnh).
+ * Gắn worker với tài khoản TikTok / Facebook / Instagram ở trang Tài khoản đăng bài.
  * Không xoá worker (job cũ còn liên kết): không dùng nữa thì tắt.
  */
 class WorkerController extends Controller
@@ -20,7 +22,7 @@ class WorkerController extends Controller
 
     public function index(): View
     {
-        $workers = Worker::query()->with('publishAccount')->orderBy('name')->get();
+        $workers = Worker::query()->with('publishAccount')->withCount('imageUsers')->orderBy('name')->get();
 
         return view('admin.workers.index', compact('workers'));
     }
@@ -51,7 +53,7 @@ class WorkerController extends Controller
     /** Trang xem token của worker (ghi nhật ký mỗi lần xem). */
     public function show(Worker $worker): View
     {
-        $worker->load('publishAccount');
+        $worker->load(['publishAccount', 'imageUsers' => fn ($q) => $q->orderBy('email')]);
         if ($worker->plainToken() !== null) {
             $this->audit->log('admin.worker.view_token', $worker);
         }
@@ -67,6 +69,34 @@ class WorkerController extends Controller
 
         return redirect()->route('admin.workers.show', $worker)
             ->with('success', "Đã tạo token mới cho worker \"{$worker->name}\". Token cũ không dùng được nữa.");
+    }
+
+    /** Gắn tài khoản A51 (theo email) vào worker: worker nhận job tạo ảnh của tài khoản này. */
+    public function attachUser(Request $request, Worker $worker): RedirectResponse
+    {
+        $request->merge(['email' => trim((string) $request->input('email'))]);
+        $data = $request->validate([
+            'email' => ['required', 'email', 'exists:users,email'],
+        ], [
+            'email.required' => 'Vui lòng nhập email tài khoản.',
+            'email.email' => 'Email không hợp lệ.',
+            'email.exists' => 'Không có tài khoản nào dùng email này.',
+        ]);
+
+        $user = User::query()->where('email', $data['email'])->firstOrFail();
+        $worker->imageUsers()->syncWithoutDetaching([$user->id => ['created_at' => now()]]);
+        $this->audit->log('admin.worker.attach_user', $worker, ['user_id' => $user->id, 'email' => $user->email]);
+
+        return back()->with('success', "Worker \"{$worker->name}\" sẽ nhận job tạo ảnh của {$user->email}.");
+    }
+
+    /** Bỏ tài khoản khỏi worker: job đang chờ của tài khoản này không giao cho worker nữa (job đang làm dở vẫn trả kết quả được). */
+    public function detachUser(Worker $worker, User $user): RedirectResponse
+    {
+        $worker->imageUsers()->detach($user->id);
+        $this->audit->log('admin.worker.detach_user', $worker, ['user_id' => $user->id, 'email' => $user->email]);
+
+        return back()->with('success', "Worker \"{$worker->name}\" không nhận job tạo ảnh của {$user->email} nữa.");
     }
 
     /** Tắt: worker bị từ chối (401) tới khi bật lại. */

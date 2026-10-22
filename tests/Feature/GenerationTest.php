@@ -66,6 +66,30 @@ class GenerationTest extends TestCase
         $this->claimJob($this->workerToken())->assertNoContent();
     }
 
+    public function test_worker_only_claims_jobs_of_attached_users(): void
+    {
+        $creative = $this->publishedCreative($this->creator());
+        $alice = $this->buyer(credit: 5000);
+        $bob = $this->buyer(credit: 5000);
+        $aliceJob = Generation::query()->with('outputs')->findOrFail($this->generate($alice, $creative)->json('data.id'))->outputs[0];
+        $bobJob = Generation::query()->with('outputs')->findOrFail($this->generate($bob, $creative)->json('data.id'))->outputs[0];
+        $token = $this->workerToken();
+        $worker = Worker::findActiveByToken($token);
+
+        // Chưa gắn tài khoản nào: không nhận job nào dù hàng đợi còn ảnh
+        $this->claimJob($token, allUsers: false)->assertNoContent();
+
+        // Gắn bob: bỏ qua job cũ hơn của alice, nhận job của bob; alice vẫn chờ worker khác
+        $worker->imageUsers()->attach($bob->id);
+        $this->claimJob($token, allUsers: false)->assertOk()->assertJsonPath('data.id', $bobJob->id);
+        $this->claimJob($token, allUsers: false)->assertNoContent();
+        $this->assertSame(OutputStatus::Queued, $aliceJob->fresh()->status);
+
+        $other = $this->workerToken('worker-2');
+        Worker::findActiveByToken($other)->imageUsers()->attach($alice->id);
+        $this->claimJob($other, allUsers: false)->assertOk()->assertJsonPath('data.id', $aliceJob->id);
+    }
+
     public function test_invalid_or_disabled_worker_token_is_rejected(): void
     {
         $this->claimJob('wrong-token')->assertStatus(401)->assertJsonPath('code', 'WORKER_UNAUTHORIZED');

@@ -25,12 +25,18 @@ class WorkerJobService
         private MediaStorage $media,
     ) {}
 
-    /** Nhận ảnh đang chờ cũ nhất. SKIP LOCKED để nhiều worker gọi cùng lúc không nhận trùng. */
+    /**
+     * Nhận ảnh đang chờ cũ nhất trong các job do tài khoản gắn với worker tạo (chưa gắn tài khoản nào -> không có job).
+     * SKIP LOCKED để nhiều worker gọi cùng lúc không nhận trùng.
+     */
     public function claim(Worker $worker): ?GenerationOutput
     {
         return DB::transaction(function () use ($worker) {
             $output = GenerationOutput::query()
                 ->where('status', OutputStatus::Queued)
+                ->whereIn('generation_id', Generation::query()->select('id')->whereIn(
+                    'user_id', DB::table('worker_user')->select('user_id')->where('worker_id', $worker->id)
+                ))
                 ->orderBy('id')
                 ->lock('for update skip locked')
                 ->first();
