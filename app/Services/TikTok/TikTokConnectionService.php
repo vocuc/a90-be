@@ -23,6 +23,14 @@ class TikTokConnectionService
 {
     private const STATE_TTL_MINUTES = 10;
 
+    /** Link avatar TikTok là link CDN có ký hạn (x-expires): cache tối đa 1 ngày, trả lại trước hạn 1 giờ. */
+    private const AVATAR_CACHE_MAX_SECONDS = 86400;
+
+    private const AVATAR_EXPIRES_MARGIN_SECONDS = 3600;
+
+    /** Gọi user/info lỗi: dùng tạm avatar đã lưu, thử lại sau khoảng này. */
+    private const AVATAR_RETRY_SECONDS = 300;
+
     public const DEFAULT_REDIRECT = '/posts';
 
     public function __construct(
@@ -103,6 +111,7 @@ class TikTokConnectionService
         $this->assertNotPublishing($account);
 
         $this->tokens->revoke($account);
+        Cache::forget(self::avatarKey($account));
         $this->audit->log('tiktok.disconnect', $account, ['open_id' => $account->open_id], $user->id);
         $account->delete();
     }
@@ -123,13 +132,63 @@ class TikTokConnectionService
     }
 
     /** Thông tin kết nối trả cho frontend (không có token). */
-    public static function connection(PublishAccount $account): array
+    public function connection(PublishAccount $account): array
     {
+        $avatarUrl = $this->avatarUrl($account);
+
         return [
             'status' => $account->connectionReason() ?? 'active',
-            'avatar_url' => $account->avatar_url,
+            'avatar_url' => $avatarUrl,
             'connected_at' => $account->connected_at,
         ];
+    }
+
+    /**
+     * Avatar lưu lúc kết nối sẽ hết hạn: gọi lại user/info (user.info.basic) lấy link mới, cache tới gần x-expires.
+     * Mất kết nối / TikTok lỗi thì trả avatar đã lưu (có thể đã hết hạn, frontend tự hiện chữ cái đầu).
+     */
+    private function avatarUrl(PublishAccount $account): ?string
+    {
+        if (! $account->isUsable()) {
+            return $account->avatar_url;
+        }
+
+        $key = self::avatarKey($account);
+        // Cache lưu '' khi không có avatar để phân biệt với chưa cache
+        $cached = Cache::get($key);
+        if ($cached !== null) {
+            return $cached !== '' ? $cached : null;
+        }
+
+        try {
+            $url = $this->tokens->call($account, fn (string $token) => $this->client->userInfo($token))['avatar_url'] ?? null;
+            $ttl = self::avatarTtl($url);
+        } catch (TikTokApiException|BusinessException) {
+            $url = $account->avatar_url;
+            $ttl = self::AVATAR_RETRY_SECONDS;
+        }
+
+        Cache::put($key, (string) $url, $ttl);
+
+        return $url ?: null;
+    }
+
+    private static function avatarTtl(?string $url): int
+    {
+        parse_str((string) parse_url((string) $url, PHP_URL_QUERY), $query);
+        $expires = $query['x-expires'] ?? null;
+        if (! is_string($expires) || ! ctype_digit($expires)) {
+            return self::AVATAR_CACHE_MAX_SECONDS;
+        }
+
+        $ttl = (int) $expires - time() - self::AVATAR_EXPIRES_MARGIN_SECONDS;
+
+        return max(self::AVATAR_RETRY_SECONDS, min($ttl, self::AVATAR_CACHE_MAX_SECONDS));
+    }
+
+    private static function avatarKey(PublishAccount $account): string
+    {
+        return 'tiktok-avatar:'.$account->id;
     }
 
     private function connect(User $user, array $token, array $info): void
@@ -168,6 +227,7 @@ class TikTokConnectionService
                 ...$attributes,
             ]);
 
+        Cache::forget(self::avatarKey($account));
         $this->audit->log('tiktok.connect', $account, ['open_id' => $account->open_id, 'replaced' => $replaced], $user->id);
     }
 

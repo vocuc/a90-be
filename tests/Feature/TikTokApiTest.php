@@ -158,6 +158,30 @@ class TikTokApiTest extends TestCase
             ->assertJsonPath('data.0.connection.status', 'expired');
     }
 
+    public function test_accounts_refresh_expired_avatar_from_user_info_and_cache_it(): void
+    {
+        $user = $this->buyer();
+        $this->connectTikTok($user, ['avatar_url' => 'https://p16.tiktokcdn.test/old.jpg?x-expires=1']);
+        $fresh = 'https://p16.tiktokcdn.test/new.jpg?x-expires='.now()->addDays(2)->timestamp;
+        $this->fakeTikTok(['/user/info/*' => self::userInfoResponse(['avatar_url' => $fresh])]);
+
+        $this->actingAs($user)->getJson('/api/v1/social/accounts')->assertJsonPath('data.0.connection.avatar_url', $fresh);
+        $this->actingAs($user)->getJson('/api/v1/social/accounts')->assertJsonPath('data.0.connection.avatar_url', $fresh);
+        Http::assertSentCount(1);
+    }
+
+    public function test_accounts_fall_back_to_saved_avatar_when_user_info_fails(): void
+    {
+        $user = $this->buyer();
+        $this->connectTikTok($user, ['avatar_url' => 'https://p16.tiktokcdn.test/old.jpg']);
+        $this->fakeTikTok(['/user/info/*' => Http::response([], 500)]);
+
+        $this->actingAs($user)->getJson('/api/v1/social/accounts')
+            ->assertOk()
+            ->assertJsonPath('data.0.connection.status', 'active')
+            ->assertJsonPath('data.0.connection.avatar_url', 'https://p16.tiktokcdn.test/old.jpg');
+    }
+
     public function test_disconnect_revokes_and_falls_back_to_worker(): void
     {
         $user = $this->buyer();

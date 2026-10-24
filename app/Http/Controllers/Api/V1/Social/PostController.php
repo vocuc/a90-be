@@ -30,7 +30,7 @@ class PostController extends Controller
      * Tài khoản đăng bài của người dùng (admin gắn worker, hoặc TikTok tự kết nối): trang đăng bài chọn sẵn các nền tảng này.
      * driver api: kèm connection { status: active | expired | revoked | scope_missing, avatar_url, connected_at }.
      */
-    public function accounts(Request $request, SocialPublishJobService $publisher): JsonResponse
+    public function accounts(Request $request, SocialPublishJobService $publisher, TikTokConnectionService $tiktok): JsonResponse
     {
         return response()->json(['data' => $publisher->accounts($request->user())->map(fn (PublishAccount $account) => [
             'platform' => $account->platform->value,
@@ -39,7 +39,7 @@ class PostController extends Controller
             'username' => $account->username,
             'is_active' => $account->is_active,
             'driver' => $account->driver->value,
-            'connection' => $account->isApi() ? TikTokConnectionService::connection($account) : null,
+            'connection' => $account->isApi() ? $tiktok->connection($account) : null,
         ])->values()]);
     }
 
