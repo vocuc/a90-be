@@ -39,10 +39,13 @@ class WorkerJobController extends Controller
         ]]);
     }
 
-    /** Logo = ảnh đại diện HIỆN TẠI của shop chủ generation; null khi không chèn hoặc shop không còn ảnh đại diện. */
+    /**
+     * Logo = ảnh đại diện HIỆN TẠI của shop chủ generation (nhân viên của shop: logo tự tải lên); null khi không chèn
+     * hoặc không còn logo.
+     */
     private function logo(Generation $generation, MediaStorage $media): ?array
     {
-        $path = $generation->insert_logo ? $generation->user?->creatorProfile?->avatar_path : null;
+        $path = $generation->insert_logo ? $generation->user?->logoPath() : null;
 
         return $path ? ['url' => $media->url($path)] : null;
     }

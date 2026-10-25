@@ -3,6 +3,7 @@
 use App\Http\Middleware\AuthenticateWorker;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureAdminSession;
+use App\Http\Middleware\EnsureCreatorOrStaff;
 use App\Http\Middleware\EnsureCreatorProfile;
 use App\Http\Middleware\EnsureUserIsActive;
 use Illuminate\Foundation\Application;
@@ -23,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => EnsureAdmin::class,
             'admin.session' => EnsureAdminSession::class,
             'creator' => EnsureCreatorProfile::class,
+            'creator_or_staff' => EnsureCreatorOrStaff::class,
             'worker' => AuthenticateWorker::class,
         ]);
 

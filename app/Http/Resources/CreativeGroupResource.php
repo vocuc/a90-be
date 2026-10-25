@@ -31,6 +31,8 @@ class CreativeGroupResource extends JsonResource
                 'status' => $creative->status,
                 'is_hidden' => $creative->hidden_at !== null,
             ])->values(),
+            // false: nhóm của shop chủ, nhân viên chỉ dùng, không sửa / xoá (note/chia-se-tai-nguyen.txt ở repo frontend)
+            'is_owner' => $this->user_id === $request->user()?->id,
             'created_at' => $this->created_at,
         ];
     }

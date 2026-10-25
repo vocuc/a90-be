@@ -50,6 +50,8 @@ class ImageBatchResource extends JsonResource
                 'cover_url' => app(MediaStorage::class)->url($this->product->coverImage?->path),
             ] : null,
             'group' => $this->group ? ['id' => $this->group->id, 'name' => $this->group->name] : null,
+            // Chủ shop xem lô của nhân viên (note/chia-se-tai-nguyen.txt ở repo frontend): người tạo lô
+            'user' => $this->whenLoaded('user', fn () => ['id' => $this->user->id, 'name' => $this->user->name, 'email' => $this->user->email]),
             ...$counts,
             'cover_url' => $cover,
             'post_count' => (int) ($this->posts_count ?? $this->posts()->count()),

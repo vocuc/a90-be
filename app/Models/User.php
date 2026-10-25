@@ -93,4 +93,34 @@ class User extends Authenticatable
     {
         return $this->hasMany(AiCreative::class, 'creator_id');
     }
+
+    /** Shop mà người này đang làm nhân viên (note/chia-se-tai-nguyen.txt ở repo frontend). */
+    public function staffMembership(): HasOne
+    {
+        return $this->hasOne(ShopStaff::class);
+    }
+
+    /** Nhân viên của shop người này. */
+    public function staff(): HasMany
+    {
+        return $this->hasMany(ShopStaff::class, 'owner_id');
+    }
+
+    /** Chủ shop khi người này là nhân viên, null khi không. */
+    public function shopOwnerId(): ?int
+    {
+        return $this->staffMembership?->owner_id;
+    }
+
+    /** Chủ sản phẩm / nhóm creative người này dùng để tạo lô: chủ shop khi là nhân viên, không thì chính mình. */
+    public function resourceOwnerId(): int
+    {
+        return $this->shopOwnerId() ?? $this->id;
+    }
+
+    /** Logo chèn vào ảnh: ảnh đại diện shop, nhân viên (không có shop) dùng logo tự tải lên. */
+    public function logoPath(): ?string
+    {
+        return $this->creatorProfile?->avatar_path ?? ($this->shopOwnerId() ? $this->logo_path : null);
+    }
 }

@@ -61,6 +61,12 @@ class ImageBatch extends Model
         return $this->belongsTo(CreativeGroup::class, 'creative_group_id');
     }
 
+    /** Chủ shop khi nhân viên tạo lô bằng tài nguyên của shop (note/chia-se-tai-nguyen.txt ở repo frontend). */
+    public function shopOwner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'shop_owner_id');
+    }
+
     public function posts(): HasMany
     {
         return $this->hasMany(SocialPost::class, 'image_batch_id');

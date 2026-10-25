@@ -11,6 +11,7 @@ use App\Models\ImageBatch;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -65,6 +66,15 @@ class AutoBatchTest extends TestCase
             'count' => $count,
             'idempotency_key' => (string) Str::uuid(),
         ], $extra));
+    }
+
+    /** Số lần chạy tự động của chủ sản phẩm với sản phẩm (mỗi người đếm riêng). */
+    private function autoCount(Product $product): int
+    {
+        return (int) DB::table('auto_batch_product_counts')
+            ->where('user_id', $product->user_id)
+            ->where('product_id', $product->id)
+            ->value('count');
     }
 
     /** Cặp [product_id, group_id] của các lô tự động theo thứ tự tạo. */
@@ -214,7 +224,7 @@ class AutoBatchTest extends TestCase
         $next = array_slice($this->pairs($user), 7);
         $this->assertSame([$p4->id, $p4->id, $p2->id], array_column($next, 0));
         $this->assertEqualsCanonicalizing([$g1->id, $g2->id], array_column(array_slice($next, 0, 2), 1));
-        $this->assertSame(3, $p1->fresh()->auto_batch_count);
+        $this->assertSame(3, $this->autoCount($p1));
     }
 
     public function test_tied_groups_are_picked_randomly(): void
@@ -294,7 +304,7 @@ class AutoBatchTest extends TestCase
 
         $this->assertSame([[$shoes->id, $g1->id], [$shirts->id, $g2->id], [$shoes->id, $g1->id]], $this->pairs($user));
         $this->assertSame([$shoe->id, $bag->id], Generation::query()->orderBy('id')->limit(2)->pluck('creative_id')->all());
-        $this->assertSame(0, $plain->fresh()->auto_batch_count);
+        $this->assertSame(0, $this->autoCount($plain));
     }
 
     public function test_pair_without_valid_creative_is_skipped_and_not_counted(): void
@@ -306,7 +316,7 @@ class AutoBatchTest extends TestCase
 
         $this->auto($user, 2)->assertCreated()->assertJsonCount(2, 'data.batches');
         $this->assertSame([[$p2->id, $g1->id], [$p2->id, $g1->id]], $this->pairs($user));
-        $this->assertSame(0, $p1->fresh()->auto_batch_count);
+        $this->assertSame(0, $this->autoCount($p1));
 
         $this->actingAs($user)->deleteJson("/api/v1/creator/products/{$p2->id}")->assertNoContent();
         $this->auto($user, 1)->assertStatus(422)->assertJsonPath('code', 'AUTO_NOTHING_TO_CREATE');
@@ -343,7 +353,7 @@ class AutoBatchTest extends TestCase
 
         $this->assertSame($first, $second);
         $this->assertSame(8000, $this->balance($user));
-        $this->assertSame(2, $product->fresh()->auto_batch_count);
+        $this->assertSame(2, $this->autoCount($product));
     }
 
     public function test_preview_creates_nothing(): void

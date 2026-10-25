@@ -19,6 +19,7 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Sản phẩm cho tạo lô tự động (note/auto-tao-lo.txt ở repo frontend). Sản phẩm của người khác -> 404.
+ * Nhân viên của shop xem được (index, show) sản phẩm của shop chủ, không sửa được (note/chia-se-tai-nguyen.txt).
  * Mỗi ảnh liên kết tới key một trường ảnh trong creative. Hashtag: chỉ ghép với nhóm có creative trùng hashtag. File ảnh cũ không xoá vì lượt tạo ảnh cũ dùng thẳng đường dẫn.
  */
 class ProductController extends Controller
@@ -33,7 +34,8 @@ class ProductController extends Controller
         $data = $request->validate(['per_page' => ['nullable', 'integer', 'min:1', 'max:50']]);
 
         $products = Product::query()
-            ->ownedBy($request->user())
+            ->usableBy($request->user())
+            ->withAutoBatchCount($request->user())
             ->with(['images', 'hashtags'])
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);
@@ -43,7 +45,7 @@ class ProductController extends Controller
 
     public function show(Request $request, int $product): ProductResource
     {
-        return new ProductResource($this->findProduct($request, $product)->load(['images', 'hashtags']));
+        return $this->resource($request, Product::query()->usableBy($request->user())->findOrFail($product)->id);
     }
 
     /** multipart: name?, hashtags[]?, images[i][file], images[i][field_key] */
@@ -59,7 +61,7 @@ class ProductController extends Controller
             return $product;
         });
 
-        return (new ProductResource($product->load(['images', 'hashtags'])))->response()->setStatusCode(201);
+        return $this->resource($request, $product->id)->response()->setStatusCode(201);
     }
 
     /**
@@ -88,7 +90,7 @@ class ProductController extends Controller
             $product->hashtags()->sync(Hashtag::syncPivot($data['hashtags'] ?? []));
         });
 
-        return new ProductResource($product->load(['images', 'hashtags']));
+        return $this->resource($request, $product->id);
     }
 
     public function destroy(Request $request, int $product): Response
@@ -150,6 +152,11 @@ class ProductController extends Controller
             'images.*.field_key.regex' => 'Key chỉ gồm chữ không dấu, số và dấu gạch dưới.',
             'images.*.field_key.distinct' => 'Mỗi key chỉ dùng cho một ảnh.',
         ];
+    }
+
+    private function resource(Request $request, int $id): ProductResource
+    {
+        return new ProductResource(Product::query()->withAutoBatchCount($request->user())->with(['images', 'hashtags'])->findOrFail($id));
     }
 
     private function findProduct(Request $request, int $id): Product

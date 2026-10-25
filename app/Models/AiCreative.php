@@ -31,11 +31,15 @@ class AiCreative extends Model
         return $query->where('status', CreativeStatus::Published)->where('is_public', true)->whereNull('hidden_at');
     }
 
-    /** Creative đang bán mà $user dùng được: Creative trên Marketplace, hoặc Creative private của chính $user. */
+    /**
+     * Creative đang bán mà $user dùng được: Creative trên Marketplace, hoặc Creative private của chính $user / của shop
+     * mà $user là nhân viên.
+     */
     public function scopeAvailableTo(Builder $query, ?User $user): Builder
     {
         return $query->where(fn (Builder $q) => $q->listed()->when($user, fn (Builder $q) => $q->orWhere(
-            fn (Builder $q) => $q->where('creator_id', $user->id)->where('status', CreativeStatus::Published)->whereNull('hidden_at'),
+            fn (Builder $q) => $q->whereIn('creator_id', array_filter([$user->id, $user->shopOwnerId()]))
+                ->where('status', CreativeStatus::Published)->whereNull('hidden_at'),
         )));
     }
 
@@ -47,7 +51,8 @@ class AiCreative extends Model
     public function isAvailableTo(User $user): bool
     {
         return $this->isListed()
-            || ($this->creator_id === $user->id && $this->status === CreativeStatus::Published && $this->hidden_at === null);
+            || (in_array($this->creator_id, [$user->id, $user->shopOwnerId()], true)
+                && $this->status === CreativeStatus::Published && $this->hidden_at === null);
     }
 
     public function creator(): BelongsTo

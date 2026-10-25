@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\DB;
 
 /** Sản phẩm của Creator cho tạo lô tự động: mỗi ảnh điền vào trường nguyên liệu có key = field_key. */
 class Product extends Model
@@ -41,5 +42,20 @@ class Product extends Model
     public function scopeOwnedBy(Builder $query, User $user): Builder
     {
         return $query->where('user_id', $user->id);
+    }
+
+    /** Sản phẩm $user dùng được để tạo lô: của chính mình, nhân viên thì của shop chủ (note/chia-se-tai-nguyen.txt). */
+    public function scopeUsableBy(Builder $query, User $user): Builder
+    {
+        return $query->where('user_id', $user->resourceOwnerId());
+    }
+
+    /** Cột auto_batch_count = số lần chạy tự động của $user với sản phẩm (mỗi nhân viên đếm riêng). */
+    public function scopeWithAutoBatchCount(Builder $query, User $user): Builder
+    {
+        return $query->select('products.*')->addSelect(['auto_batch_count' => DB::table('auto_batch_product_counts')
+            ->select('count')
+            ->whereColumn('product_id', 'products.id')
+            ->where('user_id', $user->id)]);
     }
 }

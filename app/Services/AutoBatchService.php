@@ -24,6 +24,9 @@ use Illuminate\Support\Facades\DB;
  * Thứ tự: sản phẩm có ít lượt tự động nhất trước (bằng nhau thì sản phẩm tạo trước), rồi nhóm mà sản phẩm đó
  * chạy ít nhất (bằng nhau thì chọn ngẫu nhiên, xem AutoBatchPlanner::shuffle). Cặp không có creative nào dùng được thì bỏ qua, không tính lượt.
  * Hết tiền giữa chừng thì dừng; lô là đơn vị nhỏ nhất (trừ tiền cả lô như lô tạo tay).
+ *
+ * Nhân viên của shop (note/chia-se-tai-nguyen.txt ở repo frontend) dùng sản phẩm / nhóm / creative của shop chủ, trừ ví
+ * nhân viên; lượt đếm riêng từng người nên mỗi kênh tự xoay vòng đủ mọi cặp.
  */
 class AutoBatchService
 {
@@ -91,11 +94,16 @@ class AutoBatchService
                             'source' => ImageBatch::SOURCE_AUTO,
                             'product_id' => $plan['product']->id,
                             'creative_group_id' => $plan['group']->id,
+                            'shop_owner_id' => $user->shopOwnerId(),
                         ]);
-                        Product::query()->whereKey($plan['product']->id)->increment('auto_batch_count');
+                        DB::table('auto_batch_product_counts')->upsert(
+                            ['user_id' => $user->id, 'product_id' => $plan['product']->id, 'count' => 1],
+                            ['user_id', 'product_id'],
+                            ['count' => DB::raw('count + 1')],
+                        );
                         DB::table('auto_batch_counts')->upsert(
-                            ['product_id' => $plan['product']->id, 'creative_group_id' => $plan['group']->id, 'count' => 1],
-                            ['product_id', 'creative_group_id'],
+                            ['user_id' => $user->id, 'product_id' => $plan['product']->id, 'creative_group_id' => $plan['group']->id, 'count' => 1],
+                            ['user_id', 'product_id', 'creative_group_id'],
                             ['count' => DB::raw('count + 1')],
                         );
 
@@ -130,13 +138,14 @@ class AutoBatchService
 
     private function planner(User $user): AutoBatchPlanner
     {
-        $products = Product::query()->ownedBy($user)->has('hashtags')->with(['images', 'hashtags'])->orderBy('id')->get();
+        $products = Product::query()->usableBy($user)->withAutoBatchCount($user)->has('hashtags')->with(['images', 'hashtags'])->orderBy('id')->get();
         $groups = CreativeGroup::query()
-            ->where('user_id', $user->id)
+            ->where('user_id', $user->resourceOwnerId())
             ->with(['creatives.config', 'creatives.model', 'creatives.hashtags'])
             ->orderBy('id')
             ->get();
         $counts = DB::table('auto_batch_counts')
+            ->where('user_id', $user->id)
             ->whereIn('product_id', $products->modelKeys())
             ->get()
             ->mapWithKeys(fn ($row) => ["{$row->product_id}:{$row->creative_group_id}" => (int) $row->count])
@@ -147,7 +156,7 @@ class AutoBatchService
 
     /**
      * Creative dùng được của nhóm với sản phẩm, kèm nguyên liệu. Bỏ qua (không báo): không Đang bán / bị ẩn / không phải
-     * của người dùng / model tạm tắt; không có trường ảnh nào trùng key; còn trường bắt buộc không có giá trị.
+     * của chủ nhóm (người dùng, hoặc shop chủ khi là nhân viên) / model tạm tắt; không có trường ảnh nào trùng key; còn trường bắt buộc không có giá trị.
      * Không creative dùng được nào trùng hashtag với sản phẩm thì nhóm không ghép với sản phẩm này (trả rỗng).
      *
      * @param  Collection<int, AiCreative>  $creatives
@@ -159,7 +168,7 @@ class AutoBatchService
         $items = [];
 
         foreach ($creatives as $creative) {
-            if ($creative->creator_id !== $user->id || $creative->status !== CreativeStatus::Published
+            if ($creative->creator_id !== $user->resourceOwnerId() || $creative->status !== CreativeStatus::Published
                 || $creative->hidden_at !== null || ! $creative->model?->is_active || ! $creative->config) {
                 continue;
             }

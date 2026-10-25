@@ -28,6 +28,10 @@ class ProfileController extends Controller
         if ($user->creatorProfile()->exists()) {
             throw BusinessException::invalidState('Bạn đã có Creator Profile.');
         }
+        // Nhân viên của shop không được mở shop riêng (note/chia-se-tai-nguyen.txt ở repo frontend)
+        if ($user->staffMembership()->exists()) {
+            throw BusinessException::invalidState('Bạn đang là nhân viên của một shop. Hãy rời shop trước khi mở shop riêng.');
+        }
 
         $data = $request->validate($this->rules());
 

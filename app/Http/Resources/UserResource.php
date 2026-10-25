@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\User;
+use App\Services\MediaStorage;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -20,6 +21,11 @@ class UserResource extends JsonResource
             'creator_profile' => $this->creatorProfile
                 ? new CreatorProfileResource($this->creatorProfile)
                 : null,
+            // Nhân viên của shop (note/chia-se-tai-nguyen.txt ở repo frontend): shop đang làm, logo tự tải lên để chèn vào ảnh
+            'staff_of' => $this->staffMembership?->owner?->creatorProfile
+                ? new CreatorSummaryResource($this->staffMembership->owner->creatorProfile)
+                : null,
+            'logo_url' => app(MediaStorage::class)->url($this->logo_path),
             'created_at' => $this->created_at,
         ];
     }
