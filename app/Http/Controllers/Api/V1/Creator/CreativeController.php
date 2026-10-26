@@ -7,6 +7,7 @@ use App\Http\Requests\CreativeRequest;
 use App\Http\Resources\CreatorCreativeResource;
 use App\Http\Resources\GenerationResource;
 use App\Models\AiCreative;
+use App\Models\AiCreativeConfig;
 use App\Services\CreativeService;
 use App\Services\GenerationInput;
 use App\Services\GenerationService;
@@ -38,6 +39,11 @@ class CreativeController extends Controller
             ->when($filters['visibility'] ?? null, fn ($q, $visibility) => $q->where('is_public', $visibility === 'public'))
             ->when($filters['q'] ?? null, fn ($q, $term) => $q->where('title', 'like', '%'.addcslashes($term, '%_\\').'%'))
             ->with(['images', 'hashtags', 'groups'])
+            // Tỷ lệ khung hình mặc định hiện trên thẻ, lấy bằng subquery (không load cả config)
+            ->addSelect(['default_aspect_ratio' => AiCreativeConfig::query()
+                ->select('default_aspect_ratio')
+                ->whereColumn('creative_id', 'ai_creatives.id')
+                ->limit(1)])
             ->latest('updated_at')
             ->paginate($filters['per_page'] ?? 20);
 

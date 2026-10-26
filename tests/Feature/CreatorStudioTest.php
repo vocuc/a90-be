@@ -33,7 +33,10 @@ class CreatorStudioTest extends TestCase
 
         $this->getJson("/api/v1/creator/creatives/{$creativeId}")->assertOk()
             ->assertJsonPath('data.config.prompt_template', 'Luxury cosmetic shot')
-            ->assertJsonPath('data.config.default_aspect_ratio', '4:5');
+            ->assertJsonPath('data.config.default_aspect_ratio', '4:5')
+            ->assertJsonPath('data.default_aspect_ratio', '4:5');
+        // Danh sách cũng có tỷ lệ mặc định để hiện trên thẻ
+        $this->getJson('/api/v1/creator/creatives')->assertOk()->assertJsonPath('data.0.default_aspect_ratio', '4:5');
 
         // Tạo mới bắt buộc có form người mua và prompt
         $this->postJson('/api/v1/creator/creatives', [

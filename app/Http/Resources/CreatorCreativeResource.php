@@ -35,6 +35,8 @@ class CreatorCreativeResource extends JsonResource
             'is_hidden' => $this->hidden_at !== null,
             'usage_count' => $this->usage_count,
             'rating_avg' => (float) $this->rating_avg,
+            // Chi tiết lấy từ config; danh sách lấy từ cột subquery default_aspect_ratio (CreativeController::index)
+            'default_aspect_ratio' => $detailed ? $this->config?->default_aspect_ratio : $this->resource->getAttributes()['default_aspect_ratio'] ?? null,
             'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),
             // Nhóm tạo lô tự động đang chứa Creative (chỉ có ở danh sách)
             'group' => $this->whenLoaded('groups', fn () => ($group = $this->groups->first()) ? ['id' => $group->id, 'name' => $group->name] : null),
