@@ -26,6 +26,7 @@ class CreativeService
     public function create(User $creator, array $data): AiCreative
     {
         $data = $this->prepareTemplate($data);
+        $data['title'] = $this->titleOrDefault($data['title'] ?? null);
 
         return DB::transaction(function () use ($creator, $data) {
             $creative = AiCreative::query()->create([
@@ -53,6 +54,9 @@ class CreativeService
     public function update(AiCreative $creative, array $data): AiCreative
     {
         $data = $this->prepareTemplate($data);
+        if (array_key_exists('title', $data)) {
+            $data['title'] = $this->titleOrDefault($data['title']);
+        }
 
         DB::transaction(function () use ($creative, $data) {
             $creative->update(Arr::except($data, [...self::CONFIG_FIELDS, 'hashtags']));
@@ -215,6 +219,14 @@ class CreativeService
                 ->where('is_public', true)
                 ->count(),
         ]);
+    }
+
+    /** Tiêu đề không bắt buộc: bỏ trống thì đặt theo thời gian tạo, vd MS20261026153045. */
+    private function titleOrDefault(?string $title): string
+    {
+        $title = trim((string) $title);
+
+        return $title !== '' ? $title : 'MS'.now()->format('YmdHis');
     }
 
     private function makeSlug(string $title): string

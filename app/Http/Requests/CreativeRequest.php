@@ -26,7 +26,8 @@ class CreativeRequest extends FormRequest
         $ratios = $this->supportedRatios();
 
         return [
-            'title' => [$required, 'string', 'max:150'],
+            // Bỏ trống -> tự đặt MS{YmdHis} (CreativeService::defaultTitle)
+            'title' => ['nullable', 'string', 'max:150'],
             // Template Builder hiển thị là "Hướng dẫn sử dụng mẫu"
             'description' => ['nullable', 'string', 'max:5000'],
             'video_url' => ['nullable', 'string', 'max:500', 'url:http,https', $this->tiktokUrl(...)],

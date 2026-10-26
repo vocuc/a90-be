@@ -190,4 +190,25 @@ class CreatorStudioTest extends TestCase
         $this->actingAs($creator)->getJson('/api/v1/creator/creatives?status=archived')
             ->assertStatus(422)->assertJsonValidationErrors('status');
     }
+
+    public function test_title_is_optional_and_defaults_to_ms_time(): void
+    {
+        $this->travelTo(now()->setDateTime(2026, 10, 26, 15, 30, 45));
+        $this->actingAs($this->creator());
+
+        $creativeId = $this->postJson('/api/v1/creator/creatives', [
+            'title' => '',
+            'model_id' => AiModel::query()->firstOrFail()->id,
+            'price_per_image' => 0,
+            'input_schema' => [
+                ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '1:1'],
+            ],
+            'prompt_template' => 'Studio shot',
+        ])->assertCreated()->assertJsonPath('data.title', 'MS20261026153045')->json('data.id');
+
+        // Sửa mà xoá trắng tiêu đề: đặt lại theo thời gian lúc sửa
+        $this->travelTo(now()->setDateTime(2026, 10, 27, 8, 0, 0));
+        $this->putJson("/api/v1/creator/creatives/{$creativeId}", ['title' => null])
+            ->assertOk()->assertJsonPath('data.title', 'MS20261027080000');
+    }
 }
