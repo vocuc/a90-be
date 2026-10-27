@@ -16,6 +16,8 @@ use Illuminate\Support\Str;
 
 /**
  * Người dùng tự kết nối TikTok (OAuth Login Kit), lưu thành publish_accounts driver api. Xem note/dang-tiktok-qua-api.txt.
+ * Một tài khoản A51 kết nối được nhiều tài khoản TikTok (1 dòng / open_id, tối đa services.tiktok.max_accounts):
+ * kết nối lại cùng tài khoản TikTok thì cập nhật dòng cũ, tài khoản khác thì thêm dòng (note/uy-quyen-nhieu-tiktok.txt).
  * TikTok trả người dùng về trang frontend (TIKTOK_REDIRECT_URI, vd https://a51.vn/mxh/tiktok/author?code=&state=),
  * frontend gửi code + state cho backend (callback) để đổi lấy token.
  */
@@ -39,11 +41,15 @@ class TikTokConnectionService
         private AuditLogger $audit,
     ) {}
 
-    /** URL ủy quyền TikTok; state dùng 1 lần, sống 10 phút, gắn với người dùng + trang quay về. */
+    /**
+     * URL ủy quyền TikTok; state dùng 1 lần, sống 10 phút, gắn với người dùng + trang quay về.
+     * Đủ số tài khoản tối đa mà tài khoản nào cũng đang dùng được -> 409 (không còn chỗ thêm, cũng không có gì để kết nối lại).
+     */
     public function authorizeUrl(User $user, ?string $redirect): string
     {
-        if ($account = $user->tiktokConnection) {
-            $this->assertNotPublishing($account);
+        $accounts = $user->tiktokConnections()->get();
+        if ($accounts->count() >= self::maxAccounts() && $accounts->every(fn (PublishAccount $account) => $account->isUsable())) {
+            throw self::limitReached();
         }
 
         $state = Str::random(48);
@@ -96,18 +102,30 @@ class TikTokConnectionService
             $info = []; // chỉ để hiển thị
         }
 
+        // Tài khoản TikTok mới khi đã đủ số tối đa: không lưu, thu hồi token vừa cấp
+        $isNew = ! $user->tiktokConnections()->where('open_id', $token['open_id'])->exists();
+        if ($isNew && $user->tiktokConnections()->count() >= self::maxAccounts()) {
+            try {
+                $this->client->revoke($token['access_token']);
+            } catch (\Throwable) {
+                // Không thu hồi được thì token tự hết hạn, A51 không lưu
+            }
+
+            return $fail('limit_reached');
+        }
+
         $this->connect($user, $token, $info);
 
         return self::result('connected', null, $saved['redirect']);
     }
 
-    /** Huỷ kết nối: thu hồi token ở TikTok rồi xoá dòng api (lần đăng sau dùng worker nếu admin đã gắn). */
-    public function disconnect(User $user): void
+    /**
+     * Huỷ kết nối một tài khoản TikTok: thu hồi token ở TikTok rồi xoá dòng api. Hết tài khoản api thì lần đăng sau dùng
+     * worker nếu admin đã gắn. Không phải tài khoản của người dùng -> 404.
+     */
+    public function disconnect(User $user, int $accountId): void
     {
-        $account = $user->tiktokConnection;
-        if (! $account) {
-            return;
-        }
+        $account = $user->tiktokConnections()->findOrFail($accountId);
         $this->assertNotPublishing($account);
 
         $this->tokens->revoke($account);
@@ -191,19 +209,13 @@ class TikTokConnectionService
         return 'tiktok-avatar:'.$account->id;
     }
 
+    /** Kết nối lại cùng tài khoản TikTok (open_id) thì cập nhật dòng cũ, tài khoản mới thì thêm dòng. */
     private function connect(User $user, array $token, array $info): void
     {
-        $account = $user->tiktokConnection;
-        $sameAccount = $account && $account->open_id === $token['open_id'];
-        $replaced = $account && ! $sameAccount;
+        $account = $user->tiktokConnections()->where('open_id', $token['open_id'])->first();
 
-        // Đổi sang tài khoản TikTok khác: thu hồi token cũ rồi thay thế
-        if ($replaced && $account->access_token) {
-            $this->tokens->revoke($account);
-        }
-
-        $displayName = $info['display_name'] ?? ($sameAccount ? $account->name : null);
-        $username = $info['username'] ?? ($sameAccount ? $account->username : null);
+        $displayName = $info['display_name'] ?? $account?->name;
+        $username = $info['username'] ?? $account?->username;
         $attributes = [
             'name' => Str::limit($displayName ?: ($username ?: 'TikTok'), 100, ''),
             'username' => $username,
@@ -211,13 +223,14 @@ class TikTokConnectionService
             'open_id' => $token['open_id'],
             'scope' => (string) $token['scope'],
             ...TikTokTokenManager::tokenAttributes($token),
-            'avatar_url' => $info['avatar_url'] ?? ($sameAccount ? $account->avatar_url : null),
+            'avatar_url' => $info['avatar_url'] ?? $account?->avatar_url,
             'connection_status' => TikTokConnectionStatus::Active,
             'last_error' => null,
             'connected_at' => now(),
             'last_refreshed_at' => now(),
         ];
 
+        $reconnected = (bool) $account;
         $account = $account
             ? tap($account)->update($attributes)
             : PublishAccount::query()->create([
@@ -228,10 +241,24 @@ class TikTokConnectionService
             ]);
 
         Cache::forget(self::avatarKey($account));
-        $this->audit->log('tiktok.connect', $account, ['open_id' => $account->open_id, 'replaced' => $replaced], $user->id);
+        $this->audit->log('tiktok.connect', $account, ['open_id' => $account->open_id, 'reconnected' => $reconnected], $user->id);
     }
 
-    /** Job api đang chạy dùng token của tài khoản này: không đổi / huỷ kết nối giữa chừng. */
+    public static function maxAccounts(): int
+    {
+        return max(1, (int) config('services.tiktok.max_accounts'));
+    }
+
+    private static function limitReached(): BusinessException
+    {
+        return new BusinessException(
+            'TIKTOK_ACCOUNT_LIMIT',
+            'Bạn đã kết nối tối đa '.self::maxAccounts().' tài khoản TikTok. Huỷ kết nối bớt một tài khoản để thêm tài khoản khác.',
+            409,
+        );
+    }
+
+    /** Job api đang chạy dùng token của tài khoản này: không huỷ kết nối giữa chừng. */
     private function assertNotPublishing(PublishAccount $account): void
     {
         $running = SocialPublishJob::query()
@@ -239,7 +266,7 @@ class TikTokConnectionService
             ->whereIn('status', [OutputStatus::Queued, OutputStatus::Processing])
             ->exists();
         if ($running) {
-            throw new BusinessException('TIKTOK_PUBLISHING_IN_PROGRESS', 'Đang có bài gửi lên TikTok, vui lòng chờ xong rồi đổi / huỷ kết nối.', 409);
+            throw new BusinessException('TIKTOK_PUBLISHING_IN_PROGRESS', 'Đang có bài gửi lên tài khoản TikTok này, vui lòng chờ xong rồi huỷ kết nối.', 409);
         }
     }
 

@@ -169,7 +169,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             // Người dùng tự kết nối TikTok để đăng qua API (note/dang-tiktok-qua-api.txt ở repo frontend)
             Route::post('tiktok/oauth/authorize', [TikTokController::class, 'authorizeUrl'])->middleware('throttle:auth');
             Route::post('tiktok/oauth/callback', [TikTokController::class, 'callback'])->middleware('throttle:auth');
-            Route::delete('tiktok/account', [TikTokController::class, 'destroy']);
+            // Một tài khoản A51 kết nối nhiều tài khoản TikTok (note/uy-quyen-nhieu-tiktok.txt ở repo frontend)
+            Route::delete('tiktok/accounts/{account}', [TikTokController::class, 'destroy'])->whereNumber('account');
         });
 
         // Admin

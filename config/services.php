@@ -65,6 +65,8 @@ return [
         // Job đang gửi: hỏi lại TikTok (status/fetch) mỗi bấy nhiêu phút khi webhook chưa về; quá hạn thì thất bại
         'status_check_minutes' => 5,
         'publish_timeout_minutes' => 60,
+        // Số tài khoản TikTok tối đa một tài khoản A51 được kết nối
+        'max_accounts' => (int) env('TIKTOK_MAX_ACCOUNTS', 10),
     ],
 
     'slack' => [

@@ -48,7 +48,7 @@ class TikTokApiTest extends TestCase
         return SocialPost::query()->findOrFail($id);
     }
 
-    private function publish(User $user, SocialPost $post, array $platforms = ['tiktok'])
+    private function publish(User $user, SocialPost $post, array $platforms = ['tiktok'], ?array $tiktokAccountIds = null)
     {
         return $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", [
             'title' => 'Tiêu đề',
@@ -56,6 +56,7 @@ class TikTokApiTest extends TestCase
             'hashtags' => ['a51'],
             'images' => $post->images()->get()->map(fn ($image) => ['image_id' => $image->id])->all(),
             'platforms' => $platforms,
+            'tiktok_account_ids' => $tiktokAccountIds,
         ]);
     }
 
@@ -102,7 +103,7 @@ class TikTokApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data', ['status' => 'connected', 'reason' => null, 'redirect' => '/posts/9']);
 
-        $account = $user->tiktokConnection()->firstOrFail();
+        $account = $user->tiktokConnections()->firstOrFail();
         $this->assertSame(PublishDriver::Api, $account->driver);
         $this->assertSame('access-new', $account->access_token);
         $this->assertSame('shophoa', $account->username);
@@ -137,7 +138,7 @@ class TikTokApiTest extends TestCase
             ->assertJsonPath('data.reason', 'server_error')
             ->assertJsonPath('data.redirect', '/posts');
 
-        $this->assertNull($user->tiktokConnection()->first());
+        $this->assertNull($user->tiktokConnections()->first());
     }
 
     public function test_accounts_prefer_api_row_over_worker_row(): void
@@ -186,12 +187,14 @@ class TikTokApiTest extends TestCase
     {
         $user = $this->buyer();
         $this->workerAccount($user);
-        $this->connectTikTok($user);
+        $account = $this->connectTikTok($user);
+        // Tài khoản của người khác -> 404
+        $this->actingAs($this->buyer())->deleteJson('/api/v1/social/tiktok/accounts/'.$account->id)->assertNotFound();
         $this->fakeTikTok(['/oauth/revoke/' => Http::response()]);
 
-        $this->actingAs($user)->deleteJson('/api/v1/social/tiktok/account')->assertNoContent();
+        $this->actingAs($user)->deleteJson('/api/v1/social/tiktok/accounts/'.$account->id)->assertNoContent();
 
-        $this->assertNull($user->tiktokConnection()->first());
+        $this->assertNull($user->tiktokConnections()->first());
         $this->actingAs($user)->getJson('/api/v1/social/accounts')->assertJsonPath('data.0.driver', 'worker');
         Http::assertSent(fn (HttpRequest $request) => str_ends_with($request->url(), '/oauth/revoke/') && $request['token'] === 'access-'.$user->id);
     }
@@ -356,18 +359,133 @@ class TikTokApiTest extends TestCase
         $this->assertSame('TIKTOK_TIMEOUT', SocialPublishJob::query()->where('external_id', 'p_b')->value('error_code'));
     }
 
-    public function test_cannot_reconnect_or_disconnect_while_sending(): void
+    public function test_cannot_disconnect_while_sending_but_can_connect_more(): void
     {
         $user = $this->buyer(credit: 5000);
-        $this->connectTikTok($user);
+        $account = $this->connectTikTok($user);
         $post = $this->pendingPost($user);
         $this->fakeTikTok(['/post/publish/content/init/' => self::tiktokOk(['publish_id' => 'p_c'])]);
         $this->publish($user, $post)->assertOk();
 
-        $this->actingAs($user)->deleteJson('/api/v1/social/tiktok/account')
+        $this->actingAs($user)->deleteJson('/api/v1/social/tiktok/accounts/'.$account->id)
             ->assertStatus(409)->assertJsonPath('code', 'TIKTOK_PUBLISHING_IN_PROGRESS');
+        // Kết nối thêm / kết nối lại không thay tài khoản đang gửi nên không bị chặn
+        $this->actingAs($user)->postJson('/api/v1/social/tiktok/oauth/authorize', [])->assertOk();
+    }
+
+    // ---- Nhiều tài khoản TikTok ----
+
+    public function test_connecting_another_account_adds_row_and_reconnecting_updates_it(): void
+    {
+        $user = $this->buyer();
+        $connect = function (string $openId, string $username) use ($user) {
+            $this->fakeTikTok([
+                '/oauth/token/' => self::tokenResponse(['open_id' => $openId, 'access_token' => 'access-'.$openId]),
+                '/user/info/*' => self::userInfoResponse(['open_id' => $openId, 'username' => $username]),
+            ]);
+            $this->actingAs($user)->postJson('/api/v1/social/tiktok/oauth/callback', ['code' => 'c', 'state' => $this->authorizeState($user)])
+                ->assertJsonPath('data.status', 'connected');
+        };
+
+        $connect('open-a', 'shopa');
+        $connect('open-b', 'shopb');
+        $connect('open-a', 'shopa2');
+
+        $accounts = $user->tiktokConnections()->orderBy('id')->get();
+        $this->assertSame(['open-a', 'open-b'], $accounts->pluck('open_id')->all());
+        $this->assertSame('shopa2', $accounts[0]->username);
+        $this->assertSame('access-open-a', $accounts[0]->access_token);
+
+        $this->actingAs($user)->getJson('/api/v1/social/accounts')
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.id', $accounts[0]->id)
+            ->assertJsonPath('data.1.username', 'shopb');
+    }
+
+    public function test_account_limit(): void
+    {
+        config(['services.tiktok.max_accounts' => 2]);
+        $user = $this->buyer();
+        $this->connectTikTok($user, ['open_id' => 'open-a']);
+        $lost = $this->connectTikTok($user, ['open_id' => 'open-b', 'connection_status' => TikTokConnectionStatus::Expired]);
+
+        // Đủ số nhưng có tài khoản mất kết nối: vẫn cho ủy quyền (để kết nối lại); tài khoản mới thì không lưu
+        $state = $this->authorizeState($user);
+        $this->fakeTikTok([
+            '/oauth/token/' => self::tokenResponse(['open_id' => 'open-c']),
+            '/oauth/revoke/' => Http::response(),
+        ]);
+        $this->actingAs($user)->postJson('/api/v1/social/tiktok/oauth/callback', ['code' => 'c', 'state' => $state])
+            ->assertJsonPath('data.reason', 'limit_reached');
+        $this->assertSame(2, $user->tiktokConnections()->count());
+        Http::assertSent(fn (HttpRequest $request) => str_ends_with($request->url(), '/oauth/revoke/') && $request['token'] === 'access-new');
+
+        // Đủ số và đều đang dùng được: không cho bắt đầu ủy quyền
+        $lost->update(['connection_status' => TikTokConnectionStatus::Active]);
         $this->actingAs($user)->postJson('/api/v1/social/tiktok/oauth/authorize', [])
-            ->assertStatus(409)->assertJsonPath('code', 'TIKTOK_PUBLISHING_IN_PROGRESS');
+            ->assertStatus(409)->assertJsonPath('code', 'TIKTOK_ACCOUNT_LIMIT');
+    }
+
+    public function test_publish_to_several_accounts_then_retry_only_the_failed_one(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $a = $this->connectTikTok($user, ['open_id' => 'open-a', 'username' => 'shopa']);
+        $b = $this->connectTikTok($user, ['open_id' => 'open-b', 'username' => 'shopb']);
+        $post = $this->pendingPost($user);
+
+        // Nhiều tài khoản: phải chọn
+        $this->publish($user, $post)->assertStatus(422)->assertJsonValidationErrors('tiktok_account_ids');
+        $this->publish($user, $post, ['tiktok'], [$a->id, 999999])->assertStatus(422)->assertJsonValidationErrors('tiktok_account_ids');
+
+        $this->fakeTikTok(['/post/publish/content/init/' => Http::sequence()
+            ->push(self::tiktokOk(['publish_id' => 'p_a']))
+            ->push(self::tiktokError('spam_risk_too_many_posts'), 403)
+            ->push(self::tiktokOk(['publish_id' => 'p_b2']))]);
+
+        $this->publish($user, $post, ['tiktok'], [$a->id, $b->id])
+            ->assertOk()
+            ->assertJsonPath('data.platforms.tiktok.status', 'publishing')
+            ->assertJsonPath('data.platforms.tiktok.accounts.0.name', '@shopa')
+            ->assertJsonPath('data.platforms.tiktok.accounts.0.status', 'publishing')
+            ->assertJsonPath('data.platforms.tiktok.accounts.1.name', '@shopb')
+            ->assertJsonPath('data.platforms.tiktok.accounts.1.status', 'failed');
+        $this->assertSame(2, SocialPublishJob::query()->count());
+
+        // A xong, B lỗi: nền tảng lỗi, bài về chờ gửi
+        $this->sendWebhook('post.publish.inbox_delivered', ['publish_id' => 'p_a'], 'open-a')->assertOk();
+        $this->actingAs($user)->getJson("/api/v1/social/posts/{$post->id}")
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.platforms.tiktok.status', 'failed')
+            ->assertJsonPath('data.platforms.tiktok.error', 'Tài khoản TikTok đã đạt giới hạn gửi bài trong ngày, thử lại sau.')
+            ->assertJsonPath('data.platforms.tiktok.accounts.0.status', 'published');
+
+        // Không gửi lại vào A
+        $this->publish($user, $post, ['tiktok'], [$a->id])->assertStatus(422)->assertJsonValidationErrors('tiktok_account_ids');
+
+        // Gửi lại vào B
+        $this->publish($user, $post, ['tiktok'], [$b->id])->assertOk()->assertJsonPath('data.platforms.tiktok.status', 'publishing');
+        $this->sendWebhook('post.publish.inbox_delivered', ['publish_id' => 'p_b2'], 'open-b')->assertOk();
+
+        $this->actingAs($user)->getJson("/api/v1/social/posts/{$post->id}")
+            ->assertJsonPath('data.status', 'published')
+            ->assertJsonPath('data.platforms.tiktok.status', 'published')
+            ->assertJsonCount(2, 'data.platforms.tiktok.accounts')
+            ->assertJsonPath('data.platforms.tiktok.accounts.1.status', 'published');
+    }
+
+    public function test_lost_account_among_several_rejects_publish_with_account_id(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $a = $this->connectTikTok($user, ['open_id' => 'open-a']);
+        $b = $this->connectTikTok($user, ['open_id' => 'open-b', 'username' => 'shopb', 'connection_status' => TikTokConnectionStatus::Expired]);
+        $post = $this->pendingPost($user);
+
+        $this->publish($user, $post, ['tiktok'], [$a->id, $b->id])
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'TIKTOK_NOT_CONNECTED')
+            ->assertJsonPath('context.reason', 'expired')
+            ->assertJsonPath('context.account_id', $b->id);
+        $this->assertSame(0, SocialPublishJob::query()->count());
     }
 
     // ---- Webhook ----

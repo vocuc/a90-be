@@ -26,6 +26,8 @@ class TikTokClient
             'scope' => config('services.tiktok.scopes'),
             'redirect_uri' => config('services.tiktok.redirect_uri'),
             'state' => $state,
+            // Luôn hiện màn hình ủy quyền để người dùng chọn / đổi tài khoản TikTok (kết nối thêm tài khoản khác)
+            'disable_auto_auth' => 1,
         ]);
     }
 

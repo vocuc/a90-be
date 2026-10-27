@@ -40,7 +40,7 @@ class SocialPostResource extends JsonResource
             'image_count' => $images->count(),
             'cover_url' => $images->firstWhere('thumb_url', '!==', null)['thumb_url'] ?? null,
             'images' => $images,
-            // Nền tảng đã chọn đăng: { tiktok: { status, post_url, error, finished_at }, ... }
+            // Nền tảng đã chọn đăng: { tiktok: { status, post_url, error, finished_at, accounts }, ... }
             'platforms' => $this->platforms(),
             'last_error' => $this->last_error,
             'created_at' => $this->created_at,
@@ -50,12 +50,18 @@ class SocialPostResource extends JsonResource
 
     private function platforms(): object
     {
-        // Job gần nhất của từng nền tảng
-        $jobs = $this->publishJobs->sortBy('id')->keyBy(fn ($job) => $job->platform->value);
+        $jobs = $this->publishJobs->sortBy('id');
         $result = [];
         foreach ($this->platformStatuses() as $platform => $status) {
-            $job = $jobs->get($platform);
-            $api = $job?->driver === PublishDriver::Api;
+            $platformJobs = $jobs->filter(fn ($job) => $job->platform->value === $platform);
+            // Job gần nhất của nền tảng
+            $job = $platformJobs->last();
+            // Job mới nhất của từng tài khoản TikTok tự kết nối (bỏ job lỗi của lần đăng trước)
+            $apiJobs = $platformJobs
+                ->filter(fn ($j) => $j->driver === PublishDriver::Api && ! $j->superseded)
+                ->keyBy(fn ($j) => $j->targetKey())
+                ->values();
+            $failedApi = $apiJobs->first(fn ($j) => $j->status === OutputStatus::Failed && $j->error_message);
             $result[$platform] = [
                 'status' => $status,
                 // worker | api (TikTok người dùng tự kết nối: "Đã gửi vào hộp thư")
@@ -63,9 +69,17 @@ class SocialPostResource extends JsonResource
                 'post_url' => $job?->post_url,
                 // Đăng qua API lỗi do tài khoản TikTok của chính người dùng (hết lượt, mất kết nối...): hiện thông báo cụ thể
                 'error' => $status === PlatformPublishStatus::Failed
-                    ? ($api && $job->error_message ? $job->error_message : self::PLATFORM_FAILED_MESSAGE)
+                    ? ($failedApi?->error_message ?? self::PLATFORM_FAILED_MESSAGE)
                     : null,
                 'finished_at' => $job?->finished_at,
+                // TikTok gửi vào nhiều tài khoản: trạng thái từng tài khoản. Worker: []
+                'accounts' => $apiJobs->map(fn ($j) => [
+                    'account_id' => $j->publish_account_id,
+                    'name' => $j->account_name,
+                    'status' => PlatformPublishStatus::fromJob($j->status),
+                    'error' => $j->status === OutputStatus::Failed ? ($j->error_message ?: self::PLATFORM_FAILED_MESSAGE) : null,
+                    'finished_at' => $j->finished_at,
+                ])->all(),
             ];
         }
 

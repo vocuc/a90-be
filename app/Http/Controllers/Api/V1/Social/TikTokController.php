@@ -39,9 +39,10 @@ class TikTokController extends Controller
         return response()->json(['data' => $this->connections->callback($request->user(), $data)]);
     }
 
-    public function destroy(Request $request): Response
+    /** Huỷ kết nối một tài khoản TikTok (id ở GET /social/accounts). */
+    public function destroy(Request $request, int $account): Response
     {
-        $this->connections->disconnect($request->user());
+        $this->connections->disconnect($request->user(), $account);
 
         return response()->noContent();
     }

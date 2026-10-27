@@ -10,10 +10,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Tài khoản đăng bài của một tài khoản A51 (user_id), tối đa 1 dòng / nền tảng / driver:
+ * Tài khoản đăng bài của một tài khoản A51 (user_id):
  * - driver worker: admin gắn với 1 worker (máy đã đăng nhập sẵn tài khoản TikTok / Facebook / Instagram), mỗi worker
  *   giữ 1 tài khoản. Worker chỉ nhận job của nền tảng và tài khoản A51 được gắn.
- * - driver api (chỉ TikTok): người dùng tự kết nối TikTok bằng OAuth. Token mã hoá, không bao giờ trả ra API hay ghi log.
+ * - driver api (chỉ TikTok): người dùng tự kết nối TikTok bằng OAuth, nhiều tài khoản (1 dòng / open_id, tối đa
+ *   services.tiktok.max_accounts). Token mã hoá, không bao giờ trả ra API hay ghi log.
  */
 class PublishAccount extends Model
 {
@@ -53,6 +54,12 @@ class PublishAccount extends Model
     }
 
     /** Tài khoản api còn gọi được TikTok. */
+    /** Tên hiện cho người dùng: @username, không có thì tên hiển thị. */
+    public function displayName(): string
+    {
+        return $this->username ? '@'.$this->username : $this->name;
+    }
+
     public function isUsable(): bool
     {
         return $this->connection_status === TikTokConnectionStatus::Active

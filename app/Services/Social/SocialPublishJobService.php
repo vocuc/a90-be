@@ -27,7 +27,9 @@ use Illuminate\Validation\ValidationException;
  * - Worker: admin gắn tài khoản A51 với worker theo từng nền tảng (PublishAccount driver worker); worker chỉ nhận job của
  *   nền tảng và tài khoản A51 được gắn (publishing), đăng xong báo completed (published).
  * - API (chỉ TikTok, note/dang-tiktok-qua-api.txt): người dùng đã tự kết nối TikTok thì MẶC ĐỊNH đăng qua API, không qua
- *   worker. Job driver api do queue job PublishTikTokViaApi gửi (TikTokApiPublisher).
+ *   worker. Job driver api do queue job PublishTikTokViaApi gửi (TikTokApiPublisher). Kết nối nhiều tài khoản TikTok thì
+ *   chọn một hoặc nhiều tài khoản, mỗi tài khoản một job (note/uy-quyen-nhieu-tiktok.txt).
+ * Trạng thái nền tảng tính lại từ các job (syncPlatform) mỗi khi một job đổi trạng thái.
  * Lỗi / quá hạn không giao lại: nền tảng sang failed, xong hết thì bài về pending_review với thông báo chung, người dùng
  * bấm đăng lại các nền tảng lỗi. Job chờ worker không hết hạn.
  */
@@ -40,41 +42,45 @@ class SocialPublishJobService
     ) {}
 
     /**
-     * Tài khoản đăng bài của người dùng, theo thứ tự nền tảng. Có cả dòng worker và dòng api của TikTok thì chỉ trả dòng
-     * api (dòng sẽ được dùng khi đăng).
+     * Tài khoản đăng bài của người dùng, theo thứ tự nền tảng. TikTok: có tài khoản tự kết nối (api) thì trả mọi dòng api
+     * (theo thứ tự kết nối), không trả dòng worker (không dùng khi đăng).
      *
      * @return Collection<int, PublishAccount>
      */
     public function accounts(User $user): Collection
     {
         $order = array_flip(SocialPlatform::values());
+        $accounts = $user->publishAccounts()->get();
+        $hasApi = $accounts->contains(fn (PublishAccount $account) => $account->isApi());
 
-        return $user->publishAccounts()->get()
-            ->sortBy(fn (PublishAccount $account) => [$order[$account->platform->value], $account->isApi() ? 0 : 1])
-            ->unique(fn (PublishAccount $account) => $account->platform->value)
+        return $accounts
+            ->reject(fn (PublishAccount $account) => $hasApi && $account->platform === SocialPlatform::Tiktok && ! $account->isApi())
+            ->sortBy(fn (PublishAccount $account) => [$order[$account->platform->value], $account->connected_at?->getTimestamp() ?? 0, $account->id])
             ->values()
             ->toBase();
     }
 
     /**
-     * @param  array{title?: ?string, content?: ?string, hashtags?: ?array, images: array<int, array>, platforms: string[]}  $data
+     * @param  array{title?: ?string, content?: ?string, hashtags?: ?array, images: array<int, array>, platforms: string[], tiktok_account_ids?: ?int[]}  $data
      */
     public function publish(User $user, SocialPost $post, array $data): SocialPost
     {
         $this->posts->assertEditable($post);
 
-        $platforms = $this->resolvePlatforms($post, $data['platforms']);
+        // Đã tự kết nối TikTok: gửi qua API vào các tài khoản đã chọn, mỗi tài khoản một job (đã gửi xong tài khoản nào thì
+        // không gửi lại tài khoản đó, vẫn thêm được tài khoản khác).
+        $connections = $user->tiktokConnections()->get();
+        $platforms = $this->resolvePlatforms($post, $data['platforms'], perAccountTiktok: $connections->isNotEmpty());
         $hashtags = SocialPost::normalizeHashtags($data['hashtags'] ?? []);
         $this->assertWithinLimits($platforms, SocialPost::description($data['content'] ?? null, $hashtags), count($data['images']));
 
         $images = $this->resolveImages($user, $post, $data['images']);
 
-        // Đã tự kết nối TikTok: đăng qua API. Mất kết nối thì từ chối cả yêu cầu (không tự chuyển sang worker để
-        // tránh đăng nhầm vào tài khoản của A51); người dùng kết nối lại rồi bấm đăng một lần.
-        $tiktokApi = in_array(SocialPlatform::Tiktok, $platforms, true) ? $user->tiktokConnection : null;
-        if ($tiktokApi && ! $tiktokApi->isUsable()) {
-            throw BusinessException::tiktokNotConnected($tiktokApi->connectionReason() ?? 'expired');
-        }
+        // Tài khoản TikTok đã chọn mất kết nối thì từ chối cả yêu cầu (không tự chuyển sang worker để tránh đăng nhầm vào
+        // tài khoản của A51); người dùng kết nối lại rồi bấm đăng một lần.
+        $tiktokApi = in_array(SocialPlatform::Tiktok, $platforms, true) && $connections->isNotEmpty()
+            ? $this->resolveTiktokAccounts($post, $connections, $data['tiktok_account_ids'] ?? null)
+            : collect();
 
         $post = DB::transaction(function () use ($user, $post, $data, $hashtags, $images, $platforms, $tiktokApi) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
@@ -91,18 +97,32 @@ class SocialPublishJobService
 
             $jobs = [];
             foreach ($platforms as $platform) {
+                // Job lỗi lần trước: đăng lại thì tạo job mới, không đăng lại thì bỏ khỏi trạng thái nền tảng
+                $post->publishJobs()->where('platform', $platform)->where('status', OutputStatus::Failed)->update(['superseded' => true]);
                 $post->{$platform->statusColumn()} = PlatformPublishStatus::Queued;
-                $api = $platform === SocialPlatform::Tiktok && $tiktokApi;
-                $job = $post->publishJobs()->create([
+
+                if ($platform === SocialPlatform::Tiktok && $tiktokApi->isNotEmpty()) {
+                    foreach ($tiktokApi as $account) {
+                        $job = $post->publishJobs()->create([
+                            'platform' => $platform,
+                            'status' => OutputStatus::Queued,
+                            'driver' => PublishDriver::Api,
+                            'publish_account_id' => $account->id,
+                            'account_open_id' => $account->open_id,
+                            'account_name' => Str::limit($account->displayName(), 150, ''),
+                        ]);
+                        $jobs[$platform->value][] = $job->id;
+                        PublishTikTokViaApi::dispatch($job->id)->afterCommit();
+                    }
+
+                    continue;
+                }
+
+                $jobs[$platform->value] = $post->publishJobs()->create([
                     'platform' => $platform,
                     'status' => OutputStatus::Queued,
-                    'driver' => $api ? PublishDriver::Api : PublishDriver::Worker,
-                    'publish_account_id' => $api ? $tiktokApi->id : null,
-                ]);
-                $jobs[$platform->value] = $job->id;
-                if ($api) {
-                    PublishTikTokViaApi::dispatch($job->id)->afterCommit();
-                }
+                    'driver' => PublishDriver::Worker,
+                ])->id;
             }
             $post->syncStatus();
             $post->save();
@@ -139,8 +159,7 @@ class SocialPublishJobService
                 'status' => OutputStatus::Processing,
                 'lease_expires_at' => now()->addMinutes(config('services.tiktok.publish_timeout_minutes')),
             ]);
-            SocialPost::query()->lockForUpdate()->findOrFail($job->social_post_id)
-                ->setPlatformStatus($job->platform, PlatformPublishStatus::Publishing);
+            $this->syncPlatform($job);
 
             return $job;
         });
@@ -204,8 +223,7 @@ class SocialPublishJobService
                 'publish_account_id' => $account->id,
                 'lease_expires_at' => now()->addMinutes(config('ai90.worker.publish_lease_minutes')),
             ]);
-            SocialPost::query()->lockForUpdate()->findOrFail($job->social_post_id)
-                ->setPlatformStatus($job->platform, PlatformPublishStatus::Publishing);
+            $this->syncPlatform($job);
 
             return $job;
         });
@@ -282,10 +300,7 @@ class SocialPublishJobService
             'finished_at' => now(),
         ]);
 
-        $post = SocialPost::query()->lockForUpdate()->findOrFail($job->social_post_id);
-        if ($post->platformStatus($job->platform) === PlatformPublishStatus::Publishing) {
-            $post->setPlatformStatus($job->platform, PlatformPublishStatus::Published);
-        }
+        $this->syncPlatform($job);
     }
 
     private function failJob(SocialPublishJob $job, string $errorCode, string $errorMessage): void
@@ -298,9 +313,32 @@ class SocialPublishJobService
             'error_message' => Str::limit($errorMessage, 490),
         ]);
 
+        $this->syncPlatform($job);
+    }
+
+    /**
+     * Tính lại trạng thái nền tảng của job từ job mới nhất của từng đích gửi (bỏ job superseded): còn đích đang đăng ->
+     * publishing, còn chờ -> queued, có đích lỗi -> failed, xong hết -> published. Gọi trong transaction.
+     */
+    private function syncPlatform(SocialPublishJob $job): void
+    {
         $post = SocialPost::query()->lockForUpdate()->findOrFail($job->social_post_id);
-        if ($post->platformStatus($job->platform)?->isRunning()) {
-            $post->setPlatformStatus($job->platform, PlatformPublishStatus::Failed);
+        $statuses = $post->publishJobs()
+            ->where('platform', $job->platform)
+            ->where('superseded', false)
+            ->orderBy('id')
+            ->get()
+            ->keyBy(fn (SocialPublishJob $j) => $j->targetKey())
+            ->map(fn (SocialPublishJob $j) => PlatformPublishStatus::fromJob($j->status));
+
+        $status = match (true) {
+            $statuses->contains(PlatformPublishStatus::Publishing) => PlatformPublishStatus::Publishing,
+            $statuses->contains(PlatformPublishStatus::Queued) => PlatformPublishStatus::Queued,
+            $statuses->contains(PlatformPublishStatus::Failed) => PlatformPublishStatus::Failed,
+            default => PlatformPublishStatus::Published,
+        };
+        if ($post->platformStatus($job->platform) !== $status) {
+            $post->setPlatformStatus($job->platform, $status);
         }
     }
 
@@ -317,14 +355,16 @@ class SocialPublishJobService
     /**
      * Nền tảng người dùng chọn trong popup "Đăng lên đâu?" (bắt buộc, một hoặc nhiều). Chọn nền tảng chưa có tài khoản
      * vẫn tạo job (chờ tới khi admin gắn worker). Nền tảng đã đăng xong không đăng lại (tránh bài trùng).
+     * perAccountTiktok: TikTok tự kết nối kiểm tra theo từng tài khoản (resolveTiktokAccounts).
      *
      * @param  string[]  $requested
      * @return SocialPlatform[]
      */
-    private function resolvePlatforms(SocialPost $post, array $requested): array
+    private function resolvePlatforms(SocialPost $post, array $requested, bool $perAccountTiktok = false): array
     {
         $platforms = array_map(fn ($value) => SocialPlatform::from($value), array_values(array_unique($requested)));
-        $done = array_filter($platforms, fn (SocialPlatform $platform) => $post->platformStatus($platform) === PlatformPublishStatus::Published);
+        $done = array_filter($platforms, fn (SocialPlatform $platform) => $post->platformStatus($platform) === PlatformPublishStatus::Published
+            && ! ($perAccountTiktok && $platform === SocialPlatform::Tiktok));
         if ($done) {
             throw ValidationException::withMessages([
                 'platforms' => 'Bài đã đăng lên '.implode(', ', array_map(fn ($p) => $p->label(), $done)).', không đăng lại.',
@@ -332,6 +372,50 @@ class SocialPublishJobService
         }
 
         return $platforms;
+    }
+
+    /**
+     * Tài khoản TikTok (tự kết nối) sẽ nhận bài. Không gửi ids mà chỉ có 1 tài khoản thì dùng tài khoản đó.
+     * Tài khoản đã chọn mất kết nối -> 409 TIKTOK_NOT_CONNECTED (context: reason, account_id); đã gửi bài này vào tài khoản
+     * đó rồi -> 422.
+     *
+     * @param  Collection<int, PublishAccount>  $connections
+     * @param  ?int[]  $ids
+     * @return Collection<int, PublishAccount>
+     */
+    private function resolveTiktokAccounts(SocialPost $post, Collection $connections, ?array $ids): Collection
+    {
+        $ids = array_values(array_unique(array_map('intval', $ids ?? [])));
+        if (! $ids) {
+            if ($connections->count() > 1) {
+                throw ValidationException::withMessages(['tiktok_account_ids' => 'Chọn tài khoản TikTok để gửi bài.']);
+            }
+            $ids = [$connections->first()->id];
+        }
+
+        $chosen = $connections->whereIn('id', $ids)->values();
+        if ($chosen->count() !== count($ids)) {
+            throw ValidationException::withMessages(['tiktok_account_ids' => 'Tài khoản TikTok không hợp lệ, vui lòng tải lại trang.']);
+        }
+
+        if ($lost = $chosen->first(fn (PublishAccount $account) => ! $account->isUsable())) {
+            throw BusinessException::tiktokNotConnected($lost->connectionReason() ?? 'expired', $lost);
+        }
+
+        $sent = $post->publishJobs()
+            ->where('driver', PublishDriver::Api)
+            ->where('status', OutputStatus::Completed)
+            ->pluck('account_open_id')
+            ->filter()
+            ->all();
+        $done = $chosen->filter(fn (PublishAccount $account) => in_array($account->open_id, $sent, true));
+        if ($done->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'tiktok_account_ids' => 'Bài đã gửi vào '.$done->map(fn (PublishAccount $account) => $account->displayName())->implode(', ').', không gửi lại.',
+            ]);
+        }
+
+        return $chosen;
     }
 
     /** @param  SocialPlatform[]  $platforms */

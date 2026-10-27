@@ -75,16 +75,16 @@ class User extends Authenticatable
         return $this->hasOne(CreatorWallet::class);
     }
 
-    /** Tài khoản đăng bài (tối đa 1 / nền tảng / driver): worker admin gắn, hoặc TikTok người dùng tự kết nối. */
+    /** Tài khoản đăng bài: worker admin gắn (tối đa 1 / nền tảng), hoặc các TikTok người dùng tự kết nối. */
     public function publishAccounts(): HasMany
     {
         return $this->hasMany(PublishAccount::class);
     }
 
-    /** TikTok người dùng tự kết nối (OAuth, driver api). */
-    public function tiktokConnection(): HasOne
+    /** Các TikTok người dùng tự kết nối (OAuth, driver api), tối đa services.tiktok.max_accounts. */
+    public function tiktokConnections(): HasMany
     {
-        return $this->hasOne(PublishAccount::class)
+        return $this->hasMany(PublishAccount::class)
             ->where('platform', SocialPlatform::Tiktok)
             ->where('driver', PublishDriver::Api);
     }

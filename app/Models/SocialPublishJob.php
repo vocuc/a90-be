@@ -15,6 +15,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * Dùng chung trạng thái với job ảnh (queued | processing | completed | failed).
  * driver api (TikTok người dùng tự kết nối): không qua worker, queue job PublishTikTokViaApi gọi TikTok;
  * external_id = publish_id, kết quả qua webhook hoặc status/fetch (checked_at: lần hỏi gần nhất).
+ * Một bài gửi vào nhiều tài khoản TikTok một lượt: mỗi tài khoản (đích gửi, targetKey) một job. Trạng thái nền tảng tính từ
+ * job mới nhất của từng đích, bỏ qua job superseded (job lỗi của lần đăng trước, không đăng lại).
  */
 class SocialPublishJob extends Model
 {
@@ -31,7 +33,16 @@ class SocialPublishJob extends Model
             'lease_expires_at' => 'datetime',
             'checked_at' => 'datetime',
             'finished_at' => 'datetime',
+            'superseded' => 'boolean',
         ];
+    }
+
+    /** Đích gửi: worker của nền tảng, hoặc một tài khoản TikTok (theo open_id, giữ nguyên khi kết nối lại). */
+    public function targetKey(): string
+    {
+        return $this->driver === PublishDriver::Api
+            ? 'api:'.($this->account_open_id ?? $this->publish_account_id)
+            : 'worker';
     }
 
     public function post(): BelongsTo

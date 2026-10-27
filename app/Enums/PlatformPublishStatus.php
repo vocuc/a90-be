@@ -18,4 +18,15 @@ enum PlatformPublishStatus: string
     {
         return $this === self::Queued || $this === self::Publishing;
     }
+
+    /** Trạng thái nền tảng tương ứng với trạng thái một job đăng bài. */
+    public static function fromJob(OutputStatus $status): self
+    {
+        return match ($status) {
+            OutputStatus::Queued => self::Queued,
+            OutputStatus::Processing => self::Publishing,
+            OutputStatus::Completed => self::Published,
+            OutputStatus::Failed => self::Failed,
+        };
+    }
 }

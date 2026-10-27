@@ -29,10 +29,12 @@ class PostController extends Controller
     /**
      * Tài khoản đăng bài của người dùng (admin gắn worker, hoặc TikTok tự kết nối): trang đăng bài chọn sẵn các nền tảng này.
      * driver api: kèm connection { status: active | expired | revoked | scope_missing, avatar_url, connected_at }.
+     * TikTok tự kết nối có thể nhiều dòng; id dùng cho tiktok_account_ids khi đăng và để huỷ kết nối.
      */
     public function accounts(Request $request, SocialPublishJobService $publisher, TikTokConnectionService $tiktok): JsonResponse
     {
         return response()->json(['data' => $publisher->accounts($request->user())->map(fn (PublishAccount $account) => [
+            'id' => $account->id,
             'platform' => $account->platform->value,
             'label' => $account->platform->label(),
             'name' => $account->name,
@@ -103,6 +105,9 @@ class PostController extends Controller
             'images.*.output_id' => ['required_without:images.*.image_id', 'nullable', 'integer'],
             'platforms' => ['required', 'array', 'min:1'],
             'platforms.*' => ['string', 'distinct', Rule::enum(SocialPlatform::class)],
+            // TikTok tự kết nối: gửi vào các tài khoản này (bỏ trống khi chỉ có 1 tài khoản)
+            'tiktok_account_ids' => ['nullable', 'array', 'max:'.TikTokConnectionService::maxAccounts()],
+            'tiktok_account_ids.*' => ['integer', 'distinct'],
         ], [
             'platforms.required' => 'Chọn ít nhất một nền tảng để đăng.',
             'platforms.min' => 'Chọn ít nhất một nền tảng để đăng.',
