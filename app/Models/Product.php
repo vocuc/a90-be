@@ -31,7 +31,7 @@ class Product extends Model
         return $this->hasOne(ProductImage::class)->ofMany(['position' => 'min', 'id' => 'min']);
     }
 
-    /** Hashtag theo thứ tự nhập: tạo lô tự động chỉ ghép với nhóm có creative trùng hashtag. */
+    /** Hashtag theo thứ tự nhập (tạo lô tự động không xét hashtag). */
     public function hashtags(): BelongsToMany
     {
         return $this->belongsToMany(Hashtag::class, 'product_hashtag')

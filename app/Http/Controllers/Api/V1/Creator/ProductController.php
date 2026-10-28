@@ -20,7 +20,7 @@ use Illuminate\Validation\ValidationException;
 /**
  * Sản phẩm cho tạo lô tự động (note/auto-tao-lo.txt ở repo frontend). Sản phẩm của người khác -> 404.
  * Nhân viên của shop xem được (index, show) sản phẩm của shop chủ, không sửa được (note/chia-se-tai-nguyen.txt).
- * Mỗi ảnh liên kết tới key một trường ảnh trong creative. Hashtag: chỉ ghép với nhóm có creative trùng hashtag. File ảnh cũ không xoá vì lượt tạo ảnh cũ dùng thẳng đường dẫn.
+ * Mỗi ảnh liên kết tới key một trường ảnh trong creative. Hashtag chỉ lưu, tạo lô tự động không xét. File ảnh cũ không xoá vì lượt tạo ảnh cũ dùng thẳng đường dẫn.
  */
 class ProductController extends Controller
 {

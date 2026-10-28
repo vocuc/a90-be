@@ -280,31 +280,22 @@ class AutoBatchTest extends TestCase
         $this->assertLedgerMatchesBalance($user);
     }
 
-    public function test_product_only_pairs_with_groups_sharing_a_hashtag(): void
+    public function test_products_pair_with_groups_regardless_of_hashtags(): void
     {
         $user = $this->creator(credit: 100000);
-        $shoe = $this->tag($this->publishedCreative($user), ['giay']);
-        $bag = $this->tag($this->publishedCreative($user), ['tui']);
-        $shirt = $this->tag($this->publishedCreative($user), ['ao']);
-        $pausedShoe = $this->tag($this->publishedCreative($user), ['giay']);
-        $pausedShoe->update(['status' => CreativeStatus::Paused]);
+        $g1 = $this->group($user, [$this->tag($this->publishedCreative($user), ['giay'])], 'G1');
+        $g2 = $this->group($user, [$this->tag($this->publishedCreative($user), ['ao'])], 'G2');
 
-        // Khớp nhờ $shoe: tạo cả nhóm, kể cả $bag không trùng hashtag
-        $g1 = $this->group($user, [$shoe, $bag], 'G1');
-        $g2 = $this->group($user, [$shirt], 'G2');
-        // Creative trùng hashtag đang tạm dừng: nhóm không khớp
-        $this->group($user, [$pausedShoe, $this->tag($this->publishedCreative($user), ['tui'])], 'G3');
-
-        $shoes = $this->product($user, hashtags: ['#Giày', 'sale']);
-        $shirts = $this->product($user, hashtags: ['ao']);
-        // Không có hashtag: bỏ qua
+        $shoes = $this->product($user, hashtags: ['tui']);
+        // Không có hashtag vẫn tạo
         $plain = $this->product($user, hashtags: []);
 
-        $this->auto($user, 3)->assertCreated()->assertJsonCount(3, 'data.batches');
+        $this->auto($user, 4)->assertCreated()->assertJsonCount(4, 'data.batches');
 
-        $this->assertSame([[$shoes->id, $g1->id], [$shirts->id, $g2->id], [$shoes->id, $g1->id]], $this->pairs($user));
-        $this->assertSame([$shoe->id, $bag->id], Generation::query()->orderBy('id')->limit(2)->pluck('creative_id')->all());
-        $this->assertSame(0, $this->autoCount($plain));
+        $pairs = $this->pairs($user);
+        sort($pairs);
+        $this->assertSame([[$shoes->id, $g1->id], [$shoes->id, $g2->id], [$plain->id, $g1->id], [$plain->id, $g2->id]], $pairs);
+        $this->assertSame(2, $this->autoCount($plain));
     }
 
     public function test_pair_without_valid_creative_is_skipped_and_not_counted(): void
