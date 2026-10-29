@@ -145,15 +145,15 @@ class ShopStaffTest extends TestCase
         [$owner, $staff, , $product, $group] = $this->shop();
         $owner->creditWallet()->update(['balance' => 100000]);
 
-        $this->auto($staff, 2)->assertCreated()->assertJsonCount(2, 'data.batches');
+        $this->auto($staff, 2)->assertCreated()->assertJsonCount(1, 'data.batches');
         $batch = ImageBatch::query()->where('user_id', $staff->id)->firstOrFail();
         $this->assertSame([$product->id, $group->id, $owner->id], [$batch->product_id, $batch->creative_group_id, $batch->shop_owner_id]);
         // Trừ ví nhân viên theo giá bán
-        $this->assertSame(100000 - 2000, $this->balance($staff));
+        $this->assertSame(100000 - 1000, $this->balance($staff));
         $this->assertSame(100000, $this->balance($owner));
 
         // Lượt đếm riêng: chủ shop chưa chạy lần nào
-        $this->actingAs($staff)->getJson("/api/v1/creator/products/{$product->id}")->assertJsonPath('data.auto_batch_count', 2);
+        $this->actingAs($staff)->getJson("/api/v1/creator/products/{$product->id}")->assertJsonPath('data.auto_batch_count', 1);
         $this->actingAs($owner)->getJson("/api/v1/creator/products/{$product->id}")->assertJsonPath('data.auto_batch_count', 0);
         $this->auto($owner, 1)->assertCreated();
         $this->assertNull(ImageBatch::query()->where('user_id', $owner->id)->value('shop_owner_id'));

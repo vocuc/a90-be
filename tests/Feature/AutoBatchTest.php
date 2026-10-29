@@ -193,54 +193,67 @@ class AutoBatchTest extends TestCase
 
     // ---- Tạo tự động ----
 
-    public function test_order_runs_each_product_then_wraps_with_unused_group_first_and_new_product_first(): void
+    public function test_picks_distinct_random_products_and_groups_like_preview(): void
     {
         $user = $this->creator(credit: 100000);
-        $g1 = $this->group($user, [$this->publishedCreative($user)], 'G1');
-        $g2 = $this->group($user, [$this->publishedCreative($user)], 'G2');
-        [$p1, $p2, $p3] = [$this->product($user), $this->product($user), $this->product($user)];
+        $groups = array_map(fn (int $i) => $this->group($user, [$this->publishedCreative($user)], "G{$i}")->id, range(1, 4));
+        $products = array_map(fn () => $this->product($user)->id, range(1, 5));
 
-        $preview = $this->actingAs($user)->getJson('/api/v1/image-batches/auto/preview?count=7')
-            ->json('data.batches');
+        $preview = $this->actingAs($user)->getJson('/api/v1/image-batches/auto/preview?count=3')->assertOk();
+        $seed = $preview->json('data.seed');
+        $this->assertIsInt($seed);
 
-        $this->auto($user, 7)
+        $this->auto($user, 3, ['seed' => $seed])
             ->assertCreated()
-            ->assertJsonCount(7, 'data.batches')
+            ->assertJsonCount(3, 'data.batches')
             ->assertJsonPath('data.stopped', null)
             ->assertJsonPath('data.batches.0.source', 'auto');
 
         $pairs = $this->pairs($user);
-        // Xem trước chọn đúng các cặp sẽ tạo
-        $this->assertSame(array_map(fn ($b) => [$b['product']['id'], $b['group']['id']], $preview), $pairs);
-        // Mỗi vòng đủ các sản phẩm theo thứ tự tạo; vòng 2 mỗi sản phẩm sang nhóm chưa dùng
-        $this->assertSame([$p1->id, $p2->id, $p3->id, $p1->id, $p2->id, $p3->id, $p1->id], array_column($pairs, 0));
-        foreach ([0, 1, 2] as $i) {
-            $this->assertEqualsCanonicalizing([$g1->id, $g2->id], [$pairs[$i][1], $pairs[$i + 3][1]]);
+        // Gửi seed của xem trước thì tạo đúng các cặp đã xem
+        $this->assertSame(array_map(fn ($b) => [$b['product']['id'], $b['group']['id']], $preview->json('data.batches')), $pairs);
+        // Không lặp sản phẩm / nhóm
+        $this->assertCount(3, array_unique(array_column($pairs, 0)));
+        $this->assertCount(3, array_unique(array_column($pairs, 1)));
+        $this->assertEmpty(array_diff(array_column($pairs, 0), $products));
+        $this->assertEmpty(array_diff(array_column($pairs, 1), $groups));
+        foreach (array_column($pairs, 0) as $id) {
+            $this->assertSame(1, $this->autoCount(Product::query()->findOrFail($id)));
         }
-
-        // Sản phẩm mới (0 lượt) chạy liền các nhóm tới khi bằng lượt sản phẩm khác, rồi tới P2 (2 lượt, ít hơn P1)
-        $p4 = $this->product($user);
-        $this->auto($user, 3)->assertCreated();
-        $next = array_slice($this->pairs($user), 7);
-        $this->assertSame([$p4->id, $p4->id, $p2->id], array_column($next, 0));
-        $this->assertEqualsCanonicalizing([$g1->id, $g2->id], array_column(array_slice($next, 0, 2), 1));
-        $this->assertSame(3, $this->autoCount($p1));
     }
 
-    public function test_tied_groups_are_picked_randomly(): void
+    public function test_products_and_groups_are_picked_randomly(): void
     {
-        $user = $this->creator(credit: 1000000);
-        foreach (range(1, 4) as $i) {
+        $user = $this->creator();
+        foreach (range(1, 5) as $i) {
             $this->group($user, [$this->publishedCreative($user)], "G{$i}");
-        }
-        foreach (range(1, 20) as $i) {
             $this->product($user);
         }
 
-        $this->auto($user, 20)->assertCreated()->assertJsonCount(20, 'data.batches');
+        $picked = array_map(fn (int $seed) => $this->actingAs($user)->getJson("/api/v1/image-batches/auto/preview?count=1&seed={$seed}")
+            ->json('data.batches.0'), range(1, 20));
 
-        // 20 sản phẩm đều 0 lượt với mọi nhóm: không phải lúc nào cũng nhóm tạo trước
-        $this->assertGreaterThan(1, count(array_unique(array_column($this->pairs($user), 1))));
+        // Không phải lúc nào cũng sản phẩm / nhóm tạo trước
+        $this->assertGreaterThan(1, count(array_unique(array_column(array_column($picked, 'product'), 'id'))));
+        $this->assertGreaterThan(1, count(array_unique(array_column(array_column($picked, 'group'), 'id'))));
+        // Cùng seed thì cùng kết quả
+        $this->assertSame($picked[0], $this->actingAs($user)->getJson('/api/v1/image-batches/auto/preview?count=1&seed=1')->json('data.batches.0'));
+    }
+
+    public function test_count_is_capped_by_fewer_products_or_groups(): void
+    {
+        $user = $this->creator(credit: 100000);
+        $this->group($user, [$this->publishedCreative($user)], 'G1');
+        $this->group($user, [$this->publishedCreative($user)], 'G2');
+        foreach (range(1, 4) as $i) {
+            $this->product($user);
+        }
+
+        $this->auto($user, 5)
+            ->assertCreated()
+            ->assertJsonCount(2, 'data.batches')
+            ->assertJsonPath('data.requested', 5)
+            ->assertJsonPath('data.stopped', 'no_valid_pair');
     }
 
     public function test_product_image_fills_linked_field_and_invalid_creatives_are_skipped(): void
@@ -290,24 +303,37 @@ class AutoBatchTest extends TestCase
         // Không có hashtag vẫn tạo
         $plain = $this->product($user, hashtags: []);
 
-        $this->auto($user, 4)->assertCreated()->assertJsonCount(4, 'data.batches');
+        $this->auto($user, 2)->assertCreated()->assertJsonCount(2, 'data.batches');
 
         $pairs = $this->pairs($user);
-        sort($pairs);
-        $this->assertSame([[$shoes->id, $g1->id], [$shoes->id, $g2->id], [$plain->id, $g1->id], [$plain->id, $g2->id]], $pairs);
-        $this->assertSame(2, $this->autoCount($plain));
+        $this->assertEqualsCanonicalizing([$shoes->id, $plain->id], array_column($pairs, 0));
+        $this->assertEqualsCanonicalizing([$g1->id, $g2->id], array_column($pairs, 1));
+        $this->assertSame(1, $this->autoCount($plain));
     }
 
-    public function test_pair_without_valid_creative_is_skipped_and_not_counted(): void
+    public function test_pair_without_valid_creative_tries_other_group_or_skips_product(): void
     {
         $user = $this->creator(credit: 100000);
-        $g1 = $this->group($user, [$this->publishedCreative($user)]);
+        $g1 = $this->group($user, [$this->publishedCreative($user)], 'G1');
+        // Creative cần ảnh key khác: không sản phẩm nào ghép được
+        $this->group($user, [$this->publishedCreative($user, config: ['input_schema' => [
+            ['key' => 'model_photo', 'label' => 'Ảnh mẫu', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
+        ]])], 'G2');
         $p1 = $this->product($user, ['other_key']);
         $p2 = $this->product($user);
 
-        $this->auto($user, 2)->assertCreated()->assertJsonCount(2, 'data.batches');
-        $this->assertSame([[$p2->id, $g1->id], [$p2->id, $g1->id]], $this->pairs($user));
+        // Seed nào cũng chỉ ra cặp P2 x G1
+        foreach (range(1, 10) as $seed) {
+            $this->actingAs($user)->getJson("/api/v1/image-batches/auto/preview?count=2&seed={$seed}")
+                ->assertJsonCount(1, 'data.batches')
+                ->assertJsonPath('data.batches.0.product.id', $p2->id)
+                ->assertJsonPath('data.batches.0.group.id', $g1->id);
+        }
+
+        $this->auto($user, 2)->assertCreated()->assertJsonCount(1, 'data.batches')->assertJsonPath('data.stopped', 'no_valid_pair');
+        $this->assertSame([[$p2->id, $g1->id]], $this->pairs($user));
         $this->assertSame(0, $this->autoCount($p1));
+        $this->assertSame(1, $this->autoCount($p2));
 
         $this->actingAs($user)->deleteJson("/api/v1/creator/products/{$p2->id}")->assertNoContent();
         $this->auto($user, 1)->assertStatus(422)->assertJsonPath('code', 'AUTO_NOTHING_TO_CREATE');
@@ -318,8 +344,10 @@ class AutoBatchTest extends TestCase
     public function test_stops_when_credit_runs_out(): void
     {
         $user = $this->creator(credit: 2500);
-        $this->group($user, [$this->publishedCreative($user, price: 1000)]);
-        $this->product($user);
+        foreach (range(1, 5) as $i) {
+            $this->group($user, [$this->publishedCreative($user, price: 1000)], "G{$i}");
+            $this->product($user);
+        }
 
         $this->auto($user, 5)
             ->assertCreated()
@@ -336,15 +364,17 @@ class AutoBatchTest extends TestCase
     public function test_same_idempotency_key_returns_same_batches(): void
     {
         $user = $this->creator(credit: 10000);
-        $this->group($user, [$this->publishedCreative($user, price: 1000)]);
-        $product = $this->product($user);
+        $this->group($user, [$this->publishedCreative($user, price: 1000)], 'G1');
+        $this->group($user, [$this->publishedCreative($user, price: 1000)], 'G2');
+        [$p1, $p2] = [$this->product($user), $this->product($user)];
 
         $first = $this->auto($user, 2, ['idempotency_key' => 'same'])->json('data.batches.*.id');
         $second = $this->auto($user, 2, ['idempotency_key' => 'same'])->json('data.batches.*.id');
 
+        $this->assertCount(2, $first);
         $this->assertSame($first, $second);
         $this->assertSame(8000, $this->balance($user));
-        $this->assertSame(2, $this->autoCount($product));
+        $this->assertSame([1, 1], [$this->autoCount($p1), $this->autoCount($p2)]);
     }
 
     public function test_preview_creates_nothing(): void
@@ -356,12 +386,12 @@ class AutoBatchTest extends TestCase
 
         $this->actingAs($user)->getJson('/api/v1/image-batches/auto/preview?count=3')
             ->assertOk()
-            ->assertJsonCount(3, 'data.batches')
+            ->assertJsonCount(1, 'data.batches')
             ->assertJsonPath('data.batches.0.product.name', 'Áo')
             ->assertJsonPath('data.batches.0.group.name', 'G1')
             ->assertJsonPath('data.batches.0.creatives.0.id', $creative->id)
             ->assertJsonPath('data.batches.0.cost', 1000)
-            ->assertJsonPath('data.total_cost', 3000)
+            ->assertJsonPath('data.total_cost', 1000)
             ->assertJsonPath('data.balance', 1500);
 
         $this->assertSame(0, ImageBatch::query()->count());

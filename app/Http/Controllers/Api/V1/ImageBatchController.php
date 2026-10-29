@@ -106,18 +106,23 @@ class ImageBatchController extends Controller
     /** Xem trước "Tạo tự động" (note/auto-tao-lo.txt ở repo frontend): count lô sẽ tạo + tổng tiền, không tạo gì. */
     public function autoPreview(Request $request, AutoBatchService $auto): JsonResponse
     {
-        $data = $request->validate(['count' => ['required', 'integer', 'min:1', 'max:'.AutoBatchService::MAX_COUNT]]);
+        $data = $request->validate([
+            'count' => ['required', 'integer', 'min:1', 'max:'.AutoBatchService::MAX_COUNT],
+            'seed' => ['nullable', 'integer', 'min:0', 'max:'.AutoBatchService::MAX_SEED],
+        ]);
         $user = $request->user();
         $media = app(MediaStorage::class);
+        $preview = $auto->preview($user, (int) $data['count'], isset($data['seed']) ? (int) $data['seed'] : null);
 
         $plans = array_map(fn (array $plan) => [
             'product' => self::productSummary($plan['product'], $media),
             'group' => ['id' => $plan['group']->id, 'name' => $plan['group']->name],
             'creatives' => array_map(fn (array $item) => ImageBatchService::creativeSummary($item['creative']), $plan['items']),
             'cost' => $plan['cost'],
-        ], $auto->preview($user, (int) $data['count']));
+        ], $preview['plans']);
 
         return response()->json(['data' => [
+            'seed' => $preview['seed'],
             'batches' => $plans,
             'total_cost' => array_sum(array_column($plans, 'cost')),
             'balance' => $auto->balance($user),
@@ -131,9 +136,11 @@ class ImageBatchController extends Controller
             'count' => ['required', 'integer', 'min:1', 'max:'.AutoBatchService::MAX_COUNT],
             'idempotency_key' => ['required', 'string', 'max:80'],
             'insert_logo' => ['nullable', 'boolean'],
+            'seed' => ['nullable', 'integer', 'min:0', 'max:'.AutoBatchService::MAX_SEED],
         ]);
 
-        $result = $auto->create($request->user(), (int) $data['count'], $this->insertLogo($request, $data), $data['idempotency_key']);
+        $seed = isset($data['seed']) ? (int) $data['seed'] : null;
+        $result = $auto->create($request->user(), (int) $data['count'], $this->insertLogo($request, $data), $data['idempotency_key'], $seed);
         $batches = ImageBatch::query()
             ->whereKey(array_map(fn (ImageBatch $b) => $b->id, $result['batches']))
             ->withSummary()
