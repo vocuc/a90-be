@@ -23,9 +23,12 @@ class ClaudeSocialContentWriter implements SocialContentWriter
 
         Quy tắc:
         - Viết tiếng Việt có dấu, tự nhiên, gần gũi, hợp để bán hàng; có thể dùng vài emoji, không lạm dụng.
-        - title: một câu ngắn gây chú ý, tối đa {title_max} ký tự, không có hashtag.
-        - content: 2-5 câu mô tả điều nổi bật trong ảnh và lời kêu gọi xem / mua, tối đa {content_max} ký tự.
-          KHÔNG viết hashtag (#...) trong content.
+        - title: một câu ngắn gây chú ý, TUYỆT ĐỐI không quá {title_max} ký tự (tính cả dấu cách, emoji), không có hashtag.
+        - content: mô tả điều nổi bật trong ảnh và lời kêu gọi xem / mua, TUYỆT ĐỐI không quá {content_max} ký tự
+          (tính cả dấu cách, xuống dòng, emoji). KHÔNG viết hashtag (#...) trong content.
+        - Có bài viết mẫu của shop: viết theo đúng giọng văn, cách xưng hô, cách trình bày (xuống dòng, gạch đầu dòng,
+          emoji), độ dài tương tự bài mẫu nhưng vẫn trong giới hạn ký tự; nội dung phải nói về ảnh của bài này, không
+          chép nguyên bài mẫu. Không có bài mẫu: viết 2-5 câu.
         - hashtags: chọn tối đa {hashtags_max} hashtag liên quan nhất tới ảnh, CHỈ chọn trong danh sách được cho, giữ
           nguyên cách viết, không có dấu #. Không có hashtag nào phù hợp hoặc danh sách rỗng thì trả mảng rỗng.
         - Không bịa thông tin không có trong ảnh / mẫu (giá, khuyến mãi, thương hiệu, số điện thoại...).
@@ -99,9 +102,16 @@ class ClaudeSocialContentWriter implements SocialContentWriter
             ->map(fn ($c) => '- '.collect([$c['title'], $c['category'] ? "ngành hàng: {$c['category']}" : null, $c['description']])->filter()->implode(' | '))
             ->implode("\n");
         $hashtags = $request['hashtags'] ? implode(', ', $request['hashtags']) : '(rỗng)';
+        $samples = collect($request['samples'] ?? [])
+            ->map(fn ($s, $i) => '<bai_mau so="'.($i + 1).'">'."\nTiêu đề: ".($s['title'] ?: '(không có)')."\nNội dung:\n{$s['content']}\n</bai_mau>")
+            ->implode("\n");
+        $limits = $request['limits'];
 
-        return "Mẫu ảnh đã dùng:\n".($creatives ?: '(không có)')."\n\nDanh sách hashtag được chọn: {$hashtags}\n\n"
-            .'Viết tiêu đề, nội dung và chọn hashtag cho bài đăng gồm các ảnh trên.';
+        return "Mẫu ảnh đã dùng:\n".($creatives ?: '(không có)')."\n\n"
+            .($samples ? "Bài viết mẫu của shop (học giọng văn, không chép nguyên):\n{$samples}\n\n" : '')
+            ."Danh sách hashtag được chọn: {$hashtags}\n\n"
+            ."Viết tiêu đề (tối đa {$limits['title_max']} ký tự), nội dung (tối đa {$limits['content_max']} ký tự) "
+            .'và chọn hashtag cho bài đăng gồm các ảnh trên.';
     }
 
     /** @param  string[]  $hashtags */

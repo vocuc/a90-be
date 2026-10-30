@@ -378,11 +378,18 @@ class TikTokApiTest extends TestCase
     public function test_connecting_another_account_adds_row_and_reconnecting_updates_it(): void
     {
         $user = $this->buyer();
-        $connect = function (string $openId, string $username) use ($user) {
-            $this->fakeTikTok([
-                '/oauth/token/' => self::tokenResponse(['open_id' => $openId, 'access_token' => 'access-'.$openId]),
-                '/user/info/*' => self::userInfoResponse(['open_id' => $openId, 'username' => $username]),
-            ]);
+        // Http::fake gọi nhiều lần thì giả lập đăng ký trước được dùng: fake 1 lần, trả theo tài khoản đang kết nối
+        $current = [];
+        $this->fakeTikTok([
+            '/oauth/token/' => function () use (&$current) {
+                return Http::response(self::tokenResponse(['open_id' => $current[0], 'access_token' => 'access-'.$current[0]]));
+            },
+            '/user/info/*' => function () use (&$current) {
+                return Http::response(self::userInfoResponse(['open_id' => $current[0], 'username' => $current[1]]));
+            },
+        ]);
+        $connect = function (string $openId, string $username) use ($user, &$current) {
+            $current = [$openId, $username];
             $this->actingAs($user)->postJson('/api/v1/social/tiktok/oauth/callback', ['code' => 'c', 'state' => $this->authorizeState($user)])
                 ->assertJsonPath('data.status', 'connected');
         };

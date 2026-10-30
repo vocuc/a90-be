@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\Admin\CreditController as AdminCreditController;
 use App\Http\Controllers\Api\V1\AiModelController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\Creator\AiContentSettingController;
 use App\Http\Controllers\Api\V1\Creator\CreativeAssetController;
 use App\Http\Controllers\Api\V1\Creator\CreativeController;
 use App\Http\Controllers\Api\V1\Creator\CreativeGroupController;
@@ -10,7 +11,6 @@ use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\DashboardController;
 use App\Http\Controllers\Api\V1\Creator\ProductController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
-use App\Http\Controllers\Api\V1\Creator\ShopHashtagController;
 use App\Http\Controllers\Api\V1\Creator\StaffController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
@@ -99,9 +99,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('creative-groups/{group}', [CreativeGroupController::class, 'update'])->whereNumber('group');
             Route::delete('creative-groups/{group}', [CreativeGroupController::class, 'destroy'])->whereNumber('group');
 
-            // Kho hashtag của shop: AI viết nội dung bài đăng chỉ chọn hashtag trong kho (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend)
-            Route::get('shop-hashtags', [ShopHashtagController::class, 'show']);
-            Route::put('shop-hashtags', [ShopHashtagController::class, 'update']);
+            // Trang "AI viết nội dung": kho hashtag, bài viết mẫu, số ký tự tối đa (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend)
+            Route::get('ai-content', [AiContentSettingController::class, 'show']);
+            Route::put('ai-content', [AiContentSettingController::class, 'update']);
 
             // Nhân viên của shop (note/chia-se-tai-nguyen.txt ở repo frontend)
             Route::get('staff', [StaffController::class, 'index']);

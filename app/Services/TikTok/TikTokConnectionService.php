@@ -65,7 +65,7 @@ class TikTokConnectionService
      * Frontend gửi lên các tham số TikTok trả về trang redirect.
      *
      * @param  array{code?: ?string, state?: ?string, error?: ?string}  $params
-     * @return array{status: string, reason: ?string, redirect: string}  status: connected | error
+     * @return array{status: string, reason: ?string, redirect: string} status: connected | error
      */
     public function callback(User $user, array $params): array
     {
@@ -96,13 +96,8 @@ class TikTokConnectionService
             return $fail('scope_missing');
         }
 
-        try {
-            $info = $this->client->userInfo($token['access_token']);
-        } catch (TikTokApiException|BusinessException) {
-            $info = []; // chỉ để hiển thị
-        }
-
-        // Tài khoản TikTok mới khi đã đủ số tối đa: không lưu, thu hồi token vừa cấp
+        // Tài khoản TikTok mới khi đã đủ số tối đa: không lưu, thu hồi token vừa cấp. Kiểm tra trước khi lấy thông tin
+        // người dùng: không gọi TikTok thừa cho tài khoản sẽ bị từ chối
         $isNew = ! $user->tiktokConnections()->where('open_id', $token['open_id'])->exists();
         if ($isNew && $user->tiktokConnections()->count() >= self::maxAccounts()) {
             try {
@@ -112,6 +107,12 @@ class TikTokConnectionService
             }
 
             return $fail('limit_reached');
+        }
+
+        try {
+            $info = $this->client->userInfo($token['access_token']);
+        } catch (TikTokApiException|BusinessException) {
+            $info = []; // chỉ để hiển thị
         }
 
         $this->connect($user, $token, $info);

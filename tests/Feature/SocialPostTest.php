@@ -404,7 +404,17 @@ class SocialPostTest extends TestCase
 
     // ---- Kho hashtag của shop ----
 
-    public function test_shop_owner_manages_hashtag_pool(): void
+    private function aiSettings(User $owner, array $body): TestResponse
+    {
+        return $this->actingAs($owner)->putJson('/api/v1/creator/ai-content', array_merge([
+            'hashtags' => [],
+            'samples' => [],
+            'title_max' => 90,
+            'content_max' => 2000,
+        ], $body));
+    }
+
+    public function test_shop_owner_manages_ai_content_settings(): void
     {
         $owner = $this->creator();
         $this->actingAs($owner)->post('/api/v1/creator/products', [
@@ -412,20 +422,62 @@ class SocialPostTest extends TestCase
             'images' => [['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'product_image']],
         ], ['Accept' => 'application/json'])->assertCreated();
 
-        $this->actingAs($owner)->getJson('/api/v1/creator/shop-hashtags')
+        // Chưa lưu: mặc định
+        $this->actingAs($owner)->getJson('/api/v1/creator/ai-content')
             ->assertOk()
             ->assertJsonPath('data.hashtags', [])
-            ->assertJsonPath('data.product_hashtags', ['giay', 'ThoiTrang']);
+            ->assertJsonPath('data.samples', [])
+            ->assertJsonPath('data.title_max', 90)
+            ->assertJsonPath('data.content_max', 2000)
+            ->assertJsonPath('data.product_hashtags', ['giay', 'ThoiTrang'])
+            ->assertJsonPath('data.limits.ai_hashtags', 5);
 
-        $this->actingAs($owner)->putJson('/api/v1/creator/shop-hashtags', ['hashtags' => ['#xuhuong', 'giay', 'GIAY']])
-            ->assertOk()
-            ->assertJsonPath('data.hashtags', ['xuhuong', 'giay']);
-        $this->actingAs($owner)->putJson('/api/v1/creator/shop-hashtags', ['hashtags' => ['có khoảng trắng']])
-            ->assertStatus(422)->assertJsonValidationErrors('hashtags.0');
-        $this->actingAs($owner)->putJson('/api/v1/creator/shop-hashtags', ['hashtags' => []])
-            ->assertOk()->assertJsonPath('data.hashtags', []);
+        $this->aiSettings($owner, [
+            'hashtags' => ['#xuhuong', 'giay', 'GIAY'],
+            'samples' => [['title' => ' Giày mới về ', 'content' => "Siêu êm 👟\nInbox ngay!"], ['content' => 'Mẫu không tiêu đề']],
+            'title_max' => 40,
+            'content_max' => 300,
+        ])->assertOk()
+            ->assertJsonPath('data.hashtags', ['xuhuong', 'giay'])
+            ->assertJsonPath('data.samples.0', ['title' => 'Giày mới về', 'content' => "Siêu êm 👟\nInbox ngay!"])
+            ->assertJsonPath('data.samples.1.title', '')
+            ->assertJsonPath('data.title_max', 40)
+            ->assertJsonPath('data.content_max', 300);
 
-        $this->actingAs($this->buyer())->getJson('/api/v1/creator/shop-hashtags')->assertForbidden();
+        $this->aiSettings($owner, [
+            'hashtags' => ['có khoảng trắng'],
+            'samples' => [['title' => 'x']],
+            'title_max' => 91,
+            'content_max' => 49,
+        ])->assertStatus(422)->assertJsonValidationErrors(['hashtags.0', 'samples.0.content', 'title_max', 'content_max']);
+        $this->aiSettings($owner, ['samples' => array_fill(0, 11, ['content' => 'x'])])
+            ->assertStatus(422)->assertJsonValidationErrors('samples');
+
+        $this->actingAs($this->buyer())->getJson('/api/v1/creator/ai-content')->assertForbidden();
+    }
+
+    public function test_ai_follows_shop_samples_and_length_limits(): void
+    {
+        $owner = $this->creator();
+        $staff = $this->buyer(credit: 5000);
+        ShopStaff::query()->create(['owner_id' => $owner->id, 'user_id' => $staff->id]);
+        $this->aiSettings($owner, [
+            'samples' => [['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']],
+            'title_max' => 20,
+            'content_max' => 60,
+        ])->assertOk();
+        $this->aiResult = ['title' => str_repeat('Tiêu đề rất dài ', 5), 'content' => str_repeat('Nội dung dài. ', 20), 'hashtags' => []];
+
+        $id = $this->fromImages($staff, [$this->completedImage($staff)], ['ai_content' => true])->json('data.id');
+
+        $request = $this->aiCalls[0]['request'];
+        $this->assertSame([['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']], $request['samples']);
+        $this->assertSame(20, $request['limits']['title_max']);
+        $this->assertSame(60, $request['limits']['content_max']);
+
+        $post = $this->getPost($staff, $id)->json('data');
+        $this->assertLessThanOrEqual(20, mb_strlen($post['title']));
+        $this->assertLessThanOrEqual(60, mb_strlen($post['content']));
     }
 
     public function test_me_exposes_ai_content_setting(): void

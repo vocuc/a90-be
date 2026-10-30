@@ -8,6 +8,7 @@ use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
 use App\Jobs\WriteSocialPostContent;
 use App\Models\Hashtag;
+use App\Models\ShopAiSetting;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\User;
@@ -23,11 +24,12 @@ use Illuminate\Support\Str;
  *   AI lỗi / job kẹt quá lâu: dùng nội dung mặc định và hoàn Credit.
  * - "Viết lại bằng AI" (rewrite): gọi thẳng trong request, trả nội dung cho người dùng xem (không lưu vào bài),
  *   chỉ trừ Credit khi viết được.
- * Hashtag: AI chỉ chọn trong kho hashtag của shop (chủ shop của nhân viên), tối đa ai90.social.ai_max_hashtags.
+ * Cài đặt của shop (trang "AI viết nội dung", nhân viên dùng của chủ shop): AI chỉ chọn hashtag trong kho hashtag,
+ * tối đa ai90.social.ai_max_hashtags; học giọng văn theo bài viết mẫu; tiêu đề / nội dung không quá số ký tự shop đặt.
  */
 class SocialContentJobService
 {
-    /** Nội dung AI viết ngắn hơn giới hạn chung để vừa mọi nền tảng (Instagram 2200 gồm cả dòng hashtag). */
+    /** Nội dung AI viết tối đa (shop đặt được nhỏ hơn): vừa mọi nền tảng (Instagram 2200 gồm cả dòng hashtag). */
     public const AI_CONTENT_MAX = 2000;
 
     public function __construct(
@@ -145,14 +147,19 @@ class SocialContentJobService
     }
 
     /**
-     * Gọi AI cho 1 bài rồi chuẩn hoá kết quả: cắt độ dài, bỏ #tag lẫn trong nội dung, hashtag chỉ giữ cái có trong kho.
+     * Gọi AI cho 1 bài theo cài đặt của shop rồi chuẩn hoá kết quả: cắt theo số ký tự shop đặt, bỏ #tag lẫn trong
+     * nội dung, hashtag chỉ giữ cái có trong kho.
      *
      * @return array{title: string, content: string, hashtags: string[]}|null
      */
     public function write(SocialPost $post): ?array
     {
         $post->loadMissing(['user.staffMembership', 'images.output', 'images.generation.creative.category']);
-        $pool = $this->hashtagPool($post->user);
+        $ownerId = $post->user->resourceOwnerId();
+        $pool = User::query()->find($ownerId)?->shopHashtags()->pluck('name')->all() ?? [];
+        $settings = ShopAiSetting::forOwner($ownerId);
+        $titleMax = min($settings['title_max'], SocialPost::TITLE_MAX);
+        $contentMax = min($settings['content_max'], self::AI_CONTENT_MAX);
         $maxHashtags = config('ai90.social.ai_max_hashtags');
 
         $creatives = $post->images
@@ -180,7 +187,8 @@ class SocialContentJobService
         $result = $this->writer->write([
             'creatives' => $creatives->all(),
             'hashtags' => $pool,
-            'limits' => ['title_max' => SocialPost::TITLE_MAX, 'content_max' => self::AI_CONTENT_MAX, 'hashtags_max' => $maxHashtags],
+            'samples' => $settings['samples'],
+            'limits' => ['title_max' => $titleMax, 'content_max' => $contentMax, 'hashtags_max' => $maxHashtags],
         ], $images);
         if (! $result) {
             return null;
@@ -197,20 +205,10 @@ class SocialContentJobService
             ->all();
 
         return [
-            'title' => Str::limit(trim(preg_replace('/\s+/u', ' ', $result['title'])), SocialPost::TITLE_MAX, ''),
-            'content' => mb_substr($content, 0, self::AI_CONTENT_MAX),
+            'title' => Str::limit(trim(preg_replace('/\s+/u', ' ', $result['title'])), $titleMax, ''),
+            'content' => mb_substr($content, 0, $contentMax),
             'hashtags' => $hashtags,
         ];
-    }
-
-    /**
-     * Kho hashtag AI được chọn: của shop người này (nhân viên dùng kho của chủ shop). Không có kho: rỗng.
-     *
-     * @return string[]
-     */
-    public function hashtagPool(User $user): array
-    {
-        return User::query()->find($user->resourceOwnerId())?->shopHashtags()->pluck('name')->all() ?? [];
     }
 
     /** Nội dung mặc định từ các mẫu của bài và hoàn Credit đã trừ; người dùng tự sửa ở bước duyệt. */
