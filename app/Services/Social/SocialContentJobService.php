@@ -2,53 +2,158 @@
 
 namespace App\Services\Social;
 
+use App\Enums\LedgerType;
 use App\Enums\OutputStatus;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
+use App\Jobs\WriteSocialPostContent;
+use App\Models\Hashtag;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
-use App\Models\Worker;
+use App\Models\User;
+use App\Services\CreditService;
 use App\Services\MediaStorage;
+use App\Services\SettingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Job viết tiêu đề / nội dung / hashtag cho worker nội bộ (1 job / bài), giao việc giống job ảnh:
- * lease, giao lại khi quá hạn, hết lượt thì dùng nội dung mặc định. Bài luôn sang pending_review khi job chốt.
- * Chỉ dùng khi bật ai90.social.ai_content (SOCIAL_AI_CONTENT).
+ * AI viết tiêu đề / nội dung / hashtag bằng Claude API (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend).
+ * - Tạo bài bật AI: trừ Credit, tạo 1 job / bài, queue job WriteSocialPostContent viết rồi bài sang pending_review.
+ *   AI lỗi / job kẹt quá lâu: dùng nội dung mặc định và hoàn Credit.
+ * - "Viết lại bằng AI" (rewrite): gọi thẳng trong request, trả nội dung cho người dùng xem (không lưu vào bài),
+ *   chỉ trừ Credit khi viết được.
+ * Hashtag: AI chỉ chọn trong kho hashtag của shop (chủ shop của nhân viên), tối đa ai90.social.ai_max_hashtags.
  */
 class SocialContentJobService
 {
-    public function __construct(private MediaStorage $media) {}
+    /** Nội dung AI viết ngắn hơn giới hạn chung để vừa mọi nền tảng (Instagram 2200 gồm cả dòng hashtag). */
+    public const AI_CONTENT_MAX = 2000;
 
-    public function claim(Worker $worker): ?SocialContentJob
+    public function __construct(
+        private SocialContentWriter $writer,
+        private MediaStorage $media,
+        private CreditService $credits,
+        private SettingService $settings,
+    ) {}
+
+    public static function enabled(): bool
     {
-        return DB::transaction(function () use ($worker) {
-            $job = SocialContentJob::query()
-                ->where('status', OutputStatus::Queued)
-                ->orderBy('id')
-                ->lock('for update skip locked')
-                ->first();
+        return (bool) config('ai90.social.ai_content');
+    }
 
-            if (! $job) {
-                return null;
+    public function price(): int
+    {
+        return $this->settings->int('social.ai_content_price');
+    }
+
+    /**
+     * Trừ Credit của chủ bài và giao queue job viết nội dung. Gọi trong transaction tạo bài:
+     * không đủ Credit thì lỗi 402 và không tạo bài.
+     */
+    public function queue(SocialPost $post): void
+    {
+        $price = $this->price();
+        $this->credits->apply(
+            $this->credits->lockWallet($post->user_id), -$price, LedgerType::SocialContentCharge,
+            "social_content:charge:post:{$post->id}", 'social_post', $post->id, 'AI viết nội dung bài đăng',
+        );
+
+        $job = SocialContentJob::query()->firstOrCreate(
+            ['social_post_id' => $post->id],
+            ['status' => OutputStatus::Queued, 'charge_amount' => $price],
+        );
+        WriteSocialPostContent::dispatch($job->id)->afterCommit();
+    }
+
+    /** Queue job: AI viết xong thì điền vào bài, không viết được thì dùng nội dung mặc định và hoàn Credit. */
+    public function run(int $jobId): void
+    {
+        $job = SocialContentJob::query()->with('post')->find($jobId);
+        if ($job?->status !== OutputStatus::Queued || ! $job->post) {
+            return;
+        }
+        $job->update(['status' => OutputStatus::Processing, 'attempts' => $job->attempts + 1]);
+
+        $content = $this->write($job->post);
+
+        DB::transaction(function () use ($jobId, $content) {
+            $job = SocialContentJob::query()->lockForUpdate()->find($jobId);
+            if ($job?->status !== OutputStatus::Processing) {
+                return;
             }
-
-            $job->update([
-                'status' => OutputStatus::Processing,
-                'worker_id' => $worker->id,
-                'attempts' => $job->attempts + 1,
-                'lease_expires_at' => now()->addMinutes(config('ai90.worker.content_lease_minutes')),
-            ]);
-
-            return $job;
+            $content
+                ? $this->finish($job, $content, OutputStatus::Completed)
+                : $this->fallback($job, 'AI_FAILED', 'AI không viết được nội dung.');
         });
     }
 
-    /** Dữ liệu gửi worker: các mẫu của bài (tên, mô tả, ngành hàng, hashtag) + link ảnh đã tạo xong. */
-    public function request(SocialContentJob $job): array
+    /** Queue job lỗi bất ngờ / job kẹt: dùng nội dung mặc định để bài không kẹt ở generating. */
+    public function failJob(int $jobId, string $errorMessage): void
     {
-        $post = $job->post()->with(['images.output', 'images.generation.creative.category', 'images.generation.creative.hashtags'])->firstOrFail();
+        DB::transaction(function () use ($jobId, $errorMessage) {
+            $job = SocialContentJob::query()->lockForUpdate()->find($jobId);
+            if (in_array($job?->status, [OutputStatus::Queued, OutputStatus::Processing], true)) {
+                $this->fallback($job, 'AI_FAILED', $errorMessage);
+            }
+        });
+    }
+
+    /** Job chờ / chạy quá lâu (queue không chạy, tiến trình chết giữa chừng): nội dung mặc định, hoàn Credit. */
+    public function failStuck(): int
+    {
+        $ids = SocialContentJob::query()
+            ->whereIn('status', [OutputStatus::Queued, OutputStatus::Processing])
+            ->where('updated_at', '<', now()->subMinutes(config('ai90.generation.stuck_queued_minutes')))
+            ->pluck('id');
+
+        foreach ($ids as $id) {
+            $this->failJob($id, 'Quá thời gian chờ AI viết nội dung.');
+        }
+
+        return $ids->count();
+    }
+
+    /**
+     * "Viết lại bằng AI": trả nội dung mới, không lưu vào bài. Kiểm tra Credit trước khi gọi AI, chỉ trừ khi viết được.
+     *
+     * @return array{title: string, content: string, hashtags: string[], credit_balance: int}
+     */
+    public function rewrite(User $user, SocialPost $post): array
+    {
+        if (! self::enabled()) {
+            throw new BusinessException('AI_CONTENT_DISABLED', 'Tính năng AI viết nội dung đang tạm tắt.', 409);
+        }
+
+        $price = $this->price();
+        DB::transaction(fn () => $this->credits->assertSufficient($this->credits->lockWallet($user->id), $price));
+
+        $content = $this->write($post)
+            ?? throw new BusinessException('AI_CONTENT_FAILED', 'AI chưa viết được nội dung, vui lòng thử lại. Bạn không bị trừ Credit.', 503);
+
+        $balance = DB::transaction(function () use ($user, $post, $price) {
+            $wallet = $this->credits->lockWallet($user->id);
+            $this->credits->apply(
+                $wallet, -$price, LedgerType::SocialContentCharge,
+                'social_content:rewrite:'.Str::uuid(), 'social_post', $post->id, 'AI viết lại nội dung bài đăng',
+            );
+
+            return $wallet->balance;
+        });
+
+        return [...$content, 'credit_balance' => $balance];
+    }
+
+    /**
+     * Gọi AI cho 1 bài rồi chuẩn hoá kết quả: cắt độ dài, bỏ #tag lẫn trong nội dung, hashtag chỉ giữ cái có trong kho.
+     *
+     * @return array{title: string, content: string, hashtags: string[]}|null
+     */
+    public function write(SocialPost $post): ?array
+    {
+        $post->loadMissing(['user.staffMembership', 'images.output', 'images.generation.creative.category']);
+        $pool = $this->hashtagPool($post->user);
+        $maxHashtags = config('ai90.social.ai_max_hashtags');
 
         $creatives = $post->images
             ->map(fn ($image) => $image->generation?->creative)
@@ -59,121 +164,67 @@ class SocialContentJobService
                 'title' => $creative->title,
                 'description' => $creative->description,
                 'category' => $creative->category?->name,
-                'hashtags' => $creative->hashtags->pluck('name')->values()->all(),
             ]);
 
         $images = $post->images
-            ->filter(fn ($image) => $image->output?->status === OutputStatus::Completed)
-            ->map(fn ($image) => $this->media->url($image->output->image_path))
-            ->values();
+            ->filter(fn ($image) => $image->output?->status === OutputStatus::Completed && $image->output->image_path)
+            ->take(config('ai90.social.ai_max_images'))
+            ->map(function ($image) {
+                $path = $image->output->thumbPathOrOriginal();
+
+                return ['contents' => $this->media->get($path), 'mime' => $this->media->mimeType($path)];
+            })
+            ->values()
+            ->all();
+
+        $result = $this->writer->write([
+            'creatives' => $creatives->all(),
+            'hashtags' => $pool,
+            'limits' => ['title_max' => SocialPost::TITLE_MAX, 'content_max' => self::AI_CONTENT_MAX, 'hashtags_max' => $maxHashtags],
+        ], $images);
+        if (! $result) {
+            return null;
+        }
+
+        $content = trim(preg_replace('/[ \t]*#[\p{L}\p{N}_]+/u', '', $result['content']));
+        $allowed = collect($pool)->keyBy(fn ($name) => Hashtag::slugFor($name));
+        $hashtags = collect(SocialPost::normalizeHashtags($result['hashtags']))
+            ->map(fn ($name) => $allowed->get(Hashtag::slugFor($name)))
+            ->filter()
+            ->unique()
+            ->take($maxHashtags)
+            ->values()
+            ->all();
 
         return [
-            'language' => 'vi',
-            'limits' => [
-                'title_max' => SocialPost::TITLE_MAX,
-                'content_max' => SocialPost::CONTENT_MAX,
-                'hashtags_max' => SocialPost::MAX_HASHTAGS,
-            ],
-            'creatives' => $creatives->all(),
-            'images' => $images->all(),
+            'title' => Str::limit(trim(preg_replace('/\s+/u', ' ', $result['title'])), SocialPost::TITLE_MAX, ''),
+            'content' => mb_substr($content, 0, self::AI_CONTENT_MAX),
+            'hashtags' => $hashtags,
         ];
     }
 
-    /** @param  string[]  $hashtags */
-    public function complete(Worker $worker, SocialContentJob $job, string $title, ?string $content, array $hashtags): void
+    /**
+     * Kho hashtag AI được chọn: của shop người này (nhân viên dùng kho của chủ shop). Không có kho: rỗng.
+     *
+     * @return string[]
+     */
+    public function hashtagPool(User $user): array
     {
-        DB::transaction(function () use ($worker, $job, $title, $content, $hashtags) {
-            $job = $this->lockAssigned($worker, $job);
-
-            // Nội dung không chứa hashtag: tách #tag trong nội dung sang danh sách hashtag
-            preg_match_all('/#([\p{L}\p{N}_]+)/u', (string) $content, $inline);
-            $content = trim(preg_replace('/[ \t]*#[\p{L}\p{N}_]+/u', '', (string) $content));
-
-            $title = Str::limit(trim(preg_replace('/\s+/u', ' ', $title)), SocialPost::TITLE_MAX, '');
-            $this->finish($job, [
-                'title' => $title !== '' ? $title : null,
-                'content' => mb_substr($content, 0, SocialPost::CONTENT_MAX),
-                'hashtags' => SocialPost::normalizeHashtags([...$hashtags, ...$inline[1]]),
-            ], OutputStatus::Completed);
-        });
+        return User::query()->find($user->resourceOwnerId())?->shopHashtags()->pluck('name')->all() ?? [];
     }
 
-    /** Worker báo lỗi: còn lượt thì giao lại, hết lượt thì dùng nội dung mặc định. */
-    public function fail(Worker $worker, SocialContentJob $job, string $errorCode, ?string $errorMessage): void
-    {
-        DB::transaction(function () use ($worker, $job, $errorCode, $errorMessage) {
-            $job = $this->lockAssigned($worker, $job);
-            $this->retryOrFallback($job, $errorCode, $errorMessage ?: 'Worker không viết được nội dung.');
-        });
-    }
-
-    /** @return array{requeued: int, failed: int} */
-    public function releaseExpiredLeases(): array
-    {
-        $ids = SocialContentJob::query()
-            ->where('status', OutputStatus::Processing)
-            ->where('lease_expires_at', '<', now())
-            ->pluck('id');
-
-        $result = ['requeued' => 0, 'failed' => 0];
-        foreach ($ids as $id) {
-            DB::transaction(function () use ($id, &$result) {
-                $job = SocialContentJob::query()->lockForUpdate()->find($id);
-                if (! $job || $job->status !== OutputStatus::Processing || $job->lease_expires_at?->isFuture()) {
-                    return;
-                }
-                $result[$this->retryOrFallback($job, 'TIMEOUT', 'Worker không trả kết quả sau '.$job->attempts.' lần nhận.')]++;
-            });
-        }
-
-        return $result;
-    }
-
-    /** Job chờ quá lâu mà không worker nào nhận: dùng nội dung mặc định để bài không kẹt ở generating. */
-    public function failStuckQueued(): int
-    {
-        $ids = SocialContentJob::query()
-            ->where('status', OutputStatus::Queued)
-            ->where('updated_at', '<', now()->subMinutes(config('ai90.generation.stuck_queued_minutes')))
-            ->pluck('id');
-
-        foreach ($ids as $id) {
-            DB::transaction(function () use ($id) {
-                $job = SocialContentJob::query()->lockForUpdate()->find($id);
-                if ($job?->status === OutputStatus::Queued) {
-                    $this->fallback($job, 'TIMEOUT', 'Quá thời gian chờ worker viết nội dung.');
-                }
-            });
-        }
-
-        return $ids->count();
-    }
-
-    /** @return 'requeued'|'failed' */
-    private function retryOrFallback(SocialContentJob $job, string $errorCode, string $errorMessage): string
-    {
-        if ($job->attempts < config('ai90.worker.max_attempts')) {
-            $job->update([
-                'status' => OutputStatus::Queued,
-                'worker_id' => null,
-                'lease_expires_at' => null,
-                'error_code' => $errorCode,
-                'error_message' => Str::limit($errorMessage, 490),
-            ]);
-
-            return 'requeued';
-        }
-
-        $this->fallback($job, $errorCode, $errorMessage);
-
-        return 'failed';
-    }
-
-    /** Nội dung mặc định từ các mẫu của bài; người dùng tự sửa ở bước duyệt. */
+    /** Nội dung mặc định từ các mẫu của bài và hoàn Credit đã trừ; người dùng tự sửa ở bước duyệt. */
     private function fallback(SocialContentJob $job, string $errorCode, string $errorMessage): void
     {
         $job->forceFill(['error_code' => $errorCode, 'error_message' => Str::limit($errorMessage, 490)]);
         $this->finish($job, $job->post->defaultContent(), OutputStatus::Failed);
+
+        if ($job->charge_amount > 0) {
+            $this->credits->apply(
+                $this->credits->lockWallet($job->post->user_id), $job->charge_amount, LedgerType::SocialContentRefund,
+                "social_content:refund:job:{$job->id}", 'social_post', $job->social_post_id, 'Hoàn Credit do AI không viết được nội dung',
+            );
+        }
     }
 
     /** @param  array{title: ?string, content: string, hashtags: string[]}  $content */
@@ -181,7 +232,6 @@ class SocialContentJobService
     {
         $job->update([
             'status' => $status,
-            'lease_expires_at' => null,
             'finished_at' => now(),
             ...($status === OutputStatus::Completed ? ['error_code' => null, 'error_message' => null] : []),
         ]);
@@ -192,20 +242,10 @@ class SocialContentJobService
         }
 
         $post->update([
-            'title' => $content['title'] ?? SocialPost::DEFAULT_TITLE,
+            'title' => ($content['title'] ?? '') !== '' ? $content['title'] : SocialPost::DEFAULT_TITLE,
             'content' => $content['content'],
             'hashtags' => $content['hashtags'],
             'status' => SocialPostStatus::PendingReview,
         ]);
-    }
-
-    private function lockAssigned(Worker $worker, SocialContentJob $job): SocialContentJob
-    {
-        $job = SocialContentJob::query()->lockForUpdate()->findOrFail($job->id);
-        if ($job->status !== OutputStatus::Processing || $job->worker_id !== $worker->id) {
-            throw new BusinessException('JOB_NOT_ASSIGNED', 'Job không còn được giao cho worker này.', 409);
-        }
-
-        return $job;
     }
 }

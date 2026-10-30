@@ -17,6 +17,8 @@ return [
         'generation.input_max_size_kb' => 10240,
         // Số nguyên liệu ẩn (trường hidden_image) tối đa của một Creative.
         'generation.max_hidden_images' => 5,
+        // Giá mỗi lần AI viết tiêu đề / nội dung / hashtag bài đăng (tạo bài bật AI hoặc bấm "Viết lại bằng AI").
+        'social.ai_content_price' => 2000,
     ],
 
     'generation' => [
@@ -34,9 +36,14 @@ return [
     ],
 
     'social' => [
-        // Bật: ảnh xong thì giao worker viết tiêu đề / nội dung / hashtag. Tắt: người dùng tự nhập, bài sang chờ duyệt ngay.
+        // Công tắc tổng của "AI viết nội dung" (Claude API, note/ai-viet-noi-dung-bai-dang.txt ở repo frontend).
+        // Bật: người dùng thấy công tắc khi tạo bài và nút "Viết lại bằng AI". Tắt: chỉ tự nhập.
         // TIKTOK_AI_CONTENT: tên cũ, vẫn đọc để không phải sửa .env đang chạy.
         'ai_content' => (bool) env('SOCIAL_AI_CONTENT', env('TIKTOK_AI_CONTENT', false)),
+        // AI chọn tối đa số hashtag này, chỉ trong kho hashtag của shop.
+        'ai_max_hashtags' => 5,
+        // Số ảnh đầu của bài (ảnh bìa trước) gửi cho AI xem.
+        'ai_max_images' => 4,
     ],
 
     'auth' => [
@@ -48,8 +55,6 @@ return [
         'lease_minutes' => 15,
         // Số lần giao job tối đa; quá số lần này thì ảnh thất bại và hoàn Credit.
         'max_attempts' => 3,
-        // Job viết nội dung bài đăng (GET /api/v1/content-jobs): thời gian worker phải trả kết quả.
-        'content_lease_minutes' => 5,
         // Job đăng bài (GET /api/v1/publish-jobs, 1 job / nền tảng): quá hạn thì nền tảng đó thất bại, không giao lại.
         'publish_lease_minutes' => 15,
         // Dung lượng ảnh kết quả tối đa worker được gửi lên (KB).

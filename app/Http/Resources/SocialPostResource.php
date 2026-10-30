@@ -34,6 +34,8 @@ class SocialPostResource extends JsonResource
             'status' => $this->status,
             'source' => $this->source,
             'image_batch_id' => $this->image_batch_id,
+            // Tạo bài có bật AI viết nội dung (generating = AI đang viết)
+            'ai_content' => (bool) $this->ai_content,
             'title' => $this->title,
             'content' => $this->content ?? '',
             'hashtags' => $this->hashtags ?? [],

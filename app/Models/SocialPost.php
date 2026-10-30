@@ -52,6 +52,7 @@ class SocialPost extends Model
             'tiktok_status' => PlatformPublishStatus::class,
             'facebook_status' => PlatformPublishStatus::class,
             'instagram_status' => PlatformPublishStatus::class,
+            'ai_content' => 'boolean',
             'hashtags' => 'array',
             'last_error' => 'array',
             'published_at' => 'datetime',

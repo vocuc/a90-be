@@ -7,7 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Job viết tiêu đề / nội dung / hashtag cho worker: lấy qua GET /api/v1/content-jobs, trả qua POST /api/v1/content-jobs/{id}.
+ * Một lần AI viết tiêu đề / nội dung / hashtag khi tạo bài (Claude API qua queue job WriteSocialPostContent).
+ * charge_amount: Credit đã trừ, hoàn lại khi AI không viết được. worker_id / lease_expires_at: cột cũ của luồng worker, không dùng.
  * Dùng chung trạng thái với job ảnh (queued | processing | completed | failed).
  */
 class SocialContentJob extends Model

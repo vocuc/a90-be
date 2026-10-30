@@ -49,6 +49,11 @@ class Hashtag extends Model
         return $this->belongsToMany(AiCreative::class, 'ai_creative_hashtag', 'hashtag_id', 'creative_id');
     }
 
+    public function products(): BelongsToMany
+    {
+        return $this->belongsToMany(Product::class, 'product_hashtag');
+    }
+
     /** "#ChânDung" → "ChânDung" */
     public static function cleanName(string $value): string
     {

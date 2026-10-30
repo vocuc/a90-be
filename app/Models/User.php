@@ -8,6 +8,7 @@ use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -104,6 +105,14 @@ class User extends Authenticatable
     public function staff(): HasMany
     {
         return $this->hasMany(ShopStaff::class, 'owner_id');
+    }
+
+    /** Kho hashtag của shop (chủ shop quản lý): AI viết nội dung bài đăng chỉ chọn hashtag trong kho này. */
+    public function shopHashtags(): BelongsToMany
+    {
+        return $this->belongsToMany(Hashtag::class, 'shop_hashtag', 'owner_id')
+            ->withPivot('sort_order')
+            ->orderByPivot('sort_order');
     }
 
     /** Chủ shop khi người này là nhân viên, null khi không. */

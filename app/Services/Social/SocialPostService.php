@@ -8,7 +8,6 @@ use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
 use App\Models\GenerationOutput;
-use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\SocialPostImage;
 use App\Models\User;
@@ -24,16 +23,21 @@ use Illuminate\Validation\ValidationException;
  */
 class SocialPostService
 {
-    public function __construct(private AuditLogger $audit) {}
+    public function __construct(
+        private AuditLogger $audit,
+        private SocialContentJobService $contentJobs,
+    ) {}
 
     /**
      * Tạo bài từ ảnh của một lô hoặc ảnh đã có trên A51 (không tính phí). Ảnh đã xong nên bài sang bước nội dung ngay.
      * Bài và lô độc lập: tạo lại / xoá ảnh trong lô sau đó không đổi bài.
+     * $aiContent: người dùng bật "AI viết nội dung" (chỉ có tác dụng khi bật ai90.social.ai_content và không tự nhập
+     * nội dung): trừ Credit ngay, không đủ thì lỗi 402 và không tạo bài.
      *
      * @param  array<int, array{generation_id: int, output_id: int}>  $refs
      * @param  array{title?: ?string, content?: ?string, hashtags?: ?array}  $content  người dùng tự nhập (không bắt buộc)
      */
-    public function createFromImages(User $user, array $refs, string $idempotencyKey, array $content = [], ?int $batchId = null): SocialPost
+    public function createFromImages(User $user, array $refs, string $idempotencyKey, array $content = [], ?int $batchId = null, bool $aiContent = false): SocialPost
     {
         $source = $batchId ? SocialPost::SOURCE_BATCH : SocialPost::SOURCE_EXISTING;
         if ($existing = $this->findExisting($user, $idempotencyKey, $source)) {
@@ -43,21 +47,24 @@ class SocialPostService
         $outputs = $this->resolveOwnedOutputs($user, $refs, 'images');
 
         try {
-            $post = DB::transaction(function () use ($user, $outputs, $idempotencyKey, $content, $source, $batchId) {
+            $manual = self::manualContent($content);
+            $aiContent = $aiContent && SocialContentJobService::enabled() && $manual['title'] === '' && trim((string) $manual['content']) === '' && ! $manual['hashtags'];
+            $post = DB::transaction(function () use ($user, $outputs, $idempotencyKey, $manual, $source, $batchId, $aiContent) {
                 $post = SocialPost::query()->create([
                     'user_id' => $user->id,
                     'status' => SocialPostStatus::Generating,
                     'source' => $source,
+                    'ai_content' => $aiContent,
                     'image_batch_id' => $batchId,
                     'idempotency_key' => $idempotencyKey,
-                    ...self::manualContent($content),
+                    ...$manual,
                 ]);
                 foreach ($outputs->values() as $i => $output) {
                     $post->images()->create(['generation_id' => $output->generation_id, 'output_id' => $output->id, 'position' => $i + 1]);
                 }
                 $this->imagesReady($post);
 
-                $this->audit->log('social_post.create', $post, ['source' => $source, 'image_batch_id' => $batchId, 'images' => $outputs->count()], $user->id);
+                $this->audit->log('social_post.create', $post, ['source' => $source, 'image_batch_id' => $batchId, 'images' => $outputs->count(), 'ai_content' => $aiContent], $user->id);
 
                 return $post;
             });
@@ -100,17 +107,18 @@ class SocialPostService
     }
 
     /**
-     * Ảnh của bài đã xong: giao worker viết nội dung (bật ai_content và người dùng chưa tự nhập),
+     * Ảnh của bài đã xong: bài bật AI viết nội dung thì trừ Credit và giao AI viết,
      * không thì sang chờ duyệt ngay (chưa nhập gì: lấy tên mẫu + hashtag của mẫu).
      */
     private function imagesReady(SocialPost $post): void
     {
-        $manual = $post->hasManualContent();
-        if (config('ai90.social.ai_content') && ! $manual) {
-            SocialContentJob::query()->firstOrCreate(['social_post_id' => $post->id], ['status' => OutputStatus::Queued]);
+        if ($post->ai_content) {
+            $this->contentJobs->queue($post);
 
             return;
         }
+
+        $manual = $post->hasManualContent();
 
         $post->update([
             ...($manual ? [] : $post->defaultContent()),

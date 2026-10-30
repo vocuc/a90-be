@@ -12,7 +12,7 @@ use Illuminate\Console\Command;
 
 /**
  * Lưới an toàn cho bài đăng đang tạo nội dung: ảnh đã xong mà bài chưa sang bước nội dung thì chuyển tiếp,
- * giao lại job worker giữ quá hạn, dùng nội dung mặc định cho job chờ quá lâu / hết lượt.
+ * job AI viết nội dung chờ / chạy quá lâu thì dùng nội dung mặc định và hoàn Credit.
  * Job đăng bài worker giữ quá hạn: nền tảng đó thất bại. Job gửi TikTok qua API chưa có kết quả: hỏi TikTok (status/fetch),
  * quá hạn thì thất bại.
  */
@@ -30,14 +30,13 @@ class SweepSocialPosts extends Command
             ->pluck('id')
             ->each(fn (int $id) => $posts->advanceIfReady($id));
 
-        $leases = $jobs->releaseExpiredLeases();
-        $stuck = $jobs->failStuckQueued();
+        $stuck = $jobs->failStuck();
 
         // Hỏi trước khi cho quá hạn: bài đã vào hộp thư mà webhook chưa về thì không bị tính thất bại
         $tiktokChecked = $tiktok->checkPending();
         $publishFailed = $publishJobs->releaseExpiredLeases();
 
-        $this->info("Giao lại {$leases['requeued']} job nội dung, {$leases['failed']} job hết lượt, {$stuck} job chờ quá lâu, {$publishFailed} job đăng bài quá hạn, hỏi TikTok {$tiktokChecked} job.");
+        $this->info("{$stuck} job AI viết nội dung quá lâu, {$publishFailed} job đăng bài quá hạn, hỏi TikTok {$tiktokChecked} job.");
 
         return self::SUCCESS;
     }

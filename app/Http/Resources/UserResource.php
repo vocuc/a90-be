@@ -4,6 +4,8 @@ namespace App\Http\Resources;
 
 use App\Models\User;
 use App\Services\MediaStorage;
+use App\Services\SettingService;
+use App\Services\Social\SocialContentJobService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -26,6 +28,11 @@ class UserResource extends JsonResource
                 ? new CreatorSummaryResource($this->staffMembership->owner->creatorProfile)
                 : null,
             'logo_url' => app(MediaStorage::class)->url($this->logo_path),
+            // AI viết nội dung bài đăng (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): tắt thì ẩn công tắc / nút viết lại
+            'social_ai' => [
+                'enabled' => SocialContentJobService::enabled(),
+                'price' => app(SettingService::class)->int('social.ai_content_price'),
+            ],
             'created_at' => $this->created_at,
         ];
     }

@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 
 /**
- * Máy nội bộ: tạo ảnh (GET /api/v1/jobs), viết nội dung (GET /api/v1/content-jobs),
+ * Máy nội bộ: tạo ảnh (GET /api/v1/jobs),
  * đăng bài (GET /api/v1/publish-jobs, chỉ worker được gắn tài khoản đăng bài của một nền tảng).
  */
 class Worker extends Model

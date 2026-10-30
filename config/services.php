@@ -41,10 +41,12 @@ return [
         'catalog_cache_hours' => 24,
     ],
 
-    // AI đọc ảnh chat để tạo đơn vận chuyển: gọi thẳng Claude API, không qua worker
+    // AI đọc ảnh chat để tạo đơn vận chuyển, AI viết nội dung bài đăng: gọi thẳng Claude API, không qua worker
     'anthropic' => [
         'api_key' => env('ANTHROPIC_API_KEY'),
         'shipping_model' => env('ANTHROPIC_SHIPPING_MODEL', 'claude-haiku-5-5'),
+        // AI viết tiêu đề / nội dung / hashtag bài đăng
+        'social_model' => env('ANTHROPIC_SOCIAL_MODEL', 'claude-haiku-5-5'),
         'timeout' => 60,
     ],
 

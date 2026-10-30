@@ -7,17 +7,23 @@ use App\Enums\PlatformPublishStatus;
 use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Enums\TransactionStatus;
+use App\Jobs\WriteSocialPostContent;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\Hashtag;
 use App\Models\PublishAccount;
+use App\Models\ShopStaff;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\SocialPublishJob;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Worker;
+use App\Services\Social\SocialContentJobService;
+use App\Services\Social\SocialContentWriter;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
@@ -25,11 +31,33 @@ use Tests\TestCase;
 
 class SocialPostTest extends TestCase
 {
+    /** Kết quả AI giả trả về (null = AI lỗi) và các lần AI được gọi. */
+    public ?array $aiResult = null;
+
+    /** @var array<int, array{request: array, images: array}> */
+    public array $aiCalls = [];
+
     protected function setUp(): void
     {
         parent::setUp();
-        // Phần lớn test đi qua worker viết nội dung; chế độ tự nhập (mặc định) có test riêng
         config(['ai90.social.ai_content' => true]);
+        $this->aiResult = [
+            'title' => 'Lột xác ảnh sản phẩm',
+            'content' => 'Ảnh đẹp mỗi ngày.',
+            'hashtags' => [],
+        ];
+
+        $this->app->instance(SocialContentWriter::class, new class($this) implements SocialContentWriter
+        {
+            public function __construct(private SocialPostTest $test) {}
+
+            public function write(array $request, array $images): ?array
+            {
+                $this->test->aiCalls[] = ['request' => $request, 'images' => $images];
+
+                return $this->test->aiResult;
+            }
+        });
     }
 
     // ---- Helpers ----
@@ -53,34 +81,26 @@ class SocialPostTest extends TestCase
         ], $extra));
     }
 
-    private function claimContentJob(string $token): TestResponse
+    private function getPost(User $user, int $id): TestResponse
     {
-        return $this->withToken($token)->getJson('/api/v1/content-jobs');
+        return $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertOk();
     }
 
-    private function submitContent(string $token, int $jobId, array $body): TestResponse
+    /** @param  string[]  $hashtags */
+    private function setShopHashtags(User $owner, array $hashtags): void
     {
-        return $this->withToken($token)->postJson("/api/v1/content-jobs/{$jobId}", $body);
+        $owner->shopHashtags()->sync(Hashtag::syncPivot($hashtags));
     }
 
-    /** Worker viết nội dung xong -> bài sang pending_review. */
-    private function writeContent(array $body = []): void
+    private function price(): int
     {
-        $token = $this->workerToken('writer-'.Str::random(6));
-        $jobId = $this->claimContentJob($token)->assertOk()->json('data.id');
-        $this->submitContent($token, $jobId, array_merge([
-            'status' => 'completed',
-            'title' => 'Lột xác ảnh sản phẩm',
-            'content' => 'Ảnh đẹp mỗi ngày.',
-            'hashtags' => ['a51', 'anhsanpham'],
-        ], $body))->assertOk();
+        return config('ai90.defaults')['social.ai_content_price'];
     }
 
-    /** Bài đang chờ duyệt từ 1 ảnh có sẵn. */
+    /** Bài đang chờ duyệt từ 1 ảnh có sẵn (không bật AI). */
     private function pendingPost(User $user): SocialPost
     {
         $id = $this->fromImages($user, [$this->completedImage($user)])->assertCreated()->json('data.id');
-        $this->writeContent();
 
         return SocialPost::query()->findOrFail($id);
     }
@@ -98,49 +118,134 @@ class SocialPostTest extends TestCase
 
     // ---- Tạo bài từ ảnh đã có ----
 
-    public function test_post_from_existing_images_waits_for_content_then_goes_to_review(): void
+    public function test_post_with_ai_content_charges_and_fills_content(): void
     {
         $user = $this->buyer(credit: 5000);
         $first = $this->completedImage($user);
         $second = $this->completedImage($user);
-        $balance = $this->balance($user);
-
-        $response = $this->fromImages($user, [$second, $first])
-            ->assertCreated()
-            ->assertJsonPath('data.status', 'generating')
-            ->assertJsonPath('data.source', 'existing')
-            ->assertJsonPath('data.image_count', 2)
-            ->assertJsonPath('data.images.0.output_id', $second['output_id'])
-            ->assertJsonPath('data.images.0.position', 1)
-            ->assertJsonPath('data.images.0.status', 'completed')
-            ->assertJsonPath('data.images.0.creative.title', 'Ảnh sản phẩm studio');
-        $this->assertNotNull($response->json('data.cover_url'));
-        $this->assertSame($balance, $this->balance($user), 'Dùng ảnh có sẵn không tính phí');
-
-        // Worker nhận job nội dung: tên mẫu, ngành hàng, hashtag và link ảnh
-        $token = $this->workerToken('writer');
-        $job = $this->claimContentJob($token)->assertOk()->json('data');
-        $this->assertSame('vi', $job['request']['language']);
-        $this->assertSame(90, $job['request']['limits']['title_max']);
-        $this->assertSame('Ảnh sản phẩm studio', $job['request']['creatives'][0]['title']);
-        $this->assertCount(2, $job['request']['images']);
-        $this->claimContentJob($token)->assertNoContent();
-
-        // Hashtag lẫn trong nội dung được tách ra, hashtag sai quy tắc / trùng bị bỏ
-        $this->submitContent($token, $job['id'], [
-            'status' => 'completed',
+        $this->setShopHashtags($user, ['a51', 'AnhSanPham', 'xuhuong', 'giay', 'dep', 'sale', 'moi']);
+        $this->aiResult = [
             'title' => str_repeat('Tiêu đề dài ', 20),
             'content' => "Ảnh đẹp mỗi ngày #xuhuong\nThử ngay!",
-            'hashtags' => ['#a51', 'A51', 'có khoảng trắng', 'anhAI'],
-        ])->assertOk();
+            // Ngoài kho bị bỏ, khác hoa / thường lấy theo tên trong kho, tối đa 5
+            'hashtags' => ['khongcotrongkho', '#a51', 'anhsanpham', 'giay', 'dep', 'sale', 'moi'],
+        ];
+        $balance = $this->balance($user);
 
-        $post = $this->actingAs($user)->getJson("/api/v1/social/posts/{$response->json('data.id')}")
-            ->assertOk()
+        $id = $this->fromImages($user, [$second, $first], ['ai_content' => true])
+            ->assertCreated()
+            ->assertJsonPath('data.source', 'existing')
+            ->assertJsonPath('data.ai_content', true)
+            ->assertJsonPath('data.image_count', 2)
+            ->assertJsonPath('data.images.0.output_id', $second['output_id'])
+            ->json('data.id');
+
+        $this->assertSame($balance - $this->price(), $this->balance($user));
+        $this->assertLedgerMatchesBalance($user);
+
+        // AI nhận ảnh, tên mẫu và kho hashtag của shop
+        $this->assertCount(1, $this->aiCalls);
+        $this->assertCount(2, $this->aiCalls[0]['images']);
+        $this->assertSame('Ảnh sản phẩm studio', $this->aiCalls[0]['request']['creatives'][0]['title']);
+        $this->assertContains('AnhSanPham', $this->aiCalls[0]['request']['hashtags']);
+        $this->assertSame(5, $this->aiCalls[0]['request']['limits']['hashtags_max']);
+
+        $post = $this->getPost($user, $id)
             ->assertJsonPath('data.status', 'pending_review')
-            ->assertJsonPath('data.hashtags', ['a51', 'anhAI', 'xuhuong'])
+            ->assertJsonPath('data.hashtags', ['a51', 'AnhSanPham', 'giay', 'dep', 'sale'])
             ->assertJsonPath('data.content', "Ảnh đẹp mỗi ngày\nThử ngay!")
             ->json('data');
         $this->assertLessThanOrEqual(90, mb_strlen($post['title']));
+        $this->assertSame(OutputStatus::Completed, SocialContentJob::query()->sole()->status);
+    }
+
+    public function test_ai_content_without_shop_hashtags_adds_no_hashtags(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $this->aiResult = ['title' => 'Tiêu đề', 'content' => 'Nội dung', 'hashtags' => ['a51']];
+
+        $id = $this->fromImages($user, [$this->completedImage($user)], ['ai_content' => true])->assertCreated()->json('data.id');
+
+        $this->assertSame([], $this->aiCalls[0]['request']['hashtags']);
+        $this->getPost($user, $id)->assertJsonPath('data.title', 'Tiêu đề')->assertJsonPath('data.hashtags', []);
+    }
+
+    public function test_staff_uses_hashtags_of_shop_owner(): void
+    {
+        $owner = $this->creator();
+        $staff = $this->buyer(credit: 5000);
+        ShopStaff::query()->create(['owner_id' => $owner->id, 'user_id' => $staff->id]);
+        $this->setShopHashtags($owner, ['giay']);
+        $this->setShopHashtags($staff, ['khongdung']);
+        $this->aiResult['hashtags'] = ['giay'];
+        $image = $this->completedImage($staff);
+        $staffBalance = $this->balance($staff);
+        $ownerBalance = $this->balance($owner);
+
+        $id = $this->fromImages($staff, [$image], ['ai_content' => true])->json('data.id');
+
+        $this->assertSame(['giay'], $this->aiCalls[0]['request']['hashtags']);
+        $this->getPost($staff, $id)->assertJsonPath('data.hashtags', ['giay']);
+        $this->assertSame($staffBalance - $this->price(), $this->balance($staff), 'Trừ ví nhân viên');
+        $this->assertSame($ownerBalance, $this->balance($owner));
+    }
+
+    public function test_ai_failure_falls_back_to_creative_info_and_refunds(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $creative = $this->publishedCreative($this->creator());
+        $creative->hashtags()->attach(Hashtag::query()->create(['name' => 'MyPham', 'slug' => 'mypham'])->id, ['sort_order' => 1]);
+        $image = $this->completedImage($user, $creative);
+        $balance = $this->balance($user);
+        $this->aiResult = null;
+
+        $id = $this->fromImages($user, [$image], ['ai_content' => true])->assertCreated()->json('data.id');
+
+        $this->getPost($user, $id)
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.title', 'Ảnh sản phẩm studio')
+            ->assertJsonPath('data.content', '')
+            ->assertJsonPath('data.hashtags', ['MyPham']);
+        $this->assertSame($balance, $this->balance($user), 'AI lỗi thì hoàn Credit');
+        $this->assertLedgerMatchesBalance($user);
+        $this->assertSame(OutputStatus::Failed, SocialContentJob::query()->sole()->status);
+    }
+
+    public function test_ai_content_requires_enough_credit(): void
+    {
+        $user = $this->buyer(credit: 1000 + $this->price() - 1);
+        $image = $this->completedImage($user);
+
+        $this->fromImages($user, [$image], ['ai_content' => true])
+            ->assertStatus(402)->assertJsonPath('code', 'INSUFFICIENT_CREDIT');
+        $this->assertSame(0, SocialPost::query()->count());
+        $this->assertSame([], $this->aiCalls);
+
+        // Tắt công tắc thì tạo được, không tính phí
+        $this->fromImages($user, [$image])->assertCreated()->assertJsonPath('data.status', 'pending_review');
+    }
+
+    public function test_stuck_ai_job_is_failed_by_sweep_and_refunded(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $image = $this->completedImage($user);
+        $balance = $this->balance($user);
+        Queue::fake();
+
+        $id = $this->fromImages($user, [$image], ['ai_content' => true])->assertJsonPath('data.status', 'generating')->json('data.id');
+        Queue::assertPushed(WriteSocialPostContent::class);
+        $this->assertSame($balance - $this->price(), $this->balance($user));
+
+        $this->artisan('social:sweep')->assertSuccessful();
+        $this->getPost($user, $id)->assertJsonPath('data.status', 'generating');
+
+        $this->travel(config('ai90.generation.stuck_queued_minutes') + 1)->minutes();
+        $this->artisan('social:sweep')->assertSuccessful();
+
+        $this->getPost($user, $id)->assertJsonPath('data.status', 'pending_review');
+        $this->assertSame($balance, $this->balance($user));
+        $this->assertLedgerMatchesBalance($user);
+        $this->assertSame([], $this->aiCalls);
     }
 
     public function test_cannot_use_images_of_other_users_or_unfinished_images(): void
@@ -161,59 +266,25 @@ class SocialPostTest extends TestCase
         $this->assertSame(0, SocialPost::query()->count());
     }
 
-    public function test_same_idempotency_key_returns_same_post(): void
+    public function test_same_idempotency_key_returns_same_post_and_charges_once(): void
     {
         $user = $this->buyer(credit: 5000);
         $image = $this->completedImage($user);
-        $body = ['images' => [$image], 'idempotency_key' => 'same-key'];
+        $balance = $this->balance($user);
+        $body = ['images' => [$image], 'idempotency_key' => 'same-key', 'ai_content' => true];
 
         $first = $this->actingAs($user)->postJson('/api/v1/social/posts/from-images', $body)->assertCreated()->json('data.id');
         $second = $this->actingAs($user)->postJson('/api/v1/social/posts/from-images', $body)->assertCreated()->json('data.id');
 
         $this->assertSame($first, $second);
         $this->assertSame(1, SocialContentJob::query()->count());
+        $this->assertSame($balance - $this->price(), $this->balance($user));
     }
 
-    public function test_content_job_falls_back_to_creative_info_after_max_attempts(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $creative = $this->publishedCreative($this->creator());
-        $creative->hashtags()->attach(Hashtag::query()->create(['name' => 'MyPham', 'slug' => 'mypham'])->id, ['sort_order' => 1]);
-        $id = $this->fromImages($user, [$this->completedImage($user, $creative)])->json('data.id');
-        $token = $this->workerToken('writer');
-
-        foreach (range(1, config('ai90.worker.max_attempts')) as $attempt) {
-            $jobId = $this->claimContentJob($token)->assertOk()->json('data.id');
-            $this->submitContent($token, $jobId, ['status' => 'failed', 'error_code' => 'QUOTA_EXCEEDED'])->assertOk();
-        }
-
-        $this->claimContentJob($token)->assertNoContent();
-        $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")
-            ->assertJsonPath('data.status', 'pending_review')
-            ->assertJsonPath('data.title', 'Ảnh sản phẩm studio')
-            ->assertJsonPath('data.content', '')
-            ->assertJsonPath('data.hashtags', ['MyPham']);
-    }
-
-    public function test_expired_content_lease_is_requeued_by_sweep(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $this->fromImages($user, [$this->completedImage($user)]);
-        $token = $this->workerToken('writer');
-        $jobId = $this->claimContentJob($token)->json('data.id');
-
-        $this->travel(config('ai90.worker.content_lease_minutes') + 1)->minutes();
-        $this->artisan('social:sweep')->assertSuccessful();
-
-        $this->assertSame(OutputStatus::Queued, SocialContentJob::query()->find($jobId)->status);
-        $this->submitContent($token, $jobId, ['status' => 'completed', 'title' => 'x'])->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
-    }
-
-    // ---- Không dùng worker viết nội dung (mặc định) ----
+    // ---- Không dùng AI viết nội dung ----
 
     public function test_without_ai_content_post_goes_to_review_with_manual_content(): void
     {
-        config(['ai90.social.ai_content' => false]);
         $user = $this->buyer(credit: 5000);
 
         $this->fromImages($user, [$this->completedImage($user)], [
@@ -222,6 +293,7 @@ class SocialPostTest extends TestCase
             'hashtags' => ['#a51', 'A51', 'xuhuong'],
         ])->assertCreated()
             ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.ai_content', false)
             ->assertJsonPath('data.title', 'Tiêu đề tự nhập')
             ->assertJsonPath('data.content', 'Nội dung tự nhập')
             ->assertJsonPath('data.hashtags', ['a51', 'xuhuong']);
@@ -231,33 +303,47 @@ class SocialPostTest extends TestCase
 
     public function test_without_ai_content_and_no_input_uses_creative_defaults(): void
     {
-        config(['ai90.social.ai_content' => false]);
         $user = $this->buyer(credit: 5000);
         $creative = $this->publishedCreative($this->creator());
         $creative->hashtags()->attach(Hashtag::query()->create(['name' => 'MyPham', 'slug' => 'mypham'])->id, ['sort_order' => 1]);
+        $image = $this->completedImage($user, $creative);
+        $balance = $this->balance($user);
 
-        $this->fromImages($user, [$this->completedImage($user, $creative)])
+        $this->fromImages($user, [$image])
             ->assertCreated()
             ->assertJsonPath('data.status', 'pending_review')
             ->assertJsonPath('data.title', 'Ảnh sản phẩm studio')
             ->assertJsonPath('data.content', '')
             ->assertJsonPath('data.hashtags', ['MyPham']);
         $this->assertSame(0, SocialContentJob::query()->count());
+        $this->assertSame($balance, $this->balance($user));
     }
 
-    public function test_manual_content_skips_worker_even_when_ai_content_enabled(): void
+    public function test_ai_content_is_ignored_when_disabled_or_content_is_manual(): void
     {
         $user = $this->buyer(credit: 5000);
+        $image = $this->completedImage($user);
+        $balance = $this->balance($user);
 
-        $this->fromImages($user, [$this->completedImage($user)], ['title' => 'Tự viết'])
+        $this->fromImages($user, [$image], ['ai_content' => true, 'title' => 'Tự viết'])
             ->assertCreated()
-            ->assertJsonPath('data.status', 'pending_review');
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.ai_content', false)
+            ->assertJsonPath('data.title', 'Tự viết');
+
+        config(['ai90.social.ai_content' => false]);
+        $this->fromImages($user, [$image], ['ai_content' => true])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.ai_content', false);
+
         $this->assertSame(0, SocialContentJob::query()->count());
+        $this->assertSame($balance, $this->balance($user));
+        $this->assertSame([], $this->aiCalls);
     }
 
     public function test_create_validates_manual_content(): void
     {
-        config(['ai90.social.ai_content' => false]);
         $user = $this->buyer(credit: 5000);
 
         $this->fromImages($user, [$this->completedImage($user)], [
@@ -265,6 +351,89 @@ class SocialPostTest extends TestCase
             'hashtags' => array_map(fn ($i) => "tag{$i}", range(1, 11)),
         ])->assertStatus(422)->assertJsonValidationErrors(['title', 'hashtags']);
         $this->assertSame(0, SocialPost::query()->count());
+    }
+
+    // ---- Viết lại bằng AI ----
+
+    public function test_rewrite_returns_content_without_saving_and_charges(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $post = $this->pendingPost($user);
+        $this->setShopHashtags($user, ['a51', 'xuhuong']);
+        $this->aiResult = ['title' => 'Tiêu đề mới', 'content' => 'Nội dung mới #xuhuong', 'hashtags' => ['xuhuong', 'ngoaikho']];
+        $balance = $this->balance($user);
+
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
+            ->assertOk()
+            ->assertJsonPath('data.title', 'Tiêu đề mới')
+            ->assertJsonPath('data.content', 'Nội dung mới')
+            ->assertJsonPath('data.hashtags', ['xuhuong'])
+            ->assertJsonPath('data.credit_balance', $balance - $this->price());
+
+        $this->assertSame($post->title, $post->fresh()->title, 'Không lưu vào bài');
+        $this->assertSame($balance - $this->price(), $this->balance($user));
+        $this->assertLedgerMatchesBalance($user);
+    }
+
+    public function test_rewrite_does_not_charge_when_ai_fails_or_credit_is_low(): void
+    {
+        $user = $this->buyer(credit: 1000 + $this->price());
+        $post = $this->pendingPost($user);
+        $other = $this->buyer(credit: 5000);
+
+        $this->actingAs($other)->postJson("/api/v1/social/posts/{$post->id}/ai-content")->assertNotFound();
+
+        $this->aiResult = null;
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
+            ->assertStatus(503)->assertJsonPath('code', 'AI_CONTENT_FAILED');
+        $this->assertSame($this->price(), $this->balance($user));
+
+        $this->aiResult = ['title' => 'x', 'content' => 'y', 'hashtags' => []];
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")->assertOk();
+        $this->assertSame(0, $this->balance($user));
+
+        $calls = count($this->aiCalls);
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
+            ->assertStatus(402)->assertJsonPath('code', 'INSUFFICIENT_CREDIT');
+        $this->assertCount($calls, $this->aiCalls, 'Không đủ Credit thì không gọi AI');
+
+        config(['ai90.social.ai_content' => false]);
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
+            ->assertStatus(409)->assertJsonPath('code', 'AI_CONTENT_DISABLED');
+    }
+
+    // ---- Kho hashtag của shop ----
+
+    public function test_shop_owner_manages_hashtag_pool(): void
+    {
+        $owner = $this->creator();
+        $this->actingAs($owner)->post('/api/v1/creator/products', [
+            'hashtags' => ['giay', 'ThoiTrang'],
+            'images' => [['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'product_image']],
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $this->actingAs($owner)->getJson('/api/v1/creator/shop-hashtags')
+            ->assertOk()
+            ->assertJsonPath('data.hashtags', [])
+            ->assertJsonPath('data.product_hashtags', ['giay', 'ThoiTrang']);
+
+        $this->actingAs($owner)->putJson('/api/v1/creator/shop-hashtags', ['hashtags' => ['#xuhuong', 'giay', 'GIAY']])
+            ->assertOk()
+            ->assertJsonPath('data.hashtags', ['xuhuong', 'giay']);
+        $this->actingAs($owner)->putJson('/api/v1/creator/shop-hashtags', ['hashtags' => ['có khoảng trắng']])
+            ->assertStatus(422)->assertJsonValidationErrors('hashtags.0');
+        $this->actingAs($owner)->putJson('/api/v1/creator/shop-hashtags', ['hashtags' => []])
+            ->assertOk()->assertJsonPath('data.hashtags', []);
+
+        $this->actingAs($this->buyer())->getJson('/api/v1/creator/shop-hashtags')->assertForbidden();
+    }
+
+    public function test_me_exposes_ai_content_setting(): void
+    {
+        $this->actingAs($this->buyer())->getJson('/api/v1/auth/me')
+            ->assertOk()
+            ->assertJsonPath('data.social_ai.enabled', true)
+            ->assertJsonPath('data.social_ai.price', $this->price());
     }
 
     // ---- Đăng (worker đăng theo từng nền tảng) ----
@@ -553,7 +722,6 @@ class SocialPostTest extends TestCase
         $this->claimPublishJob($token)->assertStatus(409)->assertJsonPath('code', 'INSTAGRAM_ACCOUNT_NOT_ASSIGNED');
     }
 
-
     // ---- Xem / xoá ----
 
     public function test_list_and_show_only_own_posts(): void
@@ -577,12 +745,14 @@ class SocialPostTest extends TestCase
     public function test_delete_only_when_pending_review(): void
     {
         $user = $this->buyer(credit: 5000);
-        $generating = $this->fromImages($user, [$this->completedImage($user)])->json('data.id');
+        $image = $this->completedImage($user);
+        Queue::fake();
+        $generating = $this->fromImages($user, [$image], ['ai_content' => true])->json('data.id');
 
         $this->actingAs($user)->deleteJson("/api/v1/social/posts/{$generating}")
             ->assertStatus(409)->assertJsonPath('code', 'POST_NOT_DELETABLE');
 
-        $this->writeContent();
+        app(SocialContentJobService::class)->run(SocialContentJob::query()->sole()->id);
         $this->actingAs($user)->deleteJson("/api/v1/social/posts/{$generating}")->assertNoContent();
         $this->assertSame(0, SocialPost::query()->count());
         // Ảnh vẫn còn trong lịch sử tạo ảnh

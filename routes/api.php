@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\DashboardController;
 use App\Http\Controllers\Api\V1\Creator\ProductController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
+use App\Http\Controllers\Api\V1\Creator\ShopHashtagController;
 use App\Http\Controllers\Api\V1\Creator\StaffController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
@@ -21,7 +22,6 @@ use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\Social\TikTokController;
 use App\Http\Controllers\Api\V1\Social\TikTokWebhookController;
 use App\Http\Controllers\Api\V1\StaffShopController;
-use App\Http\Controllers\Api\V1\WorkerContentJobController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
 use App\Http\Controllers\Api\V1\WorkerPublishJobController;
 use Illuminate\Support\Facades\Route;
@@ -99,6 +99,10 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('creative-groups/{group}', [CreativeGroupController::class, 'update'])->whereNumber('group');
             Route::delete('creative-groups/{group}', [CreativeGroupController::class, 'destroy'])->whereNumber('group');
 
+            // Kho hashtag của shop: AI viết nội dung bài đăng chỉ chọn hashtag trong kho (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend)
+            Route::get('shop-hashtags', [ShopHashtagController::class, 'show']);
+            Route::put('shop-hashtags', [ShopHashtagController::class, 'update']);
+
             // Nhân viên của shop (note/chia-se-tai-nguyen.txt ở repo frontend)
             Route::get('staff', [StaffController::class, 'index']);
             Route::post('staff', [StaffController::class, 'store']);
@@ -165,6 +169,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('posts/{post}', [PostController::class, 'show'])->whereNumber('post');
             Route::delete('posts/{post}', [PostController::class, 'destroy'])->whereNumber('post');
             Route::post('posts/{post}/publish', [PostController::class, 'publish'])->whereNumber('post');
+            // "Viết lại bằng AI" (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trả nội dung, không lưu vào bài
+            Route::post('posts/{post}/ai-content', [PostController::class, 'aiContent'])->whereNumber('post')->middleware('throttle:generations');
 
             // Người dùng tự kết nối TikTok để đăng qua API (note/dang-tiktok-qua-api.txt ở repo frontend)
             Route::post('tiktok/oauth/authorize', [TikTokController::class, 'authorizeUrl'])->middleware('throttle:auth');
@@ -184,12 +190,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
 Route::prefix('v1/jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerJobController::class, 'next']);
     Route::post('{id}', [WorkerJobController::class, 'submit'])->whereNumber('id');
-});
-
-// Worker viết nội dung bài đăng (cùng token worker, tách khỏi job ảnh).
-Route::prefix('v1/content-jobs')->middleware('worker')->group(function () {
-    Route::get('/', [WorkerContentJobController::class, 'next']);
-    Route::post('{id}', [WorkerContentJobController::class, 'submit'])->whereNumber('id');
 });
 
 // Worker đăng bài: giữ 1 tài khoản của 1 nền tảng (admin gắn), chỉ nhận job của nền tảng đó.

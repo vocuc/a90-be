@@ -9,6 +9,7 @@ use App\Http\Resources\SocialPostResource;
 use App\Models\Hashtag;
 use App\Models\PublishAccount;
 use App\Models\SocialPost;
+use App\Services\Social\SocialContentJobService;
 use App\Services\Social\SocialPostService;
 use App\Services\Social\SocialPublishJobService;
 use App\Services\TikTok\TikTokConnectionService;
@@ -67,7 +68,10 @@ class PostController extends Controller
         return $this->resource($this->findPost($request, $post));
     }
 
-    /** Tạo bài từ ảnh của một lô (image_batch_id) hoặc ảnh đã có trong lịch sử tạo ảnh. Không tính phí. */
+    /**
+     * Tạo bài từ ảnh của một lô (image_batch_id) hoặc ảnh đã có trong lịch sử tạo ảnh. Không tính phí, trừ khi bật
+     * ai_content (AI viết nội dung, note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trừ giá social.ai_content_price.
+     */
     public function storeFromImages(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -76,6 +80,7 @@ class PostController extends Controller
             'images.*.output_id' => ['required', 'integer', 'distinct'],
             'image_batch_id' => ['nullable', 'integer', Rule::exists('image_batches', 'id')->where('user_id', $request->user()->id)],
             'idempotency_key' => ['required', 'string', 'max:80'],
+            'ai_content' => ['nullable', 'boolean'],
             ...self::contentRules(),
         ], [
             'images.max' => 'Tối đa '.SocialPost::MAX_IMAGES.' ảnh mỗi bài.',
@@ -84,7 +89,9 @@ class PostController extends Controller
             ...self::contentMessages(),
         ]);
 
-        $post = $this->posts->createFromImages($request->user(), array_values($data['images']), $data['idempotency_key'], $data, $data['image_batch_id'] ?? null);
+        $post = $this->posts->createFromImages(
+            $request->user(), array_values($data['images']), $data['idempotency_key'], $data, $data['image_batch_id'] ?? null, (bool) ($data['ai_content'] ?? false),
+        );
 
         return $this->resource($post)->response()->setStatusCode(201);
     }
@@ -118,6 +125,18 @@ class PostController extends Controller
         $data['images'] = array_values($data['images']);
 
         return $this->resource($publisher->publish($request->user(), $post, $data));
+    }
+
+    /**
+     * "Viết lại bằng AI": trả { title, content, hashtags, credit_balance } để frontend điền vào form, KHÔNG lưu vào bài.
+     * Chỉ khi bài đang chờ gửi. Trừ social.ai_content_price khi AI viết được; AI lỗi -> 503 AI_CONTENT_FAILED, không trừ.
+     */
+    public function aiContent(Request $request, int $post, SocialContentJobService $contentJobs): JsonResponse
+    {
+        $post = $this->findPost($request, $post);
+        $this->posts->assertEditable($post);
+
+        return response()->json(['data' => $contentJobs->rewrite($request->user(), $post)]);
     }
 
     public function destroy(Request $request, int $post): Response
