@@ -80,6 +80,35 @@ class VideoTemplateSyncTest extends TestCase
         $this->assertNull($own->fresh()->hidden_at);
     }
 
+    public function test_switch_off_template_is_not_used_and_survives_sync(): void
+    {
+        $shop = $this->creator();
+        $token = $this->token($shop);
+        $this->sync($token, [
+            ['key' => '1', 'name' => 'StripReveal', 'image_count' => 2],
+            ['key' => '6', 'name' => 'LensPop', 'image_count' => 2],
+        ])->assertOk();
+        $lens = VideoTemplate::query()->where('source_key', '6')->firstOrFail();
+
+        // Template đồng bộ vẫn tắt được (không sửa được)
+        $this->actingAs($shop)->patchJson("/api/v1/creator/video-templates/{$lens->id}/enabled", ['enabled' => false])
+            ->assertOk()->assertJsonPath('data.enabled', false);
+        $this->getJson('/api/v1/creator/video-templates')->assertJsonCount(2, 'data');
+        $this->assertSame(['StripReveal'], array_column($this->getJson('/api/v1/social/video-posts/templates')->json('data'), 'name'));
+
+        // Sync lại không bật lại
+        $this->sync($token, [
+            ['key' => '1', 'name' => 'StripReveal', 'image_count' => 2],
+            ['key' => '6', 'name' => 'LensPop', 'image_count' => 2],
+        ])->assertOk();
+        $this->assertFalse($lens->fresh()->is_enabled);
+
+        $this->actingAs($shop)->patchJson("/api/v1/creator/video-templates/{$lens->id}/enabled", ['enabled' => true])
+            ->assertOk()->assertJsonPath('data.enabled', true);
+        $this->patchJson("/api/v1/creator/video-templates/{$lens->id}/enabled", [])->assertStatus(422);
+        $this->actingAs($this->creator())->patchJson("/api/v1/creator/video-templates/{$lens->id}/enabled", ['enabled' => false])->assertNotFound();
+    }
+
     public function test_sync_rules(): void
     {
         $shop = $this->creator();

@@ -117,6 +117,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('video-templates', [VideoTemplateController::class, 'store']);
             Route::get('video-templates/{template}', [VideoTemplateController::class, 'show'])->whereNumber('template');
             Route::put('video-templates/{template}', [VideoTemplateController::class, 'update'])->whereNumber('template');
+            Route::patch('video-templates/{template}/enabled', [VideoTemplateController::class, 'setEnabled'])->whereNumber('template');
             Route::delete('video-templates/{template}', [VideoTemplateController::class, 'destroy'])->whereNumber('template');
 
             // Worker admin gắn cho shop, chỉ xem (note/quan-ly-worker.txt ở repo frontend)
@@ -173,6 +174,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             // Bài đăng video có lịch: worker dựng video + tự đăng khi tới giờ (note/lap-lich-worker.txt ở repo frontend)
             Route::prefix('video-posts')->middleware('creator')->group(function () {
                 Route::post('auto', [VideoPostController::class, 'auto'])->middleware('throttle:generations');
+                Route::post('/', [VideoPostController::class, 'store'])->middleware('throttle:generations');
                 Route::get('images', [VideoPostController::class, 'images']);
                 Route::get('templates', [VideoPostController::class, 'templates']);
                 Route::put('{post}', [VideoPostController::class, 'update'])->whereNumber('post');

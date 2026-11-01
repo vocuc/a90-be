@@ -113,19 +113,45 @@ class VideoPostService
     }
 
     /**
-     * Sửa bài video khi worker chưa nhận (queued) hoặc bài lỗi chờ đăng lại (pending_review). Số ảnh phải bằng số ảnh
-     * template cần. Không đổi trạng thái: bài lỗi vẫn chờ chủ shop bấm "Đăng lại".
+     * Tab "Thủ công" của popup "Tạo video": chủ shop tự chọn worker, template, sản phẩm, ảnh (đúng số ảnh template),
+     * giờ đăng -> 1 bài. AI viết tiêu đề / nội dung / hashtag như tab tự động (trừ phí; không đủ tiền -> 402, không tạo).
+     * Gửi lại cùng idempotency_key: trả bài đã tạo.
      *
-     * @param  array{worker_id: int, video_template_id: int, product_id: ?int, images: array<int, array{generation_id: int, output_id: int}>, title?: ?string, content?: ?string, hashtags?: ?array, scheduled_at: string}  $data
+     * @param  array{worker_id: int, video_template_id: int, product_id: ?int, images: array<int, array{generation_id: int, output_id: int}>, scheduled_at: CarbonInterface, idempotency_key: string}  $data
      */
-    public function update(User $user, SocialPost $post, array $data): SocialPost
+    public function manualCreate(User $user, array $data): SocialPost
     {
-        $this->assertVideo($post);
+        $key = 'video-manual:'.$data['idempotency_key'];
+        $existing = SocialPost::query()->where('user_id', $user->id)->where('idempotency_key', $key)->first();
+        if ($existing) {
+            return $existing;
+        }
+
+        [$worker, $template, $productId, $outputs] = $this->resolveSelection($user, $data);
+        $post = $this->createPost($user, $worker, $template, $productId, $outputs, $data['scheduled_at'], $key);
+
+        $this->audit->log('video_post.manual_create', $post, ['worker_id' => $worker->id, 'images' => $outputs->count()], $user->id);
+
+        return $post;
+    }
+
+    /**
+     * Kiểm tra lựa chọn của chủ shop (tạo thủ công / sửa): worker gắn cho shop, template của shop đang hiện + đang bật
+     * (template đã tắt chỉ giữ được nếu bài đang dùng sẵn: $currentTemplateId), sản phẩm của shop, ảnh của shop đúng số
+     * ảnh template cần.
+     *
+     * @return array{0: Worker, 1: VideoTemplate, 2: ?int, 3: Collection<int, GenerationOutput>}
+     */
+    private function resolveSelection(User $user, array $data, ?int $currentTemplateId = null): array
+    {
         $worker = $this->findWorker($user, (int) $data['worker_id']);
         $template = VideoTemplate::query()->where('user_id', $user->id)->visible()->find((int) $data['video_template_id'])
             ?? throw ValidationException::withMessages(['video_template_id' => 'Template không tồn tại.']);
         if (! $template->image_count) {
             throw ValidationException::withMessages(['video_template_id' => 'Template chưa có số ảnh, hãy sửa template trước.']);
+        }
+        if (! $template->is_enabled && $template->id !== $currentTemplateId) {
+            throw ValidationException::withMessages(['video_template_id' => 'Template đã tắt, bật lại ở Quản lý video template.']);
         }
         $productId = isset($data['product_id']) ? (int) $data['product_id'] : null;
         if ($productId && ! Product::query()->where('user_id', $user->id)->whereKey($productId)->exists()) {
@@ -135,6 +161,20 @@ class VideoPostService
             throw ValidationException::withMessages(['images' => "Template \"{$template->name}\" cần đúng {$template->image_count} ảnh."]);
         }
         $outputs = $this->posts->resolveOwnedOutputs($user, array_values($data['images']), 'images');
+
+        return [$worker, $template, $productId, $outputs];
+    }
+
+    /**
+     * Sửa bài video khi worker chưa nhận (queued) hoặc bài lỗi chờ đăng lại (pending_review). Số ảnh phải bằng số ảnh
+     * template cần. Không đổi trạng thái: bài lỗi vẫn chờ chủ shop bấm "Đăng lại".
+     *
+     * @param  array{worker_id: int, video_template_id: int, product_id: ?int, images: array<int, array{generation_id: int, output_id: int}>, title?: ?string, content?: ?string, hashtags?: ?array, scheduled_at: string}  $data
+     */
+    public function update(User $user, SocialPost $post, array $data): SocialPost
+    {
+        $this->assertVideo($post);
+        [$worker, $template, $productId, $outputs] = $this->resolveSelection($user, $data, $post->video_template_id);
 
         return DB::transaction(function () use ($user, $post, $data, $worker, $template, $productId, $outputs) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
@@ -295,7 +335,7 @@ class VideoPostService
     }
 
     /** @param  Collection<int, GenerationOutput>  $outputs */
-    private function createPost(User $user, Worker $worker, VideoTemplate $template, int $productId, Collection $outputs, CarbonInterface $at, string $key): SocialPost
+    private function createPost(User $user, Worker $worker, VideoTemplate $template, ?int $productId, Collection $outputs, CarbonInterface $at, string $key): SocialPost
     {
         $ai = SocialContentJobService::enabled();
 

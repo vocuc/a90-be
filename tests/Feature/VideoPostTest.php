@@ -241,6 +241,54 @@ class VideoPostTest extends TestCase
             ->assertJsonPath('data.platforms.tiktok.status', 'published');
     }
 
+    public function test_manual_create_one_post_with_chosen_template_product_images(): void
+    {
+        $shop = $this->creator(credit: 100000);
+        $template = $this->template($shop, 2, 'Thủ công');
+        $off = $this->template($shop, 2, 'Đã tắt');
+        $off->update(['is_enabled' => false]);
+        $product = $this->productWithImages($shop, 3);
+        [$worker, $token] = $this->worker($shop);
+        $images = array_map(
+            fn ($i) => ['generation_id' => $i['generation_id'], 'output_id' => $i['output_id']],
+            $this->actingAs($shop)->getJson("/api/v1/social/video-posts/images?product_id={$product->id}")->json('data'),
+        );
+        $body = [
+            'worker_id' => $worker->id,
+            'video_template_id' => $template->id,
+            'product_id' => $product->id,
+            'images' => array_slice($images, 0, 2),
+            'scheduled_at' => now()->subMinute()->toIso8601String(),
+            'idempotency_key' => (string) Str::uuid(),
+        ];
+
+        // Sai số ảnh / template đã tắt / thiếu worker
+        $this->postJson('/api/v1/social/video-posts', ['images' => $images] + $body)->assertStatus(422)->assertJsonValidationErrors('images');
+        $this->postJson('/api/v1/social/video-posts', ['video_template_id' => $off->id] + $body)->assertStatus(422)->assertJsonValidationErrors('video_template_id');
+        $this->postJson('/api/v1/social/video-posts', ['worker_id' => null] + $body)->assertStatus(422)->assertJsonValidationErrors('worker_id');
+
+        $balance = $this->balance($shop);
+        $id = $this->postJson('/api/v1/social/video-posts', $body)->assertCreated()
+            ->assertJsonPath('data.type', 'video')
+            ->assertJsonPath('data.status', 'queued')
+            ->assertJsonPath('data.title', 'Video mới')
+            ->assertJsonPath('data.video.template.id', $template->id)
+            ->assertJsonPath('data.video.product.id', $product->id)
+            ->assertJsonPath('data.image_count', 2)
+            ->json('data.id');
+        $this->assertSame($balance - $this->price(), $this->balance($shop));
+        // Gửi lại cùng key: không tạo thêm, không trừ thêm
+        $this->postJson('/api/v1/social/video-posts', $body)->assertCreated()->assertJsonPath('data.id', $id);
+        $this->assertSame($balance - $this->price(), $this->balance($shop));
+
+        $this->nextJob($token)->assertOk()->assertJsonPath('data.request.post_id', $id)->assertJsonCount(2, 'data.request.images');
+
+        // Hết tiền: không tạo
+        $shop->creditWallet()->update(['balance' => 0]);
+        $this->actingAs($shop)->postJson('/api/v1/social/video-posts', ['idempotency_key' => (string) Str::uuid()] + $body)->assertStatus(402);
+        $this->assertSame(1, SocialPost::query()->where('type', 'video')->count());
+    }
+
     public function test_failed_post_can_be_edited_and_retried(): void
     {
         $shop = $this->creator(credit: 100000);

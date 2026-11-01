@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * image_count null: template tạo trước khi có số ảnh, chưa dùng được cho bài video (note/lap-lich-worker.txt).
  * source_key khác null: template đồng bộ từ máy làm template (D:\video-tmp, PUT /api/v1/video-templates/sync), tên trùng
  * tên template trên máy worker; shop chỉ xem, không sửa / xoá. hidden_at: đã bị xoá khỏi máy làm template -> ẩn.
+ * is_enabled: công tắc của shop (cả template đồng bộ); tắt thì không dùng cho bài video mới.
  */
 class VideoTemplate extends Model
 {
@@ -21,7 +22,7 @@ class VideoTemplate extends Model
 
     protected function casts(): array
     {
-        return ['hidden_at' => 'datetime'];
+        return ['hidden_at' => 'datetime', 'is_enabled' => 'boolean'];
     }
 
     public function user(): BelongsTo
@@ -40,9 +41,9 @@ class VideoTemplate extends Model
         return $query->whereNull('hidden_at');
     }
 
-    /** Dùng được cho bài video: đang hiện + có số ảnh. */
+    /** Dùng được cho bài video: đang hiện + đang bật + có số ảnh. */
     public function scopeUsable(Builder $query): Builder
     {
-        return $query->visible()->whereNotNull('image_count');
+        return $query->visible()->where('is_enabled', true)->whereNotNull('image_count');
     }
 }

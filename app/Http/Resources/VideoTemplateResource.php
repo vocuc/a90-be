@@ -16,6 +16,8 @@ class VideoTemplateResource extends JsonResource
             'name' => $this->name,
             'video_url' => $this->video_url,
             'image_count' => $this->image_count,
+            // Công tắc: tắt thì không dùng cho bài video mới
+            'enabled' => (bool) ($this->is_enabled ?? true),
             // Đồng bộ từ máy làm template: shop chỉ xem, không sửa / xoá
             'synced' => $this->isSynced(),
             'source_key' => $this->source_key,

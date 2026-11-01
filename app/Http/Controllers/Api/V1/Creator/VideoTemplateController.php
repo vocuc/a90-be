@@ -55,6 +55,16 @@ class VideoTemplateController extends Controller
         return new VideoTemplateResource($template);
     }
 
+    /** Bật / tắt template (cả template đồng bộ): tắt thì không random / chọn cho bài video. */
+    public function setEnabled(Request $request, int $template): VideoTemplateResource
+    {
+        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $template = $this->find($request, $template);
+        $template->update(['is_enabled' => $data['enabled']]);
+
+        return new VideoTemplateResource($template);
+    }
+
     public function destroy(Request $request, int $template): Response
     {
         $this->findEditable($request, $template)->delete();

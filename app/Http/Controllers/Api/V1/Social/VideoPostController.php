@@ -65,25 +65,33 @@ class VideoPostController extends Controller
         return response()->json(['data' => $result], 201);
     }
 
+    /**
+     * Tab "Thủ công" của "Tạo video": worker_id, video_template_id, product_id?, images[{generation_id, output_id}] (đúng số
+     * ảnh template), scheduled_at, idempotency_key -> 201 { data: SocialPost }. AI viết nội dung (trừ phí, thiếu -> 402).
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            ...self::selectionRules(),
+            'idempotency_key' => ['required', 'string', 'max:80', 'regex:/^[A-Za-z0-9-]+$/'],
+        ], self::selectionMessages());
+        $data['scheduled_at'] = Carbon::parse($data['scheduled_at'])->setTimezone(config('app.timezone'));
+
+        return $this->resource($this->videos->manualCreate($request->user(), $data))->response()->setStatusCode(201);
+    }
+
     /** Sửa bài video (popup "Sửa"): mọi thứ, khi worker chưa nhận hoặc bài lỗi. */
     public function update(Request $request, int $post): SocialPostResource
     {
         $post = $this->findVideo($request, $post);
         $data = $request->validate([
-            'worker_id' => ['required', 'integer'],
-            'video_template_id' => ['required', 'integer'],
-            'product_id' => ['nullable', 'integer'],
-            'images' => ['required', 'array', 'min:1', 'max:'.SocialPost::MAX_IMAGES],
-            'images.*.generation_id' => ['required', 'integer'],
-            'images.*.output_id' => ['required', 'integer', 'distinct'],
-            'scheduled_at' => ['required', 'date'],
+            ...self::selectionRules(),
             'title' => ['nullable', 'string', 'max:'.SocialPost::TITLE_MAX],
             'content' => ['nullable', 'string', 'max:'.SocialPost::CONTENT_MAX],
             'hashtags' => ['nullable', 'array', 'max:'.SocialPost::MAX_HASHTAGS],
             'hashtags.*' => ['string', 'max:50', 'regex:'.Hashtag::PATTERN],
         ], [
-            'images.required' => 'Chọn ảnh cho bài.',
-            'images.*.output_id.distinct' => 'Ảnh bị chọn trùng.',
+            ...self::selectionMessages(),
             'hashtags.max' => 'Tối đa '.SocialPost::MAX_HASHTAGS.' hashtag.',
         ]);
         $data['scheduled_at'] = Carbon::parse($data['scheduled_at'])->setTimezone(config('app.timezone'));
@@ -135,6 +143,31 @@ class VideoPostController extends Controller
             ->usable()
             ->orderBy('name')
             ->get(['id', 'name', 'video_url', 'image_count'])]);
+    }
+
+    /** Worker, template, sản phẩm, ảnh, giờ đăng: dùng chung cho tạo thủ công và sửa. */
+    private static function selectionRules(): array
+    {
+        return [
+            'worker_id' => ['required', 'integer'],
+            'video_template_id' => ['required', 'integer'],
+            'product_id' => ['nullable', 'integer'],
+            'images' => ['required', 'array', 'min:1', 'max:'.SocialPost::MAX_IMAGES],
+            'images.*.generation_id' => ['required', 'integer'],
+            'images.*.output_id' => ['required', 'integer', 'distinct'],
+            'scheduled_at' => ['required', 'date'],
+        ];
+    }
+
+    private static function selectionMessages(): array
+    {
+        return [
+            'worker_id.required' => 'Chọn worker.',
+            'video_template_id.required' => 'Chọn template.',
+            'images.required' => 'Chọn ảnh cho bài.',
+            'images.*.output_id.distinct' => 'Ảnh bị chọn trùng.',
+            'scheduled_at.required' => 'Chọn giờ đăng.',
+        ];
     }
 
     private function findVideo(Request $request, int $id): SocialPost
