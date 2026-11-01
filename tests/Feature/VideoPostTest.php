@@ -72,11 +72,15 @@ class VideoPostTest extends TestCase
         return $product;
     }
 
-    /** Worker giữ tài khoản TikTok của shop: [worker, token]. */
-    private function worker(User $shop, bool $withAccount = true): array
+    /**
+     * Worker tạo video của shop ($videoUser), có / không giữ tài khoản TikTok của shop: [worker, token].
+     */
+    private function worker(User $shop, bool $withAccount = true, bool $videoUser = true): array
     {
         [$worker, $token] = Worker::register('may-'.Str::random(5));
-        $worker->update(['video_user_id' => $shop->id]);
+        if ($videoUser) {
+            $worker->update(['video_user_id' => $shop->id]);
+        }
         if ($withAccount) {
             PublishAccount::query()->create([
                 'user_id' => $shop->id, 'platform' => SocialPlatform::Tiktok, 'name' => 'Shop', 'username' => 'shop',
@@ -218,6 +222,25 @@ class VideoPostTest extends TestCase
             ->assertJsonPath('data.platforms.tiktok.status', 'published');
     }
 
+    public function test_video_worker_without_publish_account_claims_as_tiktok(): void
+    {
+        $shop = $this->creator(credit: 100000);
+        $this->template($shop, 1);
+        $this->productWithImages($shop, 1);
+        [$worker, $token] = $this->worker($shop, withAccount: false);
+        $id = $this->auto($shop, $worker, ['count' => 1, 'first_at' => now()->subMinute()->toIso8601String()])->json('data.post_ids.0');
+
+        $job = $this->nextJob($token)->assertOk()
+            ->assertJsonPath('data.type', 'tiktok_video_publish')
+            ->assertJsonPath('data.request.platform', 'tiktok')
+            ->assertJsonPath('data.request.account', null)
+            ->json('data');
+        $this->withToken($token)->postJson("/api/v1/video-posts/{$job['id']}", ['status' => 'completed'])->assertOk();
+        $this->actingAs($shop)->getJson("/api/v1/social/posts/{$id}")
+            ->assertJsonPath('data.status', 'published')
+            ->assertJsonPath('data.platforms.tiktok.status', 'published');
+    }
+
     public function test_failed_post_can_be_edited_and_retried(): void
     {
         $shop = $this->creator(credit: 100000);
@@ -289,14 +312,14 @@ class VideoPostTest extends TestCase
         $this->template($shop, 1);
         $this->productWithImages($shop, 1);
         [$worker] = $this->worker($shop);
-        [$noAccount, $noAccountToken] = $this->worker($shop, withAccount: false);
+        [, $noAccountToken] = $this->worker($shop, withAccount: false, videoUser: false);
         $id = $this->auto($shop, $worker, ['count' => 1])->json('data.post_ids.0');
 
         // Bài video không dùng nút đăng của bài ảnh, chưa lỗi thì không "đăng lại"
         $this->postJson("/api/v1/social/posts/{$id}/publish", ['images' => [['image_id' => 1]], 'platforms' => ['tiktok']])->assertStatus(409);
         $this->postJson("/api/v1/social/video-posts/{$id}/retry")->assertStatus(409);
 
-        // Worker không giữ tài khoản đăng bài
+        // Worker không giữ tài khoản đăng bài, cũng không gắn tài khoản tạo video
         $this->nextJob($noAccountToken)->assertStatus(409)->assertJsonPath('code', 'ACCOUNT_NOT_ASSIGNED');
 
         // Worker không gắn cho shop

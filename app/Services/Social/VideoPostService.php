@@ -29,7 +29,7 @@ use Illuminate\Validation\ValidationException;
  *   template ngẫu nhiên (có số ảnh), sản phẩm ngẫu nhiên đủ ảnh, ảnh ngẫu nhiên của sản phẩm; AI viết tiêu đề / nội dung /
  *   hashtag (trừ phí từng bài, hết tiền thì dừng, bài đã tạo giữ nguyên). Giờ bài sau = bài trước + số phút ngẫu nhiên.
  * - Sửa mọi thứ khi worker chưa nhận (queued) hoặc bài lỗi (pending_review).
- * - Worker (đúng worker được chọn, giữ tài khoản đăng bài của shop) nhận bài đã tới giờ, dựng video, tự đăng rồi báo lại.
+ * - Worker (đúng worker được chọn, giữ tài khoản đăng bài của shop hoặc được gắn làm worker tạo video của shop) nhận bài đã tới giờ, dựng video, tự đăng rồi báo lại.
  *   Job không hết hạn: worker im lặng thì bài giữ "Đang đăng", chủ shop tự bấm "Tạo lại" (có thể đăng trùng).
  *   Lỗi -> bài chờ gửi kèm last_error, chủ shop sửa rồi bấm "Đăng lại".
  * Mỗi lần worker nhận là 1 SocialPublishJob (lịch sử, mã lỗi cho admin), complete / fail dùng SocialPublishJobService.
@@ -202,25 +202,32 @@ class VideoPostService
     }
 
     /**
-     * Worker nhận bài video đã tới giờ của nó (cũ nhất trước): bài của tài khoản A51 có tài khoản đăng bài worker đang giữ.
-     * Worker chưa giữ tài khoản đăng bài -> 409 ACCOUNT_NOT_ASSIGNED. SKIP LOCKED để gọi song song không nhận trùng.
+     * Worker nhận bài video đã tới giờ của nó (cũ nhất trước), bài của tài khoản A51 worker được gắn:
+     * - worker giữ tài khoản đăng bài (publish_accounts): bài của chủ tài khoản đó, nền tảng = nền tảng tài khoản;
+     * - không thì worker tạo video (admin -> Worker -> Tài khoản tạo video, workers.video_user_id): đăng TikTok bằng
+     *   tài khoản đang đăng nhập trên điện thoại của worker (job không gắn tài khoản đăng bài, request.account = null).
+     * Không gắn gì -> 409 ACCOUNT_NOT_ASSIGNED. SKIP LOCKED để gọi song song không nhận trùng.
      */
     public function claim(Worker $worker): ?SocialPublishJob
     {
         $account = PublishAccount::query()->where('worker_id', $worker->id)->first();
-        if (! $account) {
-            throw new BusinessException('ACCOUNT_NOT_ASSIGNED', 'Worker chưa được gắn tài khoản đăng bài.', 409);
-        }
-        if (! $account->is_active || ! $account->user_id) {
-            throw new BusinessException($account->platform->notAssignedCode(), 'Worker chưa được gắn tài khoản A51 hoặc đang bị tắt.', 409);
+        if ($account) {
+            if (! $account->is_active || ! $account->user_id) {
+                throw new BusinessException($account->platform->notAssignedCode(), 'Worker chưa được gắn tài khoản A51 hoặc đang bị tắt.', 409);
+            }
+            [$userId, $platform] = [$account->user_id, $account->platform];
+        } elseif ($worker->video_user_id) {
+            [$userId, $platform] = [$worker->video_user_id, SocialPlatform::Tiktok];
+        } else {
+            throw new BusinessException('ACCOUNT_NOT_ASSIGNED', 'Worker chưa được gắn tài khoản đăng bài hoặc tài khoản tạo video.', 409);
         }
 
-        return DB::transaction(function () use ($worker, $account) {
+        return DB::transaction(function () use ($worker, $account, $userId, $platform) {
             $post = SocialPost::query()
                 ->where('type', SocialPost::TYPE_VIDEO)
                 ->where('status', SocialPostStatus::Queued)
                 ->where('worker_id', $worker->id)
-                ->where('user_id', $account->user_id)
+                ->where('user_id', $userId)
                 ->where('scheduled_at', '<=', now())
                 ->orderBy('scheduled_at')
                 ->orderBy('id')
@@ -232,13 +239,13 @@ class VideoPostService
 
             // Không đặt hạn: worker im lặng thì bài giữ "Đang đăng" tới khi chủ shop bấm tạo lại
             $job = $post->publishJobs()->create([
-                'platform' => $account->platform,
+                'platform' => $platform,
                 'status' => OutputStatus::Processing,
                 'driver' => PublishDriver::Worker,
                 'worker_id' => $worker->id,
-                'publish_account_id' => $account->id,
+                'publish_account_id' => $account?->id,
             ]);
-            $post->setPlatformStatus($account->platform, PlatformPublishStatus::Publishing);
+            $post->setPlatformStatus($platform, PlatformPublishStatus::Publishing);
 
             return $job;
         });
