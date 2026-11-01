@@ -74,7 +74,13 @@ class VideoTemplateController extends Controller
         return $request->validate([
             'name' => ['required', 'string', 'max:150'],
             'video_url' => ['required', 'string', 'max:500', 'regex:'.self::TIKTOK_URL],
+            // Số ảnh template cần: bài video lấy đúng số ảnh này (note/lap-lich-worker.txt ở repo frontend)
+            'image_count' => ['required', 'integer', 'min:1', 'max:'.VideoTemplate::MAX_IMAGE_COUNT],
         ], [
+            'image_count.required' => 'Nhập số ảnh template cần.',
+            'image_count.integer' => 'Số ảnh phải là số nguyên.',
+            'image_count.min' => 'Số ảnh tối thiểu là 1.',
+            'image_count.max' => 'Số ảnh tối đa là '.VideoTemplate::MAX_IMAGE_COUNT.'.',
             'name.required' => 'Nhập tên template.',
             'name.max' => 'Tên tối đa 150 ký tự.',
             'video_url.required' => 'Nhập link video TikTok mẫu.',

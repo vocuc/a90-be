@@ -136,13 +136,18 @@ class SocialPostService
         ];
     }
 
-    /** Xoá bài khi đang chờ gửi và chưa đăng xong nền tảng nào. Đang tạo nội dung / chờ đăng / đang đăng / đã đăng: không xoá được. */
+    /**
+     * Xoá bài khi đang chờ gửi và chưa đăng xong nền tảng nào. Đang tạo nội dung / chờ đăng / đang đăng / đã đăng: không
+     * xoá được. Bài video đang chờ tới giờ (worker chưa nhận) cũng xoá được (note/lap-lich-worker.txt ở repo frontend).
+     */
     public function delete(User $user, SocialPost $post): void
     {
         DB::transaction(function () use ($user, $post) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
             $published = collect($post->platformStatuses())->filter(fn ($status) => $status === PlatformPublishStatus::Published)->keys();
-            if ($post->status !== SocialPostStatus::PendingReview || $published->isNotEmpty()) {
+            $deletable = $post->status === SocialPostStatus::PendingReview
+                || ($post->isVideo() && $post->status === SocialPostStatus::Queued);
+            if (! $deletable || $published->isNotEmpty()) {
                 throw new BusinessException('POST_NOT_DELETABLE', match ($post->status) {
                     SocialPostStatus::Generating => 'Bài đang được tạo nội dung, vui lòng chờ xong rồi xoá.',
                     SocialPostStatus::Queued, SocialPostStatus::Publishing => 'Bài đang được đăng, không xoá được.',

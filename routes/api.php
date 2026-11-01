@@ -22,9 +22,11 @@ use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\Social\TikTokController;
 use App\Http\Controllers\Api\V1\Social\TikTokWebhookController;
+use App\Http\Controllers\Api\V1\Social\VideoPostController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
 use App\Http\Controllers\Api\V1\WorkerPublishJobController;
 use App\Http\Controllers\Api\V1\WorkerVideoImageController;
+use App\Http\Controllers\Api\V1\WorkerVideoPostController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->middleware('throttle:api')->group(function () {
@@ -167,6 +169,15 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             // "Viết lại bằng AI" (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trả nội dung, không lưu vào bài
             Route::post('posts/{post}/ai-content', [PostController::class, 'aiContent'])->whereNumber('post')->middleware('throttle:generations');
 
+            // Bài đăng video có lịch: worker dựng video + tự đăng khi tới giờ (note/lap-lich-worker.txt ở repo frontend)
+            Route::prefix('video-posts')->middleware('creator')->group(function () {
+                Route::post('auto', [VideoPostController::class, 'auto'])->middleware('throttle:generations');
+                Route::get('images', [VideoPostController::class, 'images']);
+                Route::get('templates', [VideoPostController::class, 'templates']);
+                Route::put('{post}', [VideoPostController::class, 'update'])->whereNumber('post');
+                Route::post('{post}/retry', [VideoPostController::class, 'retry'])->whereNumber('post');
+            });
+
             // Người dùng tự kết nối TikTok để đăng qua API (note/dang-tiktok-qua-api.txt ở repo frontend)
             Route::post('tiktok/oauth/authorize', [TikTokController::class, 'authorizeUrl'])->middleware('throttle:auth');
             Route::post('tiktok/oauth/callback', [TikTokController::class, 'callback'])->middleware('throttle:auth');
@@ -195,3 +206,9 @@ Route::prefix('v1/publish-jobs')->middleware('worker')->group(function () {
 
 // Worker tạo video: gắn 1 tài khoản A51 (admin gắn), xin N ảnh ngẫu nhiên trong các lô ảnh của shop đó để dựng video.
 Route::get('v1/video-images', [WorkerVideoImageController::class, 'index'])->middleware('worker');
+
+// Worker dựng + đăng bài video có lịch: chỉ nhận bài đã tới giờ, được giao cho chính worker (note/lap-lich-worker.txt ở repo frontend)
+Route::prefix('v1/video-posts')->middleware('worker')->group(function () {
+    Route::get('/', [WorkerVideoPostController::class, 'next']);
+    Route::post('{id}', [WorkerVideoPostController::class, 'submit'])->whereNumber('id');
+});

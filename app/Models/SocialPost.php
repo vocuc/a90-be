@@ -15,6 +15,10 @@ use Illuminate\Support\Str;
  * Bài đăng: nội dung chung (tiêu đề, nội dung, hashtag, ảnh) đăng lên một hoặc nhiều nền tảng.
  * Trạng thái từng nền tảng: tiktok_status / facebook_status / instagram_status (null: không đăng lên nền tảng đó);
  * status là trạng thái chung, tính lại bằng syncStatus() mỗi khi trạng thái một nền tảng đổi.
+ *
+ * Bài video (type video, note/lap-lich-worker.txt ở repo frontend): worker được chọn (worker_id) dựng video theo template
+ * từ ảnh của bài rồi tự đăng bằng tài khoản đăng bài nó giữ, chỉ khi đã tới giờ (scheduled_at). AI viết xong -> queued
+ * (chờ tới giờ, còn sửa / xoá được); worker nhận -> publishing; xong -> published; lỗi -> pending_review + last_error.
  */
 class SocialPost extends Model
 {
@@ -22,6 +26,13 @@ class SocialPost extends Model
     public const SOURCE_BATCH = 'batch';
 
     public const SOURCE_EXISTING = 'existing';
+
+    /** Bài video tạo bằng nút "Tạo video" ở trang Bài đăng. */
+    public const SOURCE_VIDEO = 'video';
+
+    public const TYPE_PHOTO = 'photo';
+
+    public const TYPE_VIDEO = 'video';
 
     // Giới hạn chung lúc tạo / sửa bài (lớn nhất trong các nền tảng); giới hạn riêng: SocialPlatform, kiểm tra lúc bấm đăng
     public const MAX_IMAGES = 35;
@@ -43,6 +54,7 @@ class SocialPost extends Model
 
     protected $attributes = [
         'title' => '',
+        'type' => self::TYPE_PHOTO,
     ];
 
     protected function casts(): array
@@ -56,7 +68,19 @@ class SocialPost extends Model
             'hashtags' => 'array',
             'last_error' => 'array',
             'published_at' => 'datetime',
+            'scheduled_at' => 'datetime',
         ];
+    }
+
+    public function isVideo(): bool
+    {
+        return $this->type === self::TYPE_VIDEO;
+    }
+
+    /** Trạng thái khi nội dung đã sẵn sàng: bài ảnh chờ người dùng bấm đăng, bài video chờ tới giờ cho worker nhận. */
+    public function readyStatus(): SocialPostStatus
+    {
+        return $this->isVideo() ? SocialPostStatus::Queued : SocialPostStatus::PendingReview;
     }
 
     /**
@@ -206,5 +230,17 @@ class SocialPost extends Model
     public function imageBatch(): BelongsTo
     {
         return $this->belongsTo(ImageBatch::class, 'image_batch_id');
+    }
+
+    /** Bài video: worker dựng + đăng. */
+    public function worker(): BelongsTo
+    {
+        return $this->belongsTo(Worker::class);
+    }
+
+    /** Bài video: sản phẩm lấy ảnh (null khi chủ shop chọn ảnh ngoài sản phẩm hoặc sản phẩm đã xoá). */
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class);
     }
 }

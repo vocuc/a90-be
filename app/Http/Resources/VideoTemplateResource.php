@@ -15,6 +15,7 @@ class VideoTemplateResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'video_url' => $this->video_url,
+            'image_count' => $this->image_count,
             'created_at' => $this->created_at,
         ];
     }

@@ -16,23 +16,25 @@ class VideoTemplateTest extends TestCase
     {
         $owner = $this->creator();
 
-        $id = $this->actingAs($owner)->postJson(self::URL, ['name' => '  Mở hộp giày  ', 'video_url' => self::VIDEO])
+        $id = $this->actingAs($owner)->postJson(self::URL, ['name' => '  Mở hộp giày  ', 'video_url' => self::VIDEO, 'image_count' => 3])
             ->assertCreated()
             ->assertJsonPath('data.name', 'Mở hộp giày')
             ->assertJsonPath('data.video_url', self::VIDEO)
+            ->assertJsonPath('data.image_count', 3)
             ->json('data.id');
-        $this->postJson(self::URL, ['name' => 'Mẫu 2', 'video_url' => 'https://vt.tiktok.com/ZSabc123/'])->assertCreated();
+        $this->postJson(self::URL, ['name' => 'Mẫu 2', 'video_url' => 'https://vt.tiktok.com/ZSabc123/', 'image_count' => 1])->assertCreated();
 
         // Mới tạo trước
         $this->getJson(self::URL)->assertOk()
             ->assertJsonCount(2, 'data')
             ->assertJsonPath('data.0.name', 'Mẫu 2')
             ->assertJsonPath('data.1.id', $id)
-            ->assertJsonStructure(['data' => [['id', 'name', 'video_url', 'created_at']], 'meta']);
+            ->assertJsonStructure(['data' => [['id', 'name', 'video_url', 'image_count', 'created_at']], 'meta']);
 
-        $this->putJson(self::URL."/{$id}", ['name' => 'Đổi tên', 'video_url' => 'https://vm.tiktok.com/ZMxyz/'])
+        $this->putJson(self::URL."/{$id}", ['name' => 'Đổi tên', 'video_url' => 'https://vm.tiktok.com/ZMxyz/', 'image_count' => 5])
             ->assertOk()
-            ->assertJsonPath('data.name', 'Đổi tên');
+            ->assertJsonPath('data.name', 'Đổi tên')
+            ->assertJsonPath('data.image_count', 5);
         $this->getJson(self::URL."/{$id}")->assertOk()->assertJsonPath('data.video_url', 'https://vm.tiktok.com/ZMxyz/');
 
         $this->deleteJson(self::URL."/{$id}")->assertNoContent();
@@ -43,12 +45,16 @@ class VideoTemplateTest extends TestCase
     {
         $this->actingAs($this->creator());
 
-        $this->postJson(self::URL, [])->assertStatus(422)->assertJsonValidationErrors(['name', 'video_url']);
+        $this->postJson(self::URL, [])->assertStatus(422)->assertJsonValidationErrors(['name', 'video_url', 'image_count']);
         foreach (['https://youtube.com/watch?v=1', 'https://faketiktok.com/a', 'tiktok.com/@a/video/1', 'https://tiktok.com.evil.vn/x'] as $url) {
-            $this->postJson(self::URL, ['name' => 'A', 'video_url' => $url])->assertStatus(422)->assertJsonValidationErrors('video_url');
+            $this->postJson(self::URL, ['name' => 'A', 'video_url' => $url, 'image_count' => 1])->assertStatus(422)->assertJsonValidationErrors('video_url');
         }
-        $this->postJson(self::URL, ['name' => str_repeat('a', 151), 'video_url' => self::VIDEO])
+        $this->postJson(self::URL, ['name' => str_repeat('a', 151), 'video_url' => self::VIDEO, 'image_count' => 1])
             ->assertStatus(422)->assertJsonValidationErrors('name');
+        foreach ([0, VideoTemplate::MAX_IMAGE_COUNT + 1, 'abc'] as $count) {
+            $this->postJson(self::URL, ['name' => 'A', 'video_url' => self::VIDEO, 'image_count' => $count])
+                ->assertStatus(422)->assertJsonValidationErrors('image_count');
+        }
         $this->assertSame(0, VideoTemplate::query()->count());
     }
 
@@ -60,7 +66,7 @@ class VideoTemplateTest extends TestCase
         $other = $this->creator();
         $this->actingAs($other)->getJson(self::URL)->assertOk()->assertJsonCount(0, 'data');
         $this->getJson(self::URL."/{$template->id}")->assertNotFound();
-        $this->putJson(self::URL."/{$template->id}", ['name' => 'B', 'video_url' => self::VIDEO])->assertNotFound();
+        $this->putJson(self::URL."/{$template->id}", ['name' => 'B', 'video_url' => self::VIDEO, 'image_count' => 1])->assertNotFound();
         $this->deleteJson(self::URL."/{$template->id}")->assertNotFound();
         $this->assertDatabaseHas('video_templates', ['id' => $template->id, 'name' => 'A']);
 

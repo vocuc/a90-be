@@ -40,7 +40,7 @@ class WorkerJobController extends Controller
     }
 
     /**
-     * Logo = ảnh đại diện HIỆN TẠI của shop chủ generation (nhân viên của shop: logo tự tải lên); null khi không chèn
+     * Logo = ảnh đại diện HIỆN TẠI của shop chủ generation; null khi không chèn
      * hoặc không còn logo.
      */
     private function logo(Generation $generation, MediaStorage $media): ?array

@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\V1\Creator;
 
 use App\Http\Controllers\Controller;
 use App\Models\Worker;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -27,11 +26,7 @@ class ShopWorkerController extends Controller
         $userId = $request->user()->id;
 
         $workers = Worker::query()
-            ->where('is_active', true)
-            ->where(fn (Builder $q) => $q
-                ->whereHas('imageUsers', fn (Builder $u) => $u->whereKey($userId))
-                ->orWhere('video_user_id', $userId)
-                ->orWhereHas('publishAccount', fn (Builder $a) => $a->where('user_id', $userId)))
+            ->assignedTo($userId)
             ->with([
                 'imageUsers' => fn ($u) => $u->whereKey($userId),
                 'publishAccount' => fn ($a) => $a->where('user_id', $userId),

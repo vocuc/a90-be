@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Social;
 
 use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
+use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\SocialPostResource;
 use App\Models\Hashtag;
@@ -50,12 +51,14 @@ class PostController extends Controller
     {
         $data = $request->validate([
             'status' => ['nullable', Rule::enum(SocialPostStatus::class)],
+            'type' => ['nullable', Rule::in([SocialPost::TYPE_PHOTO, SocialPost::TYPE_VIDEO])],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
 
         $posts = SocialPost::query()
             ->where('user_id', $request->user()->id)
             ->when($data['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
+            ->when($data['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
             ->with(SocialPostResource::RELATIONS)
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);
@@ -103,6 +106,10 @@ class PostController extends Controller
     public function publish(Request $request, int $post, SocialPublishJobService $publisher): SocialPostResource
     {
         $post = $this->findPost($request, $post);
+        // Bài video do worker tự đăng khi tới giờ; đăng lại dùng /social/video-posts/{id}/retry
+        if ($post->isVideo()) {
+            throw new BusinessException('NOT_PHOTO_POST', 'Bài video được worker tự đăng khi tới giờ.', 409);
+        }
         $data = $request->validate([
             ...self::contentRules(),
             'images' => ['required', 'array', 'min:1', 'max:'.SocialPost::MAX_IMAGES],

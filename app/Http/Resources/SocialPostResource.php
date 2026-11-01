@@ -20,7 +20,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class SocialPostResource extends JsonResource
 {
-    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs'];
+    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs', 'worker', 'product'];
 
     /** Thông báo người dùng thấy ở nền tảng đăng lỗi; mã lỗi chi tiết chỉ admin xem (social_publish_jobs). */
     public const PLATFORM_FAILED_MESSAGE = 'Đăng thất bại, vui lòng thử lại.';
@@ -31,8 +31,22 @@ class SocialPostResource extends JsonResource
 
         return [
             'id' => $this->id,
+            // photo | video (note/lap-lich-worker.txt ở repo frontend)
+            'type' => $this->type,
             'status' => $this->status,
             'source' => $this->source,
+            // Bài video: worker dựng + đăng, template (bản chụp lúc chọn), sản phẩm lấy ảnh, giờ đăng. Bài ảnh: null
+            'video' => $this->isVideo() ? [
+                'worker' => $this->worker ? ['id' => $this->worker->id, 'name' => $this->worker->name] : null,
+                'template' => [
+                    'id' => $this->video_template_id,
+                    'name' => $this->video_template_name,
+                    'video_url' => $this->video_template_url,
+                    'image_count' => $this->video_image_count,
+                ],
+                'product' => $this->product ? ['id' => $this->product->id, 'name' => $this->product->name] : null,
+                'scheduled_at' => $this->scheduled_at,
+            ] : null,
             'image_batch_id' => $this->image_batch_id,
             // Tạo bài có bật AI viết nội dung (generating = AI đang viết)
             'ai_content' => (bool) $this->ai_content,

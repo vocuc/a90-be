@@ -24,7 +24,7 @@ use Illuminate\Support\Str;
  *   AI lỗi / job kẹt quá lâu: dùng nội dung mặc định và hoàn Credit.
  * - "Viết lại bằng AI" (rewrite): gọi thẳng trong request, trả nội dung cho người dùng xem (không lưu vào bài),
  *   chỉ trừ Credit khi viết được.
- * Cài đặt của shop (trang "AI viết nội dung", nhân viên dùng của chủ shop): AI chỉ chọn hashtag trong kho hashtag,
+ * Cài đặt của shop (trang "AI viết nội dung"): AI chỉ chọn hashtag trong kho hashtag,
  * tối đa ai90.social.ai_max_hashtags; học giọng văn theo bài viết mẫu; tiêu đề / nội dung không quá số ký tự shop đặt.
  */
 class SocialContentJobService
@@ -243,7 +243,8 @@ class SocialContentJobService
             'title' => ($content['title'] ?? '') !== '' ? $content['title'] : SocialPost::DEFAULT_TITLE,
             'content' => $content['content'],
             'hashtags' => $content['hashtags'],
-            'status' => SocialPostStatus::PendingReview,
+            // Bài ảnh chờ người dùng bấm đăng; bài video chờ tới giờ cho worker nhận
+            'status' => $post->readyStatus(),
         ]);
     }
 }
