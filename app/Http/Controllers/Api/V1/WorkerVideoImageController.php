@@ -49,6 +49,7 @@ class WorkerVideoImageController extends Controller
             ->where(fn ($w) => $w->where('image_batches.user_id', $ownerId)->orWhere('image_batches.shop_owner_id', $ownerId))
             ->where('generation_outputs.status', OutputStatus::Completed->value)
             ->whereNotNull('generation_outputs.image_path')
+            ->whereNull('generation_outputs.disabled_at')
             ->groupBy('image_batches.product_id')
             ->selectRaw('image_batches.product_id, COUNT(DISTINCT image_batch_images.output_id) AS total')
             ->pluck('total', 'product_id');
@@ -78,8 +79,7 @@ class WorkerVideoImageController extends Controller
     private function productImages(int $ownerId, int $productId): Builder
     {
         return GenerationOutput::query()
-            ->where('status', OutputStatus::Completed)
-            ->whereNotNull('image_path')
+            ->usable()
             ->whereIn('id', fn ($q) => $q->select('image_batch_images.output_id')
                 ->from('image_batch_images')
                 ->join('image_batches', 'image_batches.id', '=', 'image_batch_images.image_batch_id')

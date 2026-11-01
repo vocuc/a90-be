@@ -47,7 +47,8 @@ class GenerationResource extends JsonResource
             'failed_count' => $this->failed_count,
             // Ảnh đầu vào theo tên trường
             'input_images' => array_map(fn ($path) => $media->url($path), $this->input_paths ?? []),
-            'outputs' => $this->whenLoaded('outputs', fn () => $this->outputs->map(fn ($output) => [
+            // Ảnh người dùng đã tắt không trả về
+            'outputs' => $this->whenLoaded('outputs', fn () => $this->outputs->whereNull('disabled_at')->map(fn ($output) => [
                 'id' => $output->id,
                 'position' => $output->position,
                 'status' => $output->status,

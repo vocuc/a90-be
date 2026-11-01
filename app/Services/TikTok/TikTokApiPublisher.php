@@ -80,7 +80,12 @@ class TikTokApiPublisher
 
         try {
             $post = $job->post()->with('images.output')->firstOrFail();
-            $urls = $post->images->map(fn ($image) => $this->prepareImage($job, $image->output))->values()->all();
+            // Ảnh người dùng đã tắt thì bỏ qua
+            $urls = $post->images
+                ->filter(fn ($image) => $image->output?->isUsable())
+                ->map(fn ($image) => $this->prepareImage($job, $image->output))
+                ->values()
+                ->all();
             $description = SocialPost::description($post->content, $post->hashtags ?? []);
 
             $publishId = $this->tokens->call($account, fn (string $token) => $this->client->initPhotoPost($token, [

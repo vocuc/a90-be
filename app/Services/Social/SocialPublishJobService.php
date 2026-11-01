@@ -243,8 +243,12 @@ class SocialPublishJobService
             'hashtags' => $hashtags,
             // Nội dung + dòng hashtag, điền thẳng vào ô nội dung của nền tảng
             'description' => SocialPost::description($post->content, $hashtags),
-            // Theo thứ tự, ảnh đầu là ảnh bìa
-            'images' => $post->images->map(fn ($image) => $this->media->url($image->output->image_path))->values()->all(),
+            // Theo thứ tự, ảnh đầu là ảnh bìa. Ảnh người dùng đã tắt thì bỏ qua.
+            'images' => $post->images
+                ->filter(fn ($image) => $image->output?->isUsable())
+                ->map(fn ($image) => $this->media->url($image->output->image_path))
+                ->values()
+                ->all(),
             // target_url: Facebook đăng vào trang / nhóm / trang cá nhân này
             'account' => $job->publishAccount?->only(['id', 'name', 'username', 'target_url']),
         ];
@@ -455,6 +459,10 @@ class SocialPublishJobService
 
                     continue;
                 }
+                // Ảnh người dùng đã tắt: bỏ qua (syncImages gỡ khỏi bài), không báo lỗi
+                if ($image->output?->disabled_at) {
+                    continue;
+                }
                 $resolved[$i] = ['image_id' => $image->id, 'output' => $image->output];
             } else {
                 $newRefs[$i] = ['generation_id' => (int) $item['generation_id'], 'output_id' => (int) $item['output_id']];
@@ -468,6 +476,9 @@ class SocialPublishJobService
             $resolved[$i] = ['image_id' => null, 'output' => $output];
         }
         ksort($resolved);
+        if (! $resolved) {
+            throw ValidationException::withMessages(['images' => 'Các ảnh trong bài đã bị tắt, hãy chọn ảnh khác.']);
+        }
 
         $outputIds = array_map(fn ($r) => $r['output']->id, $resolved);
         if (count($outputIds) !== count(array_unique($outputIds))) {

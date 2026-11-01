@@ -356,4 +356,45 @@ class GenerationTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.outputs.0.status', OutputStatus::Completed->value);
     }
+
+    public function test_owner_disables_output_without_refund_and_it_disappears(): void
+    {
+        $creative = $this->publishedCreative($this->creator(), price: 1000);
+        $buyer = $this->buyer(credit: 5000);
+        $id = $this->generate($buyer, $creative, quantity: 2)->json('data.id');
+        $this->runWorker([null, null]);
+        $generation = Generation::query()->with('outputs')->findOrFail($id);
+        [$disabled, $kept] = $generation->outputs;
+        $balance = $this->balance($buyer);
+        $url = "/api/v1/generations/{$id}/outputs/{$disabled->id}/disable";
+
+        // Người khác không tắt được
+        $this->actingAs($this->buyer())->postJson($url)->assertNotFound();
+
+        $this->actingAs($buyer)->postJson($url)->assertNoContent();
+        $this->actingAs($buyer)->postJson($url)->assertNoContent(); // gọi lại không lỗi
+        $this->assertNotNull($disabled->fresh()->disabled_at);
+        $this->assertSame(OutputStatus::Completed, $disabled->fresh()->status);
+        $this->assertSame($balance, $this->balance($buyer)); // không hoàn tiền
+
+        // Lịch sử / chi tiết / trạng thái chỉ còn ảnh chưa tắt, đơn vẫn hiện
+        $this->actingAs($buyer)->getJson('/api/v1/generations')->assertOk()
+            ->assertJsonPath('data.0.id', $id)
+            ->assertJsonCount(1, 'data.0.outputs')
+            ->assertJsonPath('data.0.outputs.0.id', $kept->id);
+        $this->actingAs($buyer)->getJson("/api/v1/generations/{$id}/status")->assertOk()
+            ->assertJsonCount(1, 'data.outputs');
+        $this->actingAs($buyer)->getJson("/api/v1/generations/{$id}/outputs/{$disabled->id}/download")->assertNotFound();
+        $this->actingAs($buyer)->getJson("/api/v1/generations/{$id}/outputs/{$kept->id}/download")->assertOk();
+    }
+
+    public function test_only_completed_output_can_be_disabled(): void
+    {
+        $buyer = $this->buyer(credit: 5000);
+        $id = $this->generate($buyer, $this->publishedCreative($this->creator()))->json('data.id');
+        $output = Generation::query()->findOrFail($id)->outputs()->firstOrFail();
+
+        $this->actingAs($buyer)->postJson("/api/v1/generations/{$id}/outputs/{$output->id}/disable")->assertStatus(409);
+        $this->assertNull($output->fresh()->disabled_at);
+    }
 }

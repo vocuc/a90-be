@@ -102,6 +102,8 @@ class SocialPostResource extends JsonResource
             'generation_id' => $image->generation_id,
             'output_id' => $image->output_id,
             'status' => $output?->status,
+            // Người dùng đã tắt ảnh: vẫn hiển thị trong lô / bài, nhưng không dùng để đăng hay gửi worker
+            'disabled' => (bool) $output?->disabled_at,
             'image_url' => $completed ? $media->url($output->image_path) : null,
             'thumb_url' => $completed ? $media->url($output->thumbPathOrOriginal()) : null,
             'error_message' => $output?->status === OutputStatus::Failed ? GenerationResource::errorMessage($output->error_code) : null,

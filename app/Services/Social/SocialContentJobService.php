@@ -174,7 +174,7 @@ class SocialContentJobService
             ]);
 
         $images = $post->images
-            ->filter(fn ($image) => $image->output?->status === OutputStatus::Completed && $image->output->image_path)
+            ->filter(fn ($image) => $image->output?->isUsable())
             ->take(config('ai90.social.ai_max_images'))
             ->map(function ($image) {
                 $path = $image->output->thumbPathOrOriginal();

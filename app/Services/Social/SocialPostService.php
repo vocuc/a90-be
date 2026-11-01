@@ -173,8 +173,7 @@ class SocialPostService
         $result = collect();
         foreach ($refs as $i => $ref) {
             $output = $outputs->get((int) $ref['output_id']);
-            if (! $output || $output->generation_id !== (int) $ref['generation_id']
-                || $output->status !== OutputStatus::Completed || ! $output->image_path) {
+            if (! $output || $output->generation_id !== (int) $ref['generation_id'] || ! $output->isUsable()) {
                 $errors["{$field}.{$i}"] = 'Ảnh không hợp lệ hoặc không thuộc tài khoản của bạn.';
 
                 continue;

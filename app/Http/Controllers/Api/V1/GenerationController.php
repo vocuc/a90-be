@@ -9,6 +9,7 @@ use App\Http\Resources\GenerationResource;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Services\AuditLogger;
 use App\Services\GenerationInput;
 use App\Services\GenerationService;
 use App\Services\MediaStorage;
@@ -16,6 +17,7 @@ use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Response;
 
 class GenerationController extends Controller
 {
@@ -74,7 +76,7 @@ class GenerationController extends Controller
             'status' => $generation->status,
             'success_count' => $generation->success_count,
             'failed_count' => $generation->failed_count,
-            'outputs' => $generation->outputs()->get()->map(fn (GenerationOutput $o) => [
+            'outputs' => $generation->outputs()->whereNull('disabled_at')->get()->map(fn (GenerationOutput $o) => [
                 'id' => $o->id,
                 'position' => $o->position,
                 'status' => $o->status,
@@ -103,7 +105,7 @@ class GenerationController extends Controller
     public function download(Request $request, Generation $generation, GenerationOutput $output): JsonResponse
     {
         $this->authorizeOwner($request, $generation);
-        abort_unless($output->generation_id === $generation->id && $output->status === OutputStatus::Completed, 404);
+        abort_unless($output->generation_id === $generation->id && $output->isUsable(), 404);
 
         $extension = pathinfo($output->image_path, PATHINFO_EXTENSION);
         $filename = "ai90-{$generation->id}-{$output->position}.{$extension}";
@@ -113,6 +115,27 @@ class GenerationController extends Controller
             'filename' => $filename,
             'expires_in_minutes' => config('ai90.signed_url_ttl_minutes'),
         ]]);
+    }
+
+    /**
+     * Người dùng tự tắt ảnh đã tạo xong (không thích, ảnh lỗi...). Không hoàn tiền. Ảnh tắt rồi không còn trả về ở lịch
+     * sử, không tải về, không chọn cho bài đăng và không gửi cho worker; bài đăng / lô đang chứa ảnh thì bỏ qua ảnh đó.
+     * Gọi lại với ảnh đã tắt vẫn trả 204.
+     */
+    public function disableOutput(Request $request, Generation $generation, GenerationOutput $output): Response
+    {
+        $this->authorizeOwner($request, $generation);
+        abort_unless($output->generation_id === $generation->id, 404);
+        if ($output->status !== OutputStatus::Completed) {
+            throw new BusinessException('IMAGE_NOT_READY', 'Chỉ tắt được ảnh đã tạo xong.', 409);
+        }
+
+        if (! $output->disabled_at) {
+            $output->update(['disabled_at' => now()]);
+            app(AuditLogger::class)->log('generation_output.disable', $generation, ['output_id' => $output->id], $request->user()->id);
+        }
+
+        return response()->noContent();
     }
 
     private function authorizeOwner(Request $request, Generation $generation): void

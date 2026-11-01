@@ -82,6 +82,25 @@ class WorkerVideoImageTest extends TestCase
         $this->images($token, 2)->assertOk()->assertJsonCount(2, 'data.images');
     }
 
+    public function test_disabled_images_are_not_sent_to_worker(): void
+    {
+        $shop = $this->buyer(credit: 100000);
+        $batch = $this->completedBatch($shop, 3, $this->product($shop));
+        $image = $batch->images()->firstOrFail();
+        $this->actingAs($shop)->postJson("/api/v1/generations/{$image->generation_id}/outputs/{$image->output_id}/disable")
+            ->assertNoContent();
+        [, $token] = $this->videoWorker($shop);
+
+        $this->images($token, 3)->assertStatus(422)->assertJsonFragment(['available' => 2]);
+        $ids = array_column($this->images($token, 2)->assertOk()->json('data.images'), 'id');
+        $this->assertNotContains($image->output_id, $ids);
+
+        // Lô vẫn hiển thị đủ ảnh, ảnh đã tắt có cờ disabled
+        $this->actingAs($shop)->getJson("/api/v1/image-batches/{$batch->id}")->assertOk()
+            ->assertJsonCount(3, 'data.images')
+            ->assertJsonPath('data.images.0.disabled', true);
+    }
+
     public function test_not_enough_images_reports_available(): void
     {
         $shop = $this->buyer(credit: 100000);
