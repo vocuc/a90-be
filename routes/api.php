@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\DashboardController;
 use App\Http\Controllers\Api\V1\Creator\ProductController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
+use App\Http\Controllers\Api\V1\Creator\ShopWorkerController;
 use App\Http\Controllers\Api\V1\Creator\VideoTemplateController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
@@ -114,6 +115,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('video-templates/{template}', [VideoTemplateController::class, 'show'])->whereNumber('template');
             Route::put('video-templates/{template}', [VideoTemplateController::class, 'update'])->whereNumber('template');
             Route::delete('video-templates/{template}', [VideoTemplateController::class, 'destroy'])->whereNumber('template');
+
+            // Worker admin gắn cho shop, chỉ xem (note/quan-ly-worker.txt ở repo frontend)
+            Route::get('workers', [ShopWorkerController::class, 'index']);
 
             Route::get('dashboard', [DashboardController::class, 'dashboard']);
             Route::get('wallet', [DashboardController::class, 'wallet']);
