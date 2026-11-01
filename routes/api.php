@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\V1\Social\TikTokWebhookController;
 use App\Http\Controllers\Api\V1\StaffShopController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
 use App\Http\Controllers\Api\V1\WorkerPublishJobController;
+use App\Http\Controllers\Api\V1\WorkerVideoImageController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->middleware('throttle:api')->group(function () {
@@ -197,3 +198,6 @@ Route::prefix('v1/publish-jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerPublishJobController::class, 'next']);
     Route::post('{id}', [WorkerPublishJobController::class, 'submit'])->whereNumber('id');
 });
+
+// Worker tạo video: gắn 1 tài khoản A51 (admin gắn), xin N ảnh ngẫu nhiên trong các lô ảnh của shop đó để dựng video.
+Route::get('v1/video-images', [WorkerVideoImageController::class, 'index'])->middleware('worker');

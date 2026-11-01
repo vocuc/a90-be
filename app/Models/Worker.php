@@ -3,13 +3,15 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 
 /**
  * Máy nội bộ: tạo ảnh (GET /api/v1/jobs),
- * đăng bài (GET /api/v1/publish-jobs, chỉ worker được gắn tài khoản đăng bài của một nền tảng).
+ * đăng bài (GET /api/v1/publish-jobs, chỉ worker được gắn tài khoản đăng bài của một nền tảng),
+ * tạo video (GET /api/v1/video-images, chỉ worker được gắn tài khoản tạo video).
  */
 class Worker extends Model
 {
@@ -80,5 +82,11 @@ class Worker extends Model
     public function imageUsers(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'worker_user')->withPivot('created_at');
+    }
+
+    /** Tài khoản A51 worker tạo video lấy ảnh (admin gắn ở trang Worker, tối đa 1). Chưa gắn -> không lấy được ảnh. */
+    public function videoUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'video_user_id');
     }
 }

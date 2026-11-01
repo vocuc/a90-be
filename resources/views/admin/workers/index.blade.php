@@ -34,6 +34,9 @@
                             <div class="small text-muted">
                                 Job tạo ảnh: {{ $worker->image_users_count ? $worker->image_users_count.' tài khoản' : 'chưa gắn tài khoản (không nhận)' }}
                             </div>
+                            @if ($worker->videoUser)
+                                <div class="small text-muted">Tạo video: {{ $worker->videoUser->email }}</div>
+                            @endif
                         </td>
                         <td>
                             @if ($account = $worker->publishAccount)

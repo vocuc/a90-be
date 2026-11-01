@@ -50,6 +50,39 @@
 
             <div class="card">
                 <div class="card-header">
+                    <h3 class="card-title">Tài khoản tạo video</h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small">
+                        Worker tạo video lấy ảnh ngẫu nhiên trong các lô ảnh của shop này (lô của chủ shop + lô nhân viên tạo).
+                        Mỗi worker <b>1 tài khoản</b>, gắn tài khoản khác sẽ thay tài khoản cũ. Không phải worker tạo video thì để trống.
+                    </p>
+                    @if ($worker->videoUser)
+                        <div class="d-flex align-items-center mb-3">
+                            <div><b>{{ $worker->videoUser->name }}</b> <span class="text-muted">{{ $worker->videoUser->email }}</span></div>
+                            <form method="POST" action="{{ route('admin.workers.video-user.clear', $worker) }}" class="ml-auto"
+                                  data-confirm="Bỏ {{ $worker->videoUser->email }} khỏi worker &quot;{{ $worker->name }}&quot;? Worker sẽ không lấy được ảnh để tạo video nữa.">
+                                @csrf @method('DELETE')
+                                <button class="btn btn-xs btn-outline-danger"><i class="fas fa-times"></i> Bỏ</button>
+                            </form>
+                        </div>
+                    @endif
+                    <form method="POST" action="{{ route('admin.workers.video-user.set', $worker) }}">
+                        @csrf @method('PUT')
+                        <div class="input-group">
+                            <input type="email" name="video_email" value="{{ old('video_email') }}" placeholder="Email tài khoản A51"
+                                   class="form-control @error('video_email') is-invalid @enderror" required>
+                            <div class="input-group-append">
+                                <button class="btn btn-primary"><i class="fas fa-check"></i> {{ $worker->videoUser ? 'Đổi' : 'Gắn' }}</button>
+                            </div>
+                            @error('video_email')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
                     <h3 class="card-title">Tài khoản nhận job tạo ảnh</h3>
                 </div>
                 <div class="card-body">
