@@ -289,6 +289,23 @@ class ImageBatchTest extends TestCase
         $this->assertSame($balance, $this->balance($user));
     }
 
+    public function test_uploading_new_image_re_enables_disabled_image(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $batch = $this->completedBatch($user);
+        $image = $batch->images()->first();
+        $this->actingAs($user)->postJson("/api/v1/generations/{$image->generation_id}/outputs/{$image->output_id}/disable")
+            ->assertNoContent();
+
+        $this->actingAs($user)->post("/api/v1/image-batches/{$batch->id}/images/{$image->id}/crop", [
+            'image' => UploadedFile::fake()->image('new.jpg', 300, 400),
+        ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('data.disabled', false);
+
+        $this->assertNull($image->output()->first()->disabled_at);
+    }
+
     public function test_crop_rejects_busy_image_and_other_users(): void
     {
         $user = $this->buyer(credit: 5000);

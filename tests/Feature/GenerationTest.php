@@ -388,6 +388,50 @@ class GenerationTest extends TestCase
         $this->actingAs($buyer)->getJson("/api/v1/generations/{$id}/outputs/{$kept->id}/download")->assertOk();
     }
 
+    public function test_history_tabs_split_active_failed_and_disabled_images(): void
+    {
+        $creative = $this->publishedCreative($this->creator(), price: 1000);
+        $buyer = $this->buyer(credit: 10000);
+        $id = $this->generate($buyer, $creative, quantity: 3)->json('data.id');
+        $this->runWorker([null, null, 'CONTENT_BLOCKED']);
+        $pending = $this->generate($buyer, $creative)->json('data.id'); // đang chờ worker
+        [$disabled, $active, $failed] = Generation::query()->findOrFail($id)->outputs;
+        $this->actingAs($buyer)->postJson("/api/v1/generations/{$id}/outputs/{$disabled->id}/disable")->assertNoContent();
+
+        $tab = fn (string $tab) => $this->actingAs($buyer)->getJson("/api/v1/generations?tab={$tab}")->assertOk();
+
+        $tab('active')->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.id', $pending)
+            ->assertJsonCount(1, 'data.1.outputs')
+            ->assertJsonPath('data.1.outputs.0.id', $active->id)
+            ->assertJsonPath('data.1.outputs.0.disabled', false);
+        $tab('failed')->assertJsonCount(1, 'data')
+            ->assertJsonCount(1, 'data.0.outputs')
+            ->assertJsonPath('data.0.outputs.0.id', $failed->id)
+            ->assertJsonPath('data.0.outputs.0.status', 'failed');
+        $tab('disabled')->assertJsonCount(1, 'data')
+            ->assertJsonCount(1, 'data.0.outputs')
+            ->assertJsonPath('data.0.outputs.0.id', $disabled->id)
+            ->assertJsonPath('data.0.outputs.0.disabled', true);
+        $this->assertNotNull($tab('disabled')->json('data.0.outputs.0.image_url'));
+        $this->actingAs($buyer)->getJson('/api/v1/generations?tab=other')->assertStatus(422);
+
+        // Bật lại: ảnh về tab đang hoạt động, tab đã tắt trống
+        $this->actingAs($this->buyer())->postJson("/api/v1/generations/{$id}/outputs/{$disabled->id}/enable")->assertNotFound();
+        $this->actingAs($buyer)->postJson("/api/v1/generations/{$id}/outputs/{$disabled->id}/enable")->assertNoContent();
+        $this->assertNull($disabled->fresh()->disabled_at);
+        $tab('disabled')->assertJsonCount(0, 'data');
+        $tab('active')->assertJsonCount(2, 'data.1.outputs');
+
+        // Tạo lại ảnh lỗi: ảnh lỗi cũ rời tab bị lỗi, ảnh mới nằm ở tab đang hoạt động
+        $retry = $this->actingAs($buyer)->postJson("/api/v1/generations/{$id}/retry", [
+            'output_ids' => [$failed->id],
+            'idempotency_key' => (string) Str::uuid(),
+        ])->assertStatus(202)->json('data.id');
+        $tab('failed')->assertJsonCount(0, 'data');
+        $tab('active')->assertJsonPath('data.0.id', $retry);
+    }
+
     public function test_only_completed_output_can_be_disabled(): void
     {
         $buyer = $this->buyer(credit: 5000);

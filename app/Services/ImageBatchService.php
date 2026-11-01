@@ -152,6 +152,8 @@ class ImageBatchService
                     'thumb_path' => $thumbPath,
                     'mime' => $file->getMimeType() ?: 'application/octet-stream',
                     'size_bytes' => $file->getSize(),
+                    // Ảnh đã tắt mà người dùng tải / cắt ảnh mới thay vào thì bật lại để dùng được ngay
+                    'disabled_at' => null,
                 ]);
                 $this->audit->log('image_batch.crop', $batch, ['image_id' => $image->id, 'output_id' => $output->id], $user->id);
 

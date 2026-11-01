@@ -47,11 +47,12 @@ class GenerationResource extends JsonResource
             'failed_count' => $this->failed_count,
             // Ảnh đầu vào theo tên trường
             'input_images' => array_map(fn ($path) => $media->url($path), $this->input_paths ?? []),
-            // Ảnh người dùng đã tắt không trả về
-            'outputs' => $this->whenLoaded('outputs', fn () => $this->outputs->whereNull('disabled_at')->map(fn ($output) => [
+            // Controller quyết định ảnh nào được load (mặc định bỏ ảnh đã tắt, tab "Đã tắt" chỉ load ảnh đã tắt)
+            'outputs' => $this->whenLoaded('outputs', fn () => $this->outputs->map(fn ($output) => [
                 'id' => $output->id,
                 'position' => $output->position,
                 'status' => $output->status,
+                'disabled' => (bool) $output->disabled_at,
                 'image_url' => $output->status === OutputStatus::Completed ? $media->url($output->image_path) : null,
                 'thumb_url' => $output->status === OutputStatus::Completed ? $media->url($output->thumbPathOrOriginal()) : null,
                 'error_code' => $output->error_code,

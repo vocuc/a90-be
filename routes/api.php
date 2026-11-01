@@ -61,6 +61,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         Route::post('generations/{generation}/retry', [GenerationController::class, 'retry'])->middleware('throttle:generations');
         Route::get('generations/{generation}/outputs/{output}/download', [GenerationController::class, 'download']);
         Route::post('generations/{generation}/outputs/{output}/disable', [GenerationController::class, 'disableOutput']);
+        Route::post('generations/{generation}/outputs/{output}/enable', [GenerationController::class, 'enableOutput']);
 
         // Ví Credit
         Route::get('wallet/credit', [CreditWalletController::class, 'show']);

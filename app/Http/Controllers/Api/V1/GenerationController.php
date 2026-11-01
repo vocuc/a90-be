@@ -47,11 +47,28 @@ class GenerationController extends Controller
         return (new GenerationResource($generation->load('creative')))->response()->setStatusCode(202);
     }
 
+    /**
+     * Lịch sử mua. tab lọc theo ảnh, mỗi đơn chỉ kèm ảnh của tab đó, đơn không có ảnh nào của tab thì không trả về:
+     * active = ảnh chưa tắt và không lỗi (gồm ảnh đang tạo), failed = ảnh tạo thất bại, disabled = ảnh người dùng đã tắt.
+     * Không có tab: mọi đơn, kèm ảnh chưa tắt (như cũ, dùng cho ô chọn ảnh).
+     */
     public function index(Request $request): AnonymousResourceCollection
     {
+        $tab = $request->validate(['tab' => ['nullable', 'in:active,failed,disabled']])['tab'] ?? null;
+        $filter = match ($tab) {
+            'active' => fn ($q) => $q->whereNull('disabled_at')->where('status', '!=', OutputStatus::Failed),
+            // Ảnh lỗi đã bấm "Tạo lại" (có output mới retry_of_output_id trỏ tới) thì không hiện nữa
+            'failed' => fn ($q) => $q->where('status', OutputStatus::Failed)
+                ->whereNotExists(fn ($s) => $s->from('generation_outputs as retries')
+                    ->whereColumn('retries.retry_of_output_id', 'generation_outputs.id')),
+            'disabled' => fn ($q) => $q->whereNotNull('disabled_at'),
+            default => self::enabledOutputs(...),
+        };
+
         $generations = Generation::query()
             ->where('user_id', $request->user()->id)
-            ->with(['creative', 'outputs'])
+            ->when($tab, fn ($q) => $q->whereHas('outputs', $filter))
+            ->with(['creative', 'outputs' => $filter])
             ->latest('id')
             ->paginate(min((int) $request->query('per_page', 20), 50));
 
@@ -62,7 +79,13 @@ class GenerationController extends Controller
     {
         $this->authorizeOwner($request, $generation);
 
-        return new GenerationResource($generation->load(['creative', 'outputs']));
+        return new GenerationResource($generation->load(['creative', 'outputs' => self::enabledOutputs(...)]));
+    }
+
+    /** Ảnh người dùng đã tắt không trả về (trừ tab "Đã tắt"). */
+    private static function enabledOutputs($query): void
+    {
+        $query->whereNull('disabled_at');
     }
 
     /** Bản rút gọn để frontend polling. */
@@ -133,6 +156,20 @@ class GenerationController extends Controller
         if (! $output->disabled_at) {
             $output->update(['disabled_at' => now()]);
             app(AuditLogger::class)->log('generation_output.disable', $generation, ['output_id' => $output->id], $request->user()->id);
+        }
+
+        return response()->noContent();
+    }
+
+    /** Bật lại ảnh đã tắt: dùng lại được như cũ. Ảnh đang bật vẫn trả 204. */
+    public function enableOutput(Request $request, Generation $generation, GenerationOutput $output): Response
+    {
+        $this->authorizeOwner($request, $generation);
+        abort_unless($output->generation_id === $generation->id, 404);
+
+        if ($output->disabled_at) {
+            $output->update(['disabled_at' => null]);
+            app(AuditLogger::class)->log('generation_output.enable', $generation, ['output_id' => $output->id], $request->user()->id);
         }
 
         return response()->noContent();
