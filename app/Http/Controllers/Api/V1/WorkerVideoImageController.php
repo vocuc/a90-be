@@ -40,13 +40,13 @@ class WorkerVideoImageController extends Controller
             throw new BusinessException('VIDEO_ACCOUNT_NOT_ASSIGNED', 'Worker chưa được gắn tài khoản A51 tạo video.', 409);
         }
 
-        $ownerId = $user->resourceOwnerId();
+        $ownerId = $user->id;
         // Số ảnh (không trùng) của từng sản phẩm trong lô của shop
         $perProduct = DB::table('image_batch_images')
             ->join('image_batches', 'image_batches.id', '=', 'image_batch_images.image_batch_id')
             ->join('generation_outputs', 'generation_outputs.id', '=', 'image_batch_images.output_id')
             ->whereNotNull('image_batches.product_id')
-            ->where(fn ($w) => $w->where('image_batches.user_id', $ownerId)->orWhere('image_batches.shop_owner_id', $ownerId))
+            ->where('image_batches.user_id', $ownerId)
             ->where('generation_outputs.status', OutputStatus::Completed->value)
             ->whereNotNull('generation_outputs.image_path')
             ->whereNull('generation_outputs.disabled_at')
@@ -84,6 +84,6 @@ class WorkerVideoImageController extends Controller
                 ->from('image_batch_images')
                 ->join('image_batches', 'image_batches.id', '=', 'image_batch_images.image_batch_id')
                 ->where('image_batches.product_id', $productId)
-                ->where(fn ($w) => $w->where('image_batches.user_id', $ownerId)->orWhere('image_batches.shop_owner_id', $ownerId)));
+                ->where('image_batches.user_id', $ownerId));
     }
 }

@@ -11,7 +11,6 @@ use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\DashboardController;
 use App\Http\Controllers\Api\V1\Creator\ProductController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
-use App\Http\Controllers\Api\V1\Creator\StaffController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\ImageBatchController;
@@ -21,7 +20,6 @@ use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\Social\TikTokController;
 use App\Http\Controllers\Api\V1\Social\TikTokWebhookController;
-use App\Http\Controllers\Api\V1\StaffShopController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
 use App\Http\Controllers\Api\V1\WorkerPublishJobController;
 use App\Http\Controllers\Api\V1\WorkerVideoImageController;
@@ -94,10 +92,13 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::patch('creatives/{creative}/images/order', [CreativeImageController::class, 'reorder']);
             Route::delete('creatives/{creative}/images/{image}', [CreativeImageController::class, 'destroy']);
 
-            // Tạo lô tự động: sản phẩm + nhóm creative (note/auto-tao-lo.txt ở repo frontend). Xem: nhóm creator_or_staff bên dưới
+            // Tạo lô tự động: sản phẩm + nhóm creative (note/auto-tao-lo.txt ở repo frontend)
+            Route::get('products', [ProductController::class, 'index']);
+            Route::get('products/{product}', [ProductController::class, 'show'])->whereNumber('product');
             Route::post('products', [ProductController::class, 'store']);
             Route::post('products/{product}', [ProductController::class, 'update'])->whereNumber('product');
             Route::delete('products/{product}', [ProductController::class, 'destroy'])->whereNumber('product');
+            Route::get('creative-groups', [CreativeGroupController::class, 'index']);
             Route::post('creative-groups', [CreativeGroupController::class, 'store']);
             Route::put('creative-groups/{group}', [CreativeGroupController::class, 'update'])->whereNumber('group');
             Route::delete('creative-groups/{group}', [CreativeGroupController::class, 'destroy'])->whereNumber('group');
@@ -105,13 +106,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             // Trang "AI viết nội dung": kho hashtag, bài viết mẫu, số ký tự tối đa (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend)
             Route::get('ai-content', [AiContentSettingController::class, 'show']);
             Route::put('ai-content', [AiContentSettingController::class, 'update']);
-
-            // Nhân viên của shop (note/chia-se-tai-nguyen.txt ở repo frontend)
-            Route::get('staff', [StaffController::class, 'index']);
-            Route::post('staff', [StaffController::class, 'store']);
-            Route::delete('staff/{staff}', [StaffController::class, 'destroy'])->whereNumber('staff');
-            Route::get('staff-batches', [StaffController::class, 'batches']);
-            Route::get('staff-batches/{batch}', [StaffController::class, 'batch'])->whereNumber('batch');
 
             Route::get('dashboard', [DashboardController::class, 'dashboard']);
             Route::get('wallet', [DashboardController::class, 'wallet']);
@@ -126,20 +120,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('shipping-orders/{order}', [ShippingOrderController::class, 'update'])->whereNumber('order');
             Route::delete('shipping-orders/{order}', [ShippingOrderController::class, 'destroy'])->whereNumber('order');
             Route::post('shipping-orders/{order}/submit', [ShippingOrderController::class, 'submit'])->whereNumber('order');
-        });
-
-        // Sản phẩm / nhóm creative: Creator xem của mình, nhân viên xem của shop chủ (note/chia-se-tai-nguyen.txt ở repo frontend)
-        Route::prefix('creator')->middleware('creator_or_staff')->group(function () {
-            Route::get('products', [ProductController::class, 'index']);
-            Route::get('products/{product}', [ProductController::class, 'show'])->whereNumber('product');
-            Route::get('creative-groups', [CreativeGroupController::class, 'index']);
-        });
-
-        // Nhân viên của shop: rời shop, logo chèn vào ảnh, creative của shop để tạo lô tay
-        Route::prefix('staff')->group(function () {
-            Route::delete('shop', [StaffShopController::class, 'leave']);
-            Route::post('logo', [StaffShopController::class, 'uploadLogo']);
-            Route::get('creatives', [StaffShopController::class, 'creatives']);
         });
 
         // Danh mục địa chỉ GHN (gọi bằng token GHN của shop, có cache)

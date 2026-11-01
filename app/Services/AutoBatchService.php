@@ -24,9 +24,6 @@ use Illuminate\Support\Facades\DB;
  * bằng min(số sản phẩm, số nhóm) (xem AutoBatchPlanner). Cặp không có creative nào dùng được thì đổi nhóm khác.
  * Hết tiền giữa chừng thì dừng; lô là đơn vị nhỏ nhất (trừ tiền cả lô như lô tạo tay).
  * Số lô tự động đã tạo của từng sản phẩm lưu ở auto_batch_product_counts (chỉ để hiển thị, không ảnh hưởng cách chọn).
- *
- * Nhân viên của shop (note/chia-se-tai-nguyen.txt ở repo frontend) dùng sản phẩm / nhóm / creative của shop chủ, trừ ví
- * nhân viên; số lô đếm riêng từng người.
  */
 class AutoBatchService
 {
@@ -92,7 +89,6 @@ class AutoBatchService
                             'source' => ImageBatch::SOURCE_AUTO,
                             'product_id' => $plan['product']->id,
                             'creative_group_id' => $plan['group']->id,
-                            'shop_owner_id' => $user->shopOwnerId(),
                         ]);
                         DB::table('auto_batch_product_counts')->upsert(
                             ['user_id' => $user->id, 'product_id' => $plan['product']->id, 'count' => 1],
@@ -129,9 +125,9 @@ class AutoBatchService
 
     private function planner(User $user): AutoBatchPlanner
     {
-        $products = Product::query()->usableBy($user)->with('images')->orderBy('id')->get();
+        $products = Product::query()->ownedBy($user)->with('images')->orderBy('id')->get();
         $groups = CreativeGroup::query()
-            ->where('user_id', $user->resourceOwnerId())
+            ->where('user_id', $user->id)
             ->with(['creatives.config', 'creatives.model'])
             ->orderBy('id')
             ->get();
@@ -141,7 +137,7 @@ class AutoBatchService
 
     /**
      * Creative dùng được của nhóm với sản phẩm, kèm nguyên liệu. Bỏ qua (không báo): không Đang bán / bị ẩn / không phải
-     * của chủ nhóm (người dùng, hoặc shop chủ khi là nhân viên) / model tạm tắt; không có trường ảnh nào trùng key; còn trường bắt buộc không có giá trị.
+     * của người dùng / model tạm tắt; không có trường ảnh nào trùng key; còn trường bắt buộc không có giá trị.
      *
      * @param  Collection<int, AiCreative>  $creatives
      * @return array<int, array{creative: AiCreative, input: GenerationInput, quantity: int, kept: array<string, string>}>
@@ -152,7 +148,7 @@ class AutoBatchService
         $items = [];
 
         foreach ($creatives as $creative) {
-            if ($creative->creator_id !== $user->resourceOwnerId() || $creative->status !== CreativeStatus::Published
+            if ($creative->creator_id !== $user->id || $creative->status !== CreativeStatus::Published
                 || $creative->hidden_at !== null || ! $creative->model?->is_active || ! $creative->config) {
                 continue;
             }

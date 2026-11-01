@@ -19,7 +19,6 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Sản phẩm cho tạo lô tự động (note/auto-tao-lo.txt ở repo frontend). Sản phẩm của người khác -> 404.
- * Nhân viên của shop xem được (index, show) sản phẩm của shop chủ, không sửa được (note/chia-se-tai-nguyen.txt).
  * Mỗi ảnh liên kết tới key một trường ảnh trong creative. Hashtag chỉ lưu, tạo lô tự động không xét. File ảnh cũ không xoá vì lượt tạo ảnh cũ dùng thẳng đường dẫn.
  */
 class ProductController extends Controller
@@ -34,7 +33,7 @@ class ProductController extends Controller
         $data = $request->validate(['per_page' => ['nullable', 'integer', 'min:1', 'max:50']]);
 
         $products = Product::query()
-            ->usableBy($request->user())
+            ->ownedBy($request->user())
             ->withAutoBatchCount($request->user())
             ->with(['images', 'hashtags'])
             ->latest('id')
@@ -45,7 +44,7 @@ class ProductController extends Controller
 
     public function show(Request $request, int $product): ProductResource
     {
-        return $this->resource($request, Product::query()->usableBy($request->user())->findOrFail($product)->id);
+        return $this->resource($request, Product::query()->ownedBy($request->user())->findOrFail($product)->id);
     }
 
     /** multipart: name?, hashtags[]?, images[i][file], images[i][field_key] */

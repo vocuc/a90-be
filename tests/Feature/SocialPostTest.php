@@ -12,7 +12,6 @@ use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\Hashtag;
 use App\Models\PublishAccount;
-use App\Models\ShopStaff;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\SocialPublishJob;
@@ -168,26 +167,6 @@ class SocialPostTest extends TestCase
 
         $this->assertSame([], $this->aiCalls[0]['request']['hashtags']);
         $this->getPost($user, $id)->assertJsonPath('data.title', 'Tiêu đề')->assertJsonPath('data.hashtags', []);
-    }
-
-    public function test_staff_uses_hashtags_of_shop_owner(): void
-    {
-        $owner = $this->creator();
-        $staff = $this->buyer(credit: 5000);
-        ShopStaff::query()->create(['owner_id' => $owner->id, 'user_id' => $staff->id]);
-        $this->setShopHashtags($owner, ['giay']);
-        $this->setShopHashtags($staff, ['khongdung']);
-        $this->aiResult['hashtags'] = ['giay'];
-        $image = $this->completedImage($staff);
-        $staffBalance = $this->balance($staff);
-        $ownerBalance = $this->balance($owner);
-
-        $id = $this->fromImages($staff, [$image], ['ai_content' => true])->json('data.id');
-
-        $this->assertSame(['giay'], $this->aiCalls[0]['request']['hashtags']);
-        $this->getPost($staff, $id)->assertJsonPath('data.hashtags', ['giay']);
-        $this->assertSame($staffBalance - $this->price(), $this->balance($staff), 'Trừ ví nhân viên');
-        $this->assertSame($ownerBalance, $this->balance($owner));
     }
 
     public function test_ai_failure_falls_back_to_creative_info_and_refunds(): void
@@ -458,9 +437,7 @@ class SocialPostTest extends TestCase
 
     public function test_ai_follows_shop_samples_and_length_limits(): void
     {
-        $owner = $this->creator();
-        $staff = $this->buyer(credit: 5000);
-        ShopStaff::query()->create(['owner_id' => $owner->id, 'user_id' => $staff->id]);
+        $owner = $this->creator(credit: 5000);
         $this->aiSettings($owner, [
             'samples' => [['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']],
             'title_max' => 20,
@@ -468,14 +445,14 @@ class SocialPostTest extends TestCase
         ])->assertOk();
         $this->aiResult = ['title' => str_repeat('Tiêu đề rất dài ', 5), 'content' => str_repeat('Nội dung dài. ', 20), 'hashtags' => []];
 
-        $id = $this->fromImages($staff, [$this->completedImage($staff)], ['ai_content' => true])->json('data.id');
+        $id = $this->fromImages($owner, [$this->completedImage($owner)], ['ai_content' => true])->json('data.id');
 
         $request = $this->aiCalls[0]['request'];
         $this->assertSame([['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']], $request['samples']);
         $this->assertSame(20, $request['limits']['title_max']);
         $this->assertSame(60, $request['limits']['content_max']);
 
-        $post = $this->getPost($staff, $id)->json('data');
+        $post = $this->getPost($owner, $id)->json('data');
         $this->assertLessThanOrEqual(20, mb_strlen($post['title']));
         $this->assertLessThanOrEqual(60, mb_strlen($post['content']));
     }

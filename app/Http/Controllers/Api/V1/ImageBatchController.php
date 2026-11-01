@@ -93,12 +93,7 @@ class ImageBatchController extends Controller
             ];
         }
 
-        // Nhân viên dùng creative của shop chủ: chủ shop xem được lô (note/chia-se-tai-nguyen.txt ở repo frontend)
-        $shopOwnerId = $request->user()->shopOwnerId();
-        $usesShop = $shopOwnerId && $creatives->contains(fn (AiCreative $c) => $c->creator_id === $shopOwnerId);
-
-        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo,
-            $usesShop ? ['shop_owner_id' => $shopOwnerId] : []);
+        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo);
 
         return $this->resource($batch)->response()->setStatusCode(201);
     }
@@ -170,10 +165,6 @@ class ImageBatchController extends Controller
     {
         $batch = $this->findBatch($request, $batch);
         $image = $this->findImage($batch, $image);
-        // Lô dùng tài nguyên shop: rời shop / bị gỡ thì không tạo lại được (note/chia-se-tai-nguyen.txt ở repo frontend)
-        if ($batch->shop_owner_id && $batch->shop_owner_id !== $request->user()->shopOwnerId()) {
-            throw new BusinessException('SHOP_ACCESS_REVOKED', 'Bạn không còn là nhân viên của shop nên không tạo lại được ảnh của lô này.', 403);
-        }
         $data = $request->validate([
             'idempotency_key' => ['required', 'string', 'max:100'],
             'keep_files' => ['nullable', 'array'],
@@ -227,18 +218,15 @@ class ImageBatchController extends Controller
         return response()->noContent();
     }
 
-    /** Logo = ảnh đại diện shop (note/logo-tao-anh.txt); nhân viên của shop dùng logo tự tải lên (User::logoPath). */
+    /** Logo = ảnh đại diện shop (note/logo-tao-anh.txt). */
     private function insertLogo(Request $request, array $data): bool
     {
         $insertLogo = (bool) ($data['insert_logo'] ?? false);
         $user = $request->user();
         if ($insertLogo && ! $user->logoPath()) {
-            $profile = $user->creatorProfile;
-            throw ValidationException::withMessages(['insert_logo' => match (true) {
-                (bool) $profile => 'Shop chưa có logo. Hãy thêm ảnh đại diện shop để dùng tính năng này.',
-                (bool) $user->shopOwnerId() => 'Hãy tải logo lên để dùng tính năng này.',
-                default => 'Bạn phải tạo shop để sử dụng tính năng này.',
-            }]);
+            throw ValidationException::withMessages(['insert_logo' => $user->creatorProfile
+                ? 'Shop chưa có logo. Hãy thêm ảnh đại diện shop để dùng tính năng này.'
+                : 'Bạn phải tạo shop để sử dụng tính năng này.']);
         }
 
         return $insertLogo;

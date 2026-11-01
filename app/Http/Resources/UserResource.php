@@ -3,7 +3,6 @@
 namespace App\Http\Resources;
 
 use App\Models\User;
-use App\Services\MediaStorage;
 use App\Services\SettingService;
 use App\Services\Social\SocialContentJobService;
 use Illuminate\Http\Request;
@@ -23,11 +22,6 @@ class UserResource extends JsonResource
             'creator_profile' => $this->creatorProfile
                 ? new CreatorProfileResource($this->creatorProfile)
                 : null,
-            // Nhân viên của shop (note/chia-se-tai-nguyen.txt ở repo frontend): shop đang làm, logo tự tải lên để chèn vào ảnh
-            'staff_of' => $this->staffMembership?->owner?->creatorProfile
-                ? new CreatorSummaryResource($this->staffMembership->owner->creatorProfile)
-                : null,
-            'logo_url' => app(MediaStorage::class)->url($this->logo_path),
             // AI viết nội dung bài đăng (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): tắt thì ẩn công tắc / nút viết lại
             'social_ai' => [
                 'enabled' => SocialContentJobService::enabled(),

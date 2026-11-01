@@ -30,8 +30,6 @@ class ProductResource extends JsonResource
             'hashtags' => HashtagResource::collection($this->whenLoaded('hashtags')),
             // Số lần chạy tự động của người đang xem (mỗi nhân viên đếm riêng)
             'auto_batch_count' => (int) $this->auto_batch_count,
-            // false: sản phẩm của shop chủ, nhân viên chỉ dùng, không sửa / xoá (note/chia-se-tai-nguyen.txt ở repo frontend)
-            'is_owner' => $this->user_id === $request->user()?->id,
             'created_at' => $this->created_at,
         ];
     }

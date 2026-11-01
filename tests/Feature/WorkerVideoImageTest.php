@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Models\AuditLog;
 use App\Models\ImageBatch;
 use App\Models\Product;
-use App\Models\ShopStaff;
 use App\Models\User;
 use App\Models\Worker;
 use Illuminate\Http\UploadedFile;
@@ -113,28 +112,21 @@ class WorkerVideoImageTest extends TestCase
         $this->images($token, 3)->assertJsonFragment(['available' => 2]);
     }
 
-    public function test_only_images_of_assigned_shop_and_its_staff(): void
+    public function test_only_images_of_assigned_shop(): void
     {
         $owner = $this->buyer(credit: 100000);
-        $staff = $this->buyer(credit: 100000);
         $other = $this->buyer(credit: 100000);
-        ShopStaff::query()->create(['owner_id' => $owner->id, 'user_id' => $staff->id]);
 
         $product = $this->product($owner);
-        $ownBatch = $this->completedBatch($owner, 1, $product);
-        $staffBatch = $this->completedBatch($staff, 1, $product);
-        $staffBatch->forceFill(['shop_owner_id' => $owner->id])->save();
+        $batches = [$this->completedBatch($owner, 1, $product), $this->completedBatch($owner, 1, $product)];
         $this->completedBatch($other, 2, $this->product($other));
 
-        $expected = collect([$ownBatch, $staffBatch])->flatMap(fn (ImageBatch $b) => $b->images()->pluck('output_id'))->sort()->values()->all();
+        $expected = collect($batches)->flatMap(fn (ImageBatch $b) => $b->images()->pluck('output_id'))->sort()->values()->all();
 
-        // Gắn chủ shop hay nhân viên đều lấy ảnh của cả shop
-        foreach ([$owner, $staff] as $user) {
-            [, $token] = $this->videoWorker($user);
-            $ids = collect($this->images($token, 2)->assertOk()->json('data.images'))->pluck('id')->sort()->values()->all();
-            $this->assertSame($expected, $ids);
-            $this->images($token, 3)->assertStatus(422);
-        }
+        [, $token] = $this->videoWorker($owner);
+        $ids = collect($this->images($token, 2)->assertOk()->json('data.images'))->pluck('id')->sort()->values()->all();
+        $this->assertSame($expected, $ids);
+        $this->images($token, 3)->assertStatus(422);
     }
 
     public function test_images_come_from_a_single_product(): void

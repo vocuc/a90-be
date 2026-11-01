@@ -17,7 +17,6 @@ use Illuminate\Validation\ValidationException;
 /**
  * Nhóm creative cho tạo lô tự động (note/auto-tao-lo.txt ở repo frontend). Nhóm của người khác -> 404.
  * Chỉ chứa creative của chính người dùng (mọi trạng thái, lúc chạy chỉ dùng Đang bán); một creative chỉ ở một nhóm.
- * Nhân viên của shop xem được (index) nhóm của shop chủ, không sửa được (note/chia-se-tai-nguyen.txt).
  */
 class CreativeGroupController extends Controller
 {
@@ -27,7 +26,7 @@ class CreativeGroupController extends Controller
     public function index(Request $request): AnonymousResourceCollection
     {
         $groups = CreativeGroup::query()
-            ->where('user_id', $request->user()->resourceOwnerId())
+            ->where('user_id', $request->user()->id)
             ->with(self::RELATIONS)
             ->orderBy('id')
             ->get();

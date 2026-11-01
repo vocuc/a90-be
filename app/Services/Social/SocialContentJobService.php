@@ -154,8 +154,8 @@ class SocialContentJobService
      */
     public function write(SocialPost $post): ?array
     {
-        $post->loadMissing(['user.staffMembership', 'images.output', 'images.generation.creative.category']);
-        $ownerId = $post->user->resourceOwnerId();
+        $post->loadMissing(['images.output', 'images.generation.creative.category']);
+        $ownerId = $post->user_id;
         $pool = User::query()->find($ownerId)?->shopHashtags()->pluck('name')->all() ?? [];
         $settings = ShopAiSetting::forOwner($ownerId);
         $titleMax = min($settings['title_max'], SocialPost::TITLE_MAX);
