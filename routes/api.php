@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\DashboardController;
 use App\Http\Controllers\Api\V1\Creator\ProductController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
+use App\Http\Controllers\Api\V1\Creator\VideoTemplateController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\ImageBatchController;
@@ -106,6 +107,13 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             // Trang "AI viết nội dung": kho hashtag, bài viết mẫu, số ký tự tối đa (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend)
             Route::get('ai-content', [AiContentSettingController::class, 'show']);
             Route::put('ai-content', [AiContentSettingController::class, 'update']);
+
+            // Quản lý video template (note/quan-ly-video-template.txt ở repo frontend)
+            Route::get('video-templates', [VideoTemplateController::class, 'index']);
+            Route::post('video-templates', [VideoTemplateController::class, 'store']);
+            Route::get('video-templates/{template}', [VideoTemplateController::class, 'show'])->whereNumber('template');
+            Route::put('video-templates/{template}', [VideoTemplateController::class, 'update'])->whereNumber('template');
+            Route::delete('video-templates/{template}', [VideoTemplateController::class, 'destroy'])->whereNumber('template');
 
             Route::get('dashboard', [DashboardController::class, 'dashboard']);
             Route::get('wallet', [DashboardController::class, 'wallet']);

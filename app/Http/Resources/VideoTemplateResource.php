@@ -1,0 +1,21 @@
+<?php
+
+namespace App\Http\Resources;
+
+use App\Models\VideoTemplate;
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+
+/** @mixin VideoTemplate */
+class VideoTemplateResource extends JsonResource
+{
+    public function toArray(Request $request): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'video_url' => $this->video_url,
+            'created_at' => $this->created_at,
+        ];
+    }
+}
