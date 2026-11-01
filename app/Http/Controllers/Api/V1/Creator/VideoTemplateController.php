@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Creator;
 
 use App\Http\Controllers\Controller;
+use App\Exceptions\BusinessException;
 use App\Http\Resources\VideoTemplateResource;
 use App\Models\VideoTemplate;
 use Illuminate\Http\JsonResponse;
@@ -12,7 +13,8 @@ use Illuminate\Http\Response;
 
 /**
  * Quản lý video template của shop (note/quan-ly-video-template.txt ở repo frontend). Cần hồ sơ người bán.
- * Template của người khác -> 404.
+ * Template của người khác -> 404. Template đồng bộ từ máy làm template (synced): chỉ xem, sửa / xoá -> 409
+ * VIDEO_TEMPLATE_SYNCED; template đã ẩn (bị xoá khỏi máy làm template) không hiện.
  */
 class VideoTemplateController extends Controller
 {
@@ -26,6 +28,7 @@ class VideoTemplateController extends Controller
 
         $templates = VideoTemplate::query()
             ->where('user_id', $request->user()->id)
+            ->visible()
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);
 
@@ -46,7 +49,7 @@ class VideoTemplateController extends Controller
 
     public function update(Request $request, int $template): VideoTemplateResource
     {
-        $template = $this->find($request, $template);
+        $template = $this->findEditable($request, $template);
         $template->update($this->validated($request));
 
         return new VideoTemplateResource($template);
@@ -54,14 +57,24 @@ class VideoTemplateController extends Controller
 
     public function destroy(Request $request, int $template): Response
     {
-        $this->find($request, $template)->delete();
+        $this->findEditable($request, $template)->delete();
 
         return response()->noContent();
     }
 
     private function find(Request $request, int $id): VideoTemplate
     {
-        return VideoTemplate::query()->where('user_id', $request->user()->id)->findOrFail($id);
+        return VideoTemplate::query()->where('user_id', $request->user()->id)->visible()->findOrFail($id);
+    }
+
+    private function findEditable(Request $request, int $id): VideoTemplate
+    {
+        $template = $this->find($request, $id);
+        if ($template->isSynced()) {
+            throw new BusinessException('VIDEO_TEMPLATE_SYNCED', 'Template đồng bộ từ máy làm template, không sửa / xoá được.', 409);
+        }
+
+        return $template;
     }
 
     private function validated(Request $request): array

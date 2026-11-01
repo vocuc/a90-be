@@ -132,7 +132,7 @@ class VideoPostController extends Controller
     {
         return response()->json(['data' => VideoTemplate::query()
             ->where('user_id', $request->user()->id)
-            ->whereNotNull('image_count')
+            ->usable()
             ->orderBy('name')
             ->get(['id', 'name', 'video_url', 'image_count'])]);
     }

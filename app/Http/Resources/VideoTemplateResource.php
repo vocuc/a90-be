@@ -16,6 +16,9 @@ class VideoTemplateResource extends JsonResource
             'name' => $this->name,
             'video_url' => $this->video_url,
             'image_count' => $this->image_count,
+            // Đồng bộ từ máy làm template: shop chỉ xem, không sửa / xoá
+            'synced' => $this->isSynced(),
+            'source_key' => $this->source_key,
             'created_at' => $this->created_at,
         ];
     }

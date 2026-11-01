@@ -27,6 +27,7 @@ use App\Http\Controllers\Api\V1\WorkerJobController;
 use App\Http\Controllers\Api\V1\WorkerPublishJobController;
 use App\Http\Controllers\Api\V1\WorkerVideoImageController;
 use App\Http\Controllers\Api\V1\WorkerVideoPostController;
+use App\Http\Controllers\Api\V1\WorkerVideoTemplateController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->middleware('throttle:api')->group(function () {
@@ -208,6 +209,9 @@ Route::prefix('v1/publish-jobs')->middleware('worker')->group(function () {
 Route::get('v1/video-images', [WorkerVideoImageController::class, 'index'])->middleware('worker');
 
 // Worker dựng + đăng bài video có lịch: chỉ nhận bài đã tới giờ, được giao cho chính worker (note/lap-lich-worker.txt ở repo frontend)
+// Máy làm template (D:ideo-tmp, npm run sync-templates) đồng bộ danh sách template vào shop worker được gắn (tài khoản tạo video)
+Route::put('v1/video-templates/sync', [WorkerVideoTemplateController::class, 'sync'])->middleware('worker');
+
 Route::prefix('v1/video-posts')->middleware('worker')->group(function () {
     Route::get('/', [WorkerVideoPostController::class, 'next']);
     Route::post('{id}', [WorkerVideoPostController::class, 'submit'])->whereNumber('id');

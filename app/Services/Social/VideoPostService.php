@@ -71,7 +71,7 @@ class VideoPostService
             return ['created' => $existing->count(), 'requested' => $count, 'stopped' => null, 'post_ids' => $existing->all()];
         }
 
-        $templates = VideoTemplate::query()->where('user_id', $user->id)->whereNotNull('image_count')->get();
+        $templates = VideoTemplate::query()->where('user_id', $user->id)->usable()->get();
         $counts = $this->library->countsPerProduct($user->id);
 
         $ids = [];
@@ -122,7 +122,7 @@ class VideoPostService
     {
         $this->assertVideo($post);
         $worker = $this->findWorker($user, (int) $data['worker_id']);
-        $template = VideoTemplate::query()->where('user_id', $user->id)->find((int) $data['video_template_id'])
+        $template = VideoTemplate::query()->where('user_id', $user->id)->visible()->find((int) $data['video_template_id'])
             ?? throw ValidationException::withMessages(['video_template_id' => 'Template không tồn tại.']);
         if (! $template->image_count) {
             throw ValidationException::withMessages(['video_template_id' => 'Template chưa có số ảnh, hãy sửa template trước.']);
