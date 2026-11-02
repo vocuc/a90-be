@@ -14,8 +14,9 @@ use Illuminate\View\View;
 /**
  * Worker: máy nội bộ (tạo ảnh, viết nội dung, đăng bài) xác thực bằng token. Admin tạo worker, xem lại / đổi token
  * (dán vào .env của máy), bật / tắt, gắn tài khoản A51 mà worker nhận job tạo ảnh (chưa gắn -> không nhận job ảnh).
- * Shop đăng bài (video_user_id): worker đăng bài ảnh / video được giao + tạo video cho đúng 1 shop
- *   (note/gop-luong-dang-bai.txt ở repo frontend). Worker tự đăng nhập tài khoản mạng xã hội trên máy.
+ * Mỗi worker một loại (note/quan-ly-worker.txt ở repo frontend): Tạo ảnh (nhận job tạo ảnh của các tài khoản được gắn)
+ * hoặc Đăng bài (shop được gắn chọn ở trang bài đăng, note/gop-luong-dang-bai.txt). Gắn nhiều tài khoản; một tài khoản
+ * có nhiều worker cùng loại. Đổi loại / bỏ tài khoản bị chặn khi worker còn việc dở.
  * Không xoá worker (job cũ còn liên kết): không dùng nữa thì tắt.
  */
 class WorkerController extends Controller
@@ -24,7 +25,7 @@ class WorkerController extends Controller
 
     public function index(): View
     {
-        $workers = Worker::query()->with(['videoUser'])->withCount('imageUsers')->orderBy('name')->get();
+        $workers = Worker::query()->with(['users' => fn ($q) => $q->orderBy('email')])->orderBy('name')->get();
 
         return view('admin.workers.index', compact('workers'));
     }
@@ -36,17 +37,26 @@ class WorkerController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
-        $request->merge(['name' => trim((string) $request->input('name'))]);
+        $request->merge(['name' => trim((string) $request->input('name')), 'email' => trim((string) $request->input('email'))]);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:100', 'unique:workers,name'],
+            'type' => ['required', Rule::in(Worker::TYPES)],
+            'email' => ['nullable', 'email', 'exists:users,email'],
         ], [
             'name.required' => 'Vui lòng nhập tên worker.',
             'name.max' => 'Tên worker tối đa 100 ký tự.',
             'name.unique' => 'Tên worker đã tồn tại.',
+            'type.required' => 'Chọn loại worker.',
+            'email.email' => 'Email không hợp lệ.',
+            'email.exists' => 'Không có tài khoản nào dùng email này.',
         ]);
 
-        [$worker] = Worker::register($data['name']);
-        $this->audit->log('admin.worker.create', $worker, ['name' => $worker->name]);
+        [$worker] = Worker::register($data['name'], $data['type']);
+        $user = $data['email'] ? User::query()->where('email', $data['email'])->firstOrFail() : null;
+        if ($user) {
+            $worker->users()->attach($user->id, ['created_at' => now()]);
+        }
+        $this->audit->log('admin.worker.create', $worker, ['name' => $worker->name, 'type' => $worker->type, 'user_id' => $user?->id]);
 
         return redirect()->route('admin.workers.show', $worker)
             ->with('success', "Đã tạo worker \"{$worker->name}\". Copy token bên dưới dán vào .env của máy chạy worker.");
@@ -55,7 +65,7 @@ class WorkerController extends Controller
     /** Trang xem token của worker (ghi nhật ký mỗi lần xem). */
     public function show(Worker $worker): View
     {
-        $worker->load(['videoUser', 'imageUsers' => fn ($q) => $q->orderBy('email')]);
+        $worker->load(['users' => fn ($q) => $q->orderBy('email')]);
         if ($worker->plainToken() !== null) {
             $this->audit->log('admin.worker.view_token', $worker);
         }
@@ -95,7 +105,7 @@ class WorkerController extends Controller
             ->with('success', "Đã tạo token mới cho worker \"{$worker->name}\". Token cũ không dùng được nữa.");
     }
 
-    /** Gắn tài khoản A51 (theo email) vào worker: worker nhận job tạo ảnh của tài khoản này. */
+    /** Gắn tài khoản A51 (theo email): Tạo ảnh -> nhận job tạo ảnh của tài khoản; Đăng bài -> shop chọn được worker. */
     public function attachUser(Request $request, Worker $worker): RedirectResponse
     {
         $request->merge(['email' => trim((string) $request->input('email'))]);
@@ -108,48 +118,43 @@ class WorkerController extends Controller
         ]);
 
         $user = User::query()->where('email', $data['email'])->firstOrFail();
-        $worker->imageUsers()->syncWithoutDetaching([$user->id => ['created_at' => now()]]);
+        $worker->users()->syncWithoutDetaching([$user->id => ['created_at' => now()]]);
         $this->audit->log('admin.worker.attach_user', $worker, ['user_id' => $user->id, 'email' => $user->email]);
 
-        return back()->with('success', "Worker \"{$worker->name}\" sẽ nhận job tạo ảnh của {$user->email}.");
+        return back()->with('success', $worker->isImage()
+            ? "Worker \"{$worker->name}\" sẽ nhận job tạo ảnh của {$user->email}."
+            : "Shop {$user->email} chọn được worker \"{$worker->name}\" để đăng bài.");
     }
 
-    /** Bỏ tài khoản khỏi worker: job đang chờ của tài khoản này không giao cho worker nữa (job đang làm dở vẫn trả kết quả được). */
+    /** Bỏ tài khoản khỏi worker. Chặn khi worker còn việc dở của tài khoản này (ảnh đang tạo / bài chờ đăng, đang đăng). */
     public function detachUser(Worker $worker, User $user): RedirectResponse
     {
-        $worker->imageUsers()->detach($user->id);
+        if ($pending = $worker->pendingJobCount($user->id)) {
+            return back()->withErrors(['worker' => "Không bỏ được {$user->email}: worker còn {$pending} việc dở của tài khoản này"
+                .($worker->isImage() ? ' (ảnh đang tạo).' : ' (bài chờ đăng / đang đăng). Đổi worker cho các bài đó trước.')]);
+        }
+        $worker->users()->detach($user->id);
         $this->audit->log('admin.worker.detach_user', $worker, ['user_id' => $user->id, 'email' => $user->email]);
 
-        return back()->with('success', "Worker \"{$worker->name}\" không nhận job tạo ảnh của {$user->email} nữa.");
+        return back()->with('success', "Đã bỏ {$user->email} khỏi worker \"{$worker->name}\".");
     }
 
-    /** Gắn shop (theo email) worker đăng bài + tạo video cho. Mỗi worker 1 shop, gắn mới thay shop cũ. */
-    public function setVideoUser(Request $request, Worker $worker): RedirectResponse
+    /** Đổi loại worker (Tạo ảnh / Đăng bài). Chặn khi worker còn việc dở. */
+    public function changeType(Request $request, Worker $worker): RedirectResponse
     {
-        $request->merge(['video_email' => trim((string) $request->input('video_email'))]);
-        $data = $request->validate([
-            'video_email' => ['required', 'email', 'exists:users,email'],
-        ], [
-            'video_email.required' => 'Vui lòng nhập email tài khoản.',
-            'video_email.email' => 'Email không hợp lệ.',
-            'video_email.exists' => 'Không có tài khoản nào dùng email này.',
-        ]);
+        $data = $request->validate(['type' => ['required', Rule::in(Worker::TYPES)]], ['type.required' => 'Chọn loại worker.']);
+        if ($data['type'] === $worker->type) {
+            return back();
+        }
+        if ($pending = $worker->pendingJobCount()) {
+            return back()->withErrors(['worker' => "Không đổi loại được: worker còn {$pending} việc dở"
+                .($worker->isImage() ? ' (ảnh đang tạo).' : ' (bài chờ đăng / đang đăng). Đổi worker cho các bài đó hoặc chờ đăng xong.')]);
+        }
+        $old = $worker->type;
+        $worker->update(['type' => $data['type']]);
+        $this->audit->log('admin.worker.change_type', $worker, ['from' => $old, 'to' => $worker->type]);
 
-        $user = User::query()->where('email', $data['video_email'])->firstOrFail();
-        $worker->update(['video_user_id' => $user->id]);
-        $this->audit->log('admin.worker.set_video_user', $worker, ['user_id' => $user->id, 'email' => $user->email]);
-
-        return back()->with('success', "Worker \"{$worker->name}\" sẽ đăng bài + tạo video cho {$user->email}.");
-    }
-
-    /** Bỏ shop đăng bài: shop không chọn được worker để đăng bài, worker không lấy được ảnh tạo video nữa. */
-    public function clearVideoUser(Worker $worker): RedirectResponse
-    {
-        $email = $worker->videoUser?->email;
-        $worker->update(['video_user_id' => null]);
-        $this->audit->log('admin.worker.clear_video_user', $worker, ['email' => $email]);
-
-        return back()->with('success', "Worker \"{$worker->name}\" không đăng bài / tạo video cho shop nào nữa.");
+        return back()->with('success', "Worker \"{$worker->name}\" giờ là loại ".Worker::typeLabel($worker->type).'.');
     }
 
     /** Tắt: worker bị từ chối (401) tới khi bật lại. */

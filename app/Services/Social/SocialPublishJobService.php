@@ -141,6 +141,8 @@ class SocialPublishJobService
      */
     public function claim(Worker $worker): ?SocialPublishJob
     {
+        $worker->assertType(Worker::TYPE_PUBLISH);
+
         return DB::transaction(function () use ($worker) {
             $post = SocialPost::query()
                 ->where('status', SocialPostStatus::Queued)

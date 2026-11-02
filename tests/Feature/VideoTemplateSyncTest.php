@@ -14,8 +14,10 @@ class VideoTemplateSyncTest extends TestCase
 {
     private function token(?User $shop): string
     {
-        [$worker, $token] = Worker::register('lam-template-'.Str::random(5));
-        $worker->update(['video_user_id' => $shop?->id]);
+        [$worker, $token] = Worker::register('lam-template-'.Str::random(5), Worker::TYPE_PUBLISH);
+        if ($shop) {
+            $worker->users()->attach($shop->id);
+        }
 
         return $token;
     }

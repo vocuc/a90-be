@@ -80,13 +80,13 @@ class GenerationTest extends TestCase
         $this->claimJob($token, allUsers: false)->assertNoContent();
 
         // Gắn bob: bỏ qua job cũ hơn của alice, nhận job của bob; alice vẫn chờ worker khác
-        $worker->imageUsers()->attach($bob->id);
+        $worker->users()->attach($bob->id);
         $this->claimJob($token, allUsers: false)->assertOk()->assertJsonPath('data.id', $bobJob->id);
         $this->claimJob($token, allUsers: false)->assertNoContent();
         $this->assertSame(OutputStatus::Queued, $aliceJob->fresh()->status);
 
         $other = $this->workerToken('worker-2');
-        Worker::findActiveByToken($other)->imageUsers()->attach($alice->id);
+        Worker::findActiveByToken($other)->users()->attach($alice->id);
         $this->claimJob($other, allUsers: false)->assertOk()->assertJsonPath('data.id', $aliceJob->id);
     }
 

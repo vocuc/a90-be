@@ -82,14 +82,13 @@ class AdminPanelTest extends TestCase
 
     public function test_admin_assigns_post_shop_to_worker_and_old_pages_are_gone(): void
     {
-        [$worker] = Worker::register('may-1');
+        [$worker] = Worker::register('may-1', Worker::TYPE_PUBLISH);
         $shop = $this->creator();
         $this->actingAs($this->admin());
 
-        $this->put("/admin/workers/{$worker->id}/video-user", ['video_email' => $shop->email])->assertSessionHas('success');
-        $this->assertSame($shop->id, $worker->fresh()->video_user_id);
-        $this->get('/admin/workers')->assertOk()->assertSee('Shop đăng bài')->assertSee($shop->email);
-        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee('Shop đăng bài');
+        $this->post("/admin/workers/{$worker->id}/users", ['email' => $shop->email])->assertSessionHas('success');
+        $this->get('/admin/workers')->assertOk()->assertSee('Đăng bài')->assertSee($shop->email);
+        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee('Tài khoản được gắn');
 
         // Chủ shop chọn được worker này để đăng bài
         $this->actingAs($shop)->getJson('/api/v1/creator/workers')->assertOk()->assertJsonPath('data.0.functions', ['publish', 'video']);

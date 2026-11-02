@@ -70,12 +70,12 @@ class VideoPostTest extends TestCase
         return $product;
     }
 
-    /** Worker đăng bài + tạo video cho shop (admin gắn "Shop đăng bài"): [worker, token]. */
+    /** Worker đăng bài gắn cho shop: [worker, token]. */
     private function worker(User $shop, bool $assigned = true): array
     {
-        [$worker, $token] = Worker::register('may-'.Str::random(5));
+        [$worker, $token] = Worker::register('may-'.Str::random(5), Worker::TYPE_PUBLISH);
         if ($assigned) {
-            $worker->update(['video_user_id' => $shop->id]);
+            $worker->users()->attach($shop->id);
         }
 
         return [$worker, $token];

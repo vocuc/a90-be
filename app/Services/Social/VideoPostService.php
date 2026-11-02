@@ -223,11 +223,11 @@ class VideoPostService
         });
     }
 
-    /** Worker đang bật được gắn cho shop; không thì 422 (chọn worker trong popup). */
+    /** Worker đăng bài đang bật được gắn cho shop; không thì 422 (chọn worker ở trang bài / popup). */
     public function findWorker(User $user, int $workerId): Worker
     {
-        return Worker::query()->assignedTo($user->id)->find($workerId)
-            ?? throw ValidationException::withMessages(['worker_id' => 'Worker không được gắn cho shop hoặc đang tắt.']);
+        return Worker::query()->assignedTo($user->id, Worker::TYPE_PUBLISH)->find($workerId)
+            ?? throw ValidationException::withMessages(['worker_id' => 'Worker đăng bài không được gắn cho shop hoặc đang tắt.']);
     }
 
     /**

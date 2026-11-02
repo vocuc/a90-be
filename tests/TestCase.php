@@ -141,7 +141,7 @@ abstract class TestCase extends BaseTestCase
     protected function claimJob(string $token, bool $allUsers = true): TestResponse
     {
         if ($allUsers) {
-            Worker::findActiveByToken($token)?->imageUsers()->syncWithoutDetaching(User::query()->pluck('id'));
+            Worker::findActiveByToken($token)?->users()->syncWithoutDetaching(User::query()->pluck('id'));
         }
 
         return $this->withToken($token)->getJson('/api/v1/jobs');

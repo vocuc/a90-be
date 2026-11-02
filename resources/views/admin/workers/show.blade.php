@@ -50,45 +50,17 @@
 
             <div class="card">
                 <div class="card-header">
-                    <h3 class="card-title">Shop đăng bài</h3>
+                    <h3 class="card-title">Tài khoản được gắn</h3>
                 </div>
                 <div class="card-body">
                     <p class="text-muted small">
-                        Chủ shop chọn được worker này ở trang bài đăng; worker đăng bài ảnh / video được giao lên TikTok /
-                        Facebook / Instagram bằng tài khoản đăng nhập trên máy, lấy ảnh tạo video và đồng bộ template cho shop này.
-                        Mỗi worker <b>1 shop</b>, gắn shop khác sẽ thay shop cũ. Không đăng bài cho shop nào thì để trống.
-                    </p>
-                    @if ($worker->videoUser)
-                        <div class="d-flex align-items-center mb-3">
-                            <div><b>{{ $worker->videoUser->name }}</b> <span class="text-muted">{{ $worker->videoUser->email }}</span></div>
-                            <form method="POST" action="{{ route('admin.workers.video-user.clear', $worker) }}" class="ml-auto"
-                                  data-confirm="Bỏ {{ $worker->videoUser->email }} khỏi worker &quot;{{ $worker->name }}&quot;? Shop sẽ không chọn được worker này để đăng bài nữa.">
-                                @csrf @method('DELETE')
-                                <button class="btn btn-xs btn-outline-danger"><i class="fas fa-times"></i> Bỏ</button>
-                            </form>
-                        </div>
-                    @endif
-                    <form method="POST" action="{{ route('admin.workers.video-user.set', $worker) }}">
-                        @csrf @method('PUT')
-                        <div class="input-group">
-                            <input type="email" name="video_email" value="{{ old('video_email') }}" placeholder="Email tài khoản A51"
-                                   class="form-control @error('video_email') is-invalid @enderror" required>
-                            <div class="input-group-append">
-                                <button class="btn btn-primary"><i class="fas fa-check"></i> {{ $worker->videoUser ? 'Đổi' : 'Gắn' }}</button>
-                            </div>
-                            @error('video_email')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">Tài khoản nhận job tạo ảnh</h3>
-                </div>
-                <div class="card-body">
-                    <p class="text-muted small">
-                        Worker tạo ảnh chỉ nhận job do các tài khoản dưới đây tạo. <b>Chưa gắn tài khoản nào thì worker không nhận job ảnh nào.</b>
+                        @if ($worker->isImage())
+                            Worker tạo ảnh nhận job tạo ảnh do các tài khoản dưới đây tạo.
+                        @else
+                            Các shop dưới đây chọn được worker này ở trang bài đăng; worker đăng bài ảnh / video được giao bằng tài khoản
+                            đăng nhập trên máy, lấy ảnh tạo video và đồng bộ template cho các shop này.
+                        @endif
+                        <b>Chưa gắn tài khoản nào thì worker không nhận việc.</b> Một tài khoản gắn được nhiều worker.
                     </p>
                     <form method="POST" action="{{ route('admin.workers.users.attach', $worker) }}" class="mb-3">
                         @csrf
@@ -101,17 +73,17 @@
                             @error('email')<div class="invalid-feedback">{{ $message }}</div>@enderror
                         </div>
                     </form>
-                    @if ($worker->imageUsers->isEmpty())
+                    @if ($worker->users->isEmpty())
                         <div class="text-muted">Chưa gắn tài khoản nào.</div>
                     @else
                         <table class="table table-sm mb-0">
                             <tbody>
-                            @foreach ($worker->imageUsers as $user)
+                            @foreach ($worker->users as $user)
                                 <tr>
                                     <td><b>{{ $user->name }}</b> <span class="text-muted">{{ $user->email }}</span></td>
                                     <td class="text-right">
                                         <form method="POST" action="{{ route('admin.workers.users.detach', [$worker, $user]) }}" class="d-inline"
-                                              data-confirm="Bỏ {{ $user->email }} khỏi worker &quot;{{ $worker->name }}&quot;? Job ảnh của tài khoản này sẽ không giao cho worker này nữa.">
+                                              data-confirm="Bỏ {{ $user->email }} khỏi worker &quot;{{ $worker->name }}&quot;? {{ $worker->isImage() ? 'Job ảnh của tài khoản này sẽ không giao cho worker này nữa.' : 'Shop này sẽ không chọn được worker này để đăng bài nữa.' }}">
                                             @csrf @method('DELETE')
                                             <button class="btn btn-xs btn-outline-danger"><i class="fas fa-times"></i> Bỏ</button>
                                         </form>
@@ -127,6 +99,22 @@
         <div class="col-lg-4">
             <div class="card">
                 <div class="card-body">
+                    <form method="POST" action="{{ route('admin.workers.type', $worker) }}" class="mb-3"
+                          data-confirm="Đổi loại worker &quot;{{ $worker->name }}&quot;? Máy đang chạy phải đổi sang chương trình worker đúng loại.">
+                        @csrf @method('PATCH')
+                        <label for="worker-type" class="mb-1">Loại worker</label>
+                        <div class="input-group">
+                            <select id="worker-type" name="type" class="form-control">
+                                @foreach (\App\Models\Worker::TYPES as $type)
+                                    <option value="{{ $type }}" @selected($worker->type === $type)>{{ \App\Models\Worker::typeLabel($type) }}</option>
+                                @endforeach
+                            </select>
+                            <div class="input-group-append">
+                                <button class="btn btn-primary"><i class="fas fa-save"></i> Đổi</button>
+                            </div>
+                        </div>
+                        <small class="form-text text-muted">Không đổi được khi worker còn việc dở (ảnh đang tạo / bài chờ đăng, đang đăng).</small>
+                    </form>
                     <form method="POST" action="{{ route('admin.workers.rename', $worker) }}" class="mb-3">
                         @csrf @method('PATCH')
                         <label for="worker-name" class="mb-1">Tên worker</label>

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\AuditLog;
 use App\Models\User;
+use App\Models\SocialPost;
 use App\Models\Worker;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -18,15 +19,15 @@ class AdminWorkerTest extends TestCase
         return $admin;
     }
 
-    /** Token hợp lệ: qua được xác thực (chưa có bài nào được giao -> 204, không phải 401). */
+    /** Token hợp lệ: qua được xác thực (worker tạo ảnh chưa gắn tài khoản -> 204 chưa có job, không phải 401). */
     private function assertTokenWorks(string $token): void
     {
-        $this->withToken($token)->getJson('/api/v1/post-jobs')->assertNoContent();
+        $this->withToken($token)->getJson('/api/v1/jobs')->assertNoContent();
     }
 
     private function assertTokenRejected(string $token): void
     {
-        $this->withToken($token)->getJson('/api/v1/post-jobs')->assertStatus(401);
+        $this->withToken($token)->getJson('/api/v1/jobs')->assertStatus(401);
     }
 
     public function test_only_admin_can_open_worker_pages(): void
@@ -41,8 +42,11 @@ class AdminWorkerTest extends TestCase
         $this->get('/admin/workers')->assertOk()->assertSee('Chưa có worker nào');
         $this->get('/admin/workers/create')->assertOk();
 
-        $this->post('/admin/workers', ['name' => '  phone1-tiktok  '])->assertRedirect();
+        $shop = $this->buyer();
+        $this->post('/admin/workers', ['name' => '  phone1-tiktok  ', 'type' => 'image', 'email' => $shop->email])->assertRedirect();
         $worker = Worker::query()->where('name', 'phone1-tiktok')->firstOrFail();
+        $this->assertSame(Worker::TYPE_IMAGE, $worker->type);
+        $this->assertSame([$shop->id], $worker->users()->pluck('users.id')->all());
         $token = $worker->plainToken();
         $this->assertNotNull($token);
         // DB lưu bản mã hoá, không lưu token thô
@@ -55,10 +59,16 @@ class AdminWorkerTest extends TestCase
         $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.create')->exists());
         $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.view_token')->exists());
 
-        // Bắt buộc tên, không trùng
-        $this->post('/admin/workers', ['name' => ''])->assertSessionHasErrors('name');
-        $this->post('/admin/workers', ['name' => 'phone1-tiktok'])->assertSessionHasErrors('name');
-        $this->assertSame(1, Worker::query()->count());
+        // Bắt buộc tên (không trùng) và loại; email phải có thật
+        $this->post('/admin/workers', ['name' => '', 'type' => 'image'])->assertSessionHasErrors('name');
+        $this->post('/admin/workers', ['name' => 'phone1-tiktok', 'type' => 'image'])->assertSessionHasErrors('name');
+        $this->post('/admin/workers', ['name' => 'moi'])->assertSessionHasErrors('type');
+        $this->post('/admin/workers', ['name' => 'moi', 'type' => 'video'])->assertSessionHasErrors('type');
+        $this->post('/admin/workers', ['name' => 'moi', 'type' => 'publish', 'email' => 'khong-co@a51.test'])->assertSessionHasErrors('email');
+        // Không gắn tài khoản lúc tạo cũng được
+        $this->post('/admin/workers', ['name' => 'dang-bai', 'type' => 'publish'])->assertRedirect();
+        $this->assertSame(Worker::TYPE_PUBLISH, Worker::query()->where('name', 'dang-bai')->value('type'));
+        $this->assertSame(2, Worker::query()->count());
     }
 
     public function test_admin_renames_worker_without_touching_token(): void
@@ -130,16 +140,59 @@ class AdminWorkerTest extends TestCase
         $this->post("/admin/workers/{$worker->id}/users", ['email' => "  {$shop->email} "])->assertSessionHas('success');
         // Gắn lại không bị trùng
         $this->post("/admin/workers/{$worker->id}/users", ['email' => $shop->email])->assertSessionHas('success');
-        $this->assertSame([$shop->id], $worker->imageUsers()->pluck('users.id')->all());
+        $this->assertSame([$shop->id], $worker->users()->pluck('users.id')->all());
         $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee($shop->email);
-        $this->get('/admin/workers')->assertOk()->assertSee('1 tài khoản');
+        $this->get('/admin/workers')->assertOk()->assertSee($shop->email)->assertSee('Tạo ảnh');
         $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.attach_user')->exists());
 
         $this->post("/admin/workers/{$worker->id}/users", ['email' => 'khong-co@example.com'])->assertSessionHasErrors('email');
         $this->post("/admin/workers/{$worker->id}/users", ['email' => ''])->assertSessionHasErrors('email');
 
         $this->delete("/admin/workers/{$worker->id}/users/{$shop->id}")->assertSessionHas('success');
-        $this->assertSame(0, $worker->imageUsers()->count());
+        $this->assertSame(0, $worker->users()->count());
         $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.detach_user')->exists());
+    }
+
+    public function test_worker_only_does_jobs_of_its_type(): void
+    {
+        [$image, $imageToken] = Worker::register('anh', Worker::TYPE_IMAGE);
+        [$publish, $publishToken] = Worker::register('dang', Worker::TYPE_PUBLISH);
+
+        $this->withToken($imageToken)->getJson('/api/v1/post-jobs')->assertStatus(409)->assertJsonPath('code', 'WORKER_TYPE_MISMATCH');
+        $this->withToken($imageToken)->getJson('/api/v1/video-images?count=1')->assertStatus(409)->assertJsonPath('code', 'WORKER_TYPE_MISMATCH');
+        $this->withToken($publishToken)->getJson('/api/v1/jobs')->assertStatus(409)->assertJsonPath('code', 'WORKER_TYPE_MISMATCH');
+        $this->withToken($imageToken)->getJson('/api/v1/jobs')->assertNoContent();
+        $this->withToken($publishToken)->getJson('/api/v1/post-jobs')->assertNoContent();
+    }
+
+    public function test_change_type_and_detach_blocked_while_worker_has_pending_jobs(): void
+    {
+        [$worker, $token] = Worker::register('may-1', Worker::TYPE_PUBLISH);
+        $shop = $this->buyer(credit: 100000);
+        $worker->users()->attach($shop->id);
+        $post = SocialPost::query()->create([
+            'user_id' => $shop->id, 'type' => 'photo', 'status' => 'queued', 'source' => 'batch', 'worker_id' => $worker->id,
+            'platforms' => ['tiktok'], 'tiktok_status' => 'queued', 'scheduled_at' => now()->addDay(), 'idempotency_key' => 'k',
+        ]);
+        $this->actingAs($this->admin());
+
+        // Còn bài chờ đăng: không đổi loại, không bỏ shop
+        $this->patch("/admin/workers/{$worker->id}/type", ['type' => 'image'])->assertSessionHasErrors('worker');
+        $this->delete("/admin/workers/{$worker->id}/users/{$shop->id}")->assertSessionHasErrors('worker');
+        $this->assertSame(Worker::TYPE_PUBLISH, $worker->fresh()->type);
+        $this->assertSame(1, $worker->users()->count());
+
+        // Bài đã đăng xong: đổi được
+        $post->update(['status' => 'published', 'tiktok_status' => 'published']);
+        $this->patch("/admin/workers/{$worker->id}/type", ['type' => 'image'])->assertSessionHas('success');
+        $this->assertSame(Worker::TYPE_IMAGE, $worker->fresh()->type);
+        $this->patch("/admin/workers/{$worker->id}/type", ['type' => 'x'])->assertSessionHasErrors('type');
+        $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.change_type')->exists());
+
+        // Worker tạo ảnh đang tạo ảnh của shop: không bỏ shop được
+        $this->withToken($token)->getJson('/api/v1/jobs')->assertNoContent();
+        $this->generate($shop, $this->publishedCreative($this->creator()))->assertStatus(202);
+        $this->withToken($token)->getJson('/api/v1/jobs')->assertOk();
+        $this->actingAs($this->admin())->delete("/admin/workers/{$worker->id}/users/{$shop->id}")->assertSessionHasErrors('worker');
     }
 }

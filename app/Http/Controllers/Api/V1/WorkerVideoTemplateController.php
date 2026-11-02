@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\VideoTemplateResource;
+use App\Models\User;
 use App\Models\VideoTemplate;
 use App\Models\Worker;
 use App\Services\AuditLogger;
@@ -13,13 +14,14 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Máy làm template (D:\video-tmp, npm run sync-templates) gửi TOÀN BỘ danh sách template đang có, A51 đồng bộ vào shop
- * worker được gắn (admin -> Worker -> Shop đăng bài):
+ * Máy làm template (D:\video-tmp, npm run sync-templates) gửi TOÀN BỘ danh sách template đang có, A51 đồng bộ vào MỌI
+ * shop worker (loại đăng bài) được gắn (admin -> Worker -> Tài khoản được gắn):
  *   PUT /api/v1/video-templates/sync { templates: [ { key, name, image_count }, ... ] }
  * - key (ID template trên máy làm template) chưa có -> tạo; có rồi -> cập nhật tên / số ảnh, đang ẩn thì hiện lại.
  * - Template đồng bộ trước đây nhưng không còn trong danh sách -> ẩn (không random / chọn được; bài đã tạo giữ nguyên).
  * - Template shop tự tạo không bị đụng tới.
- * Worker chưa gắn tài khoản tạo video -> 409 VIDEO_ACCOUNT_NOT_ASSIGNED.
+ * Worker tạo ảnh -> 409 WORKER_TYPE_MISMATCH; chưa gắn tài khoản -> 409 VIDEO_ACCOUNT_NOT_ASSIGNED.
+ * Kết quả: số lượng cộng dồn các shop; account = shop đầu tiên, accounts = mọi shop đã đồng bộ.
  */
 class WorkerVideoTemplateController extends Controller
 {
@@ -29,9 +31,10 @@ class WorkerVideoTemplateController extends Controller
     {
         /** @var Worker $worker */
         $worker = $request->attributes->get('worker');
-        $user = $worker->videoUser;
-        if (! $user) {
-            throw new BusinessException('VIDEO_ACCOUNT_NOT_ASSIGNED', 'Worker chưa được gắn tài khoản A51 tạo video.', 409);
+        $worker->assertType(Worker::TYPE_PUBLISH);
+        $users = $worker->users()->orderBy('users.id')->get();
+        if ($users->isEmpty()) {
+            throw new BusinessException('VIDEO_ACCOUNT_NOT_ASSIGNED', 'Worker chưa được gắn tài khoản A51.', 409);
         }
 
         $data = $request->validate([
@@ -41,12 +44,41 @@ class WorkerVideoTemplateController extends Controller
             'templates.*.image_count' => ['required', 'integer', 'min:1', 'max:'.VideoTemplate::MAX_IMAGE_COUNT],
         ]);
 
-        $result = DB::transaction(function () use ($user, $data) {
+        $result = ['created' => 0, 'updated' => 0, 'unchanged' => 0, 'hidden' => 0];
+        foreach ($users as $user) {
+            $counts = $this->syncShop($user, $data['templates']);
+            $audit->log('video_template.sync', null, ['worker_id' => $worker->id, ...$counts], $user->id);
+            foreach ($counts as $key => $n) {
+                $result[$key] += $n;
+            }
+        }
+
+        $first = $users->first();
+        $templates = VideoTemplate::query()->where('user_id', $first->id)->whereNotNull('source_key')->visible()
+            ->orderBy('id')->get();
+
+        return response()->json(['data' => [
+            ...$result,
+            'account' => ['id' => $first->id, 'name' => $first->name],
+            'accounts' => $users->map(fn (User $u) => ['id' => $u->id, 'name' => $u->name])->values(),
+            'templates' => VideoTemplateResource::collection($templates),
+        ]]);
+    }
+
+    /**
+     * Đồng bộ danh sách template vào 1 shop: thêm / sửa / ẩn template đồng bộ, không đụng template shop tự tạo.
+     *
+     * @param  array<int, array{key: string, name: string, image_count: int}>  $items
+     * @return array{created: int, updated: int, unchanged: int, hidden: int}
+     */
+    private function syncShop(User $user, array $items): array
+    {
+        return DB::transaction(function () use ($user, $items) {
             $existing = VideoTemplate::query()->where('user_id', $user->id)->whereNotNull('source_key')
                 ->lockForUpdate()->get()->keyBy('source_key');
             $counts = ['created' => 0, 'updated' => 0, 'unchanged' => 0, 'hidden' => 0];
 
-            foreach ($data['templates'] as $item) {
+            foreach ($items as $item) {
                 $key = (string) $item['key'];
                 $values = ['name' => trim($item['name']), 'image_count' => (int) $item['image_count'], 'hidden_at' => null];
                 $template = $existing->get($key);
@@ -60,23 +92,12 @@ class WorkerVideoTemplateController extends Controller
                 $template->save();
             }
 
-            $keys = array_map(fn ($item) => (string) $item['key'], $data['templates']);
+            $keys = array_map(fn ($item) => (string) $item['key'], $items);
             $counts['hidden'] = VideoTemplate::query()->where('user_id', $user->id)->whereNotNull('source_key')
                 ->whereNotIn('source_key', $keys)->whereNull('hidden_at')
                 ->update(['hidden_at' => now()]);
 
             return $counts;
         });
-
-        $audit->log('video_template.sync', null, ['worker_id' => $worker->id, ...$result], $user->id);
-
-        $templates = VideoTemplate::query()->where('user_id', $user->id)->whereNotNull('source_key')->visible()
-            ->orderBy('id')->get();
-
-        return response()->json(['data' => [
-            ...$result,
-            'account' => ['id' => $user->id, 'name' => $user->name],
-            'templates' => VideoTemplateResource::collection($templates),
-        ]]);
     }
 }

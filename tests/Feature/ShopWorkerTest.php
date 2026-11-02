@@ -16,29 +16,32 @@ class ShopWorkerTest extends TestCase
         $other = $this->creator();
 
         // Tạo ảnh cho shop + một shop khác, đang online
-        [$image, $imageToken] = Worker::register('b-anh');
-        $image->imageUsers()->attach([$shop->id, $other->id]);
+        [$image, $imageToken] = Worker::register('b-anh', Worker::TYPE_IMAGE);
+        $image->users()->attach([$shop->id, $other->id]);
         $image->forceFill(['last_seen_at' => now()->subMinute()])->save();
 
         // Đăng bài + tạo video cho shop, offline
-        [$publish] = Worker::register('a-dang-bai');
-        $publish->forceFill(['video_user_id' => $shop->id, 'last_seen_at' => now()->subHour()])->save();
+        [$publish] = Worker::register('a-dang-bai', Worker::TYPE_PUBLISH);
+        $publish->users()->attach($shop->id);
+        $publish->forceFill(['last_seen_at' => now()->subHour()])->save();
 
         // Không hiện: worker của shop khác, worker đang tắt
         [$foreign] = Worker::register('c-khac');
-        $foreign->imageUsers()->attach($other->id);
+        $foreign->users()->attach($other->id);
         [$off] = Worker::register('d-tat');
-        $off->imageUsers()->attach($shop->id);
+        $off->users()->attach($shop->id);
         $off->update(['is_active' => false]);
 
         $data = $this->actingAs($shop)->getJson(self::URL)->assertOk()->assertJsonCount(2, 'data')->json('data');
 
         $this->assertSame('a-dang-bai', $data[0]['name']);
+        $this->assertSame('publish', $data[0]['type']);
         $this->assertSame(['publish', 'video'], $data[0]['functions']);
         $this->assertArrayNotHasKey('publish_account', $data[0]);
         $this->assertFalse($data[0]['online']);
 
         $this->assertSame('b-anh', $data[1]['name']);
+        $this->assertSame('image', $data[1]['type']);
         $this->assertSame(['image'], $data[1]['functions']);
         $this->assertTrue($data[1]['online']);
         $this->assertSame($imageToken, $data[1]['token']);

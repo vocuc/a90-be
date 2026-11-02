@@ -49,10 +49,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::patch('workers/{worker}/name', [WorkerController::class, 'rename'])->name('workers.rename');
         Route::post('workers/{worker}/regenerate', [WorkerController::class, 'regenerate'])->name('workers.regenerate');
         Route::post('workers/{worker}/toggle', [WorkerController::class, 'toggle'])->name('workers.toggle');
+        Route::patch('workers/{worker}/type', [WorkerController::class, 'changeType'])->name('workers.type');
         Route::post('workers/{worker}/users', [WorkerController::class, 'attachUser'])->name('workers.users.attach');
         Route::delete('workers/{worker}/users/{user}', [WorkerController::class, 'detachUser'])->name('workers.users.detach');
-        Route::put('workers/{worker}/video-user', [WorkerController::class, 'setVideoUser'])->name('workers.video-user.set');
-        Route::delete('workers/{worker}/video-user', [WorkerController::class, 'clearVideoUser'])->name('workers.video-user.clear');
 
         Route::get('generations', [GenerationController::class, 'index'])->name('generations.index');
         Route::get('generations/{generation}', [GenerationController::class, 'show'])->name('generations.show');

@@ -40,8 +40,10 @@ class WorkerVideoImageTest extends TestCase
     /** @return array{0: Worker, 1: string} */
     private function videoWorker(?User $user): array
     {
-        [$worker, $token] = Worker::register('video-'.Str::random(6));
-        $worker->update(['video_user_id' => $user?->id]);
+        [$worker, $token] = Worker::register('video-'.Str::random(6), Worker::TYPE_PUBLISH);
+        if ($user) {
+            $worker->users()->attach($user->id);
+        }
 
         return [$worker, $token];
     }
@@ -179,29 +181,18 @@ class WorkerVideoImageTest extends TestCase
         $this->images($token, 51)->assertStatus(422)->assertJsonValidationErrors('count');
     }
 
-    public function test_admin_sets_and_clears_video_account(): void
+    public function test_worker_with_many_shops_must_choose_shop(): void
     {
-        [$worker] = Worker::register('may-video');
-        $shop = $this->buyer();
-        $shop2 = $this->buyer();
-        $this->actingAs($this->admin());
+        $shop = $this->creator();
+        $shop2 = $this->creator();
+        [$worker, $token] = $this->videoWorker($shop);
+        $worker->users()->attach($shop2->id);
 
-        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee('Shop đăng bài');
-
-        $this->put("/admin/workers/{$worker->id}/video-user", ['video_email' => "  {$shop->email} "])->assertSessionHas('success');
-        $this->assertSame($shop->id, $worker->fresh()->video_user_id);
-        $this->get('/admin/workers')->assertOk()->assertSee("Tạo video: {$shop->email}", false);
-
-        // Mỗi worker 1 tài khoản: gắn tài khoản khác thay tài khoản cũ
-        $this->put("/admin/workers/{$worker->id}/video-user", ['video_email' => $shop2->email])->assertSessionHas('success');
-        $this->assertSame($shop2->id, $worker->fresh()->video_user_id);
-
-        $this->put("/admin/workers/{$worker->id}/video-user", ['video_email' => 'khong-co@example.com'])->assertSessionHasErrors('video_email');
-        $this->assertSame($shop2->id, $worker->fresh()->video_user_id);
-
-        $this->delete("/admin/workers/{$worker->id}/video-user")->assertSessionHas('success');
-        $this->assertNull($worker->fresh()->video_user_id);
-        $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.set_video_user')->exists());
-        $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.clear_video_user')->exists());
+        $this->withToken($token)->getJson('/api/v1/video-images?count=1')->assertStatus(422)->assertJsonValidationErrors('user_id');
+        $this->withToken($token)->getJson('/api/v1/video-images?count=1&user_id='.$this->creator()->id)
+            ->assertStatus(422)->assertJsonValidationErrors('user_id');
+        // Shop chưa có sản phẩm đủ ảnh: qua bước chọn shop, báo thiếu ảnh
+        $this->withToken($token)->getJson("/api/v1/video-images?count=1&user_id={$shop2->id}")->assertStatus(422)
+            ->assertJsonPath('code', 'NOT_ENOUGH_IMAGES');
     }
 }

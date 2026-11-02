@@ -31,6 +31,8 @@ class WorkerJobService
      */
     public function claim(Worker $worker): ?GenerationOutput
     {
+        $worker->assertType(Worker::TYPE_IMAGE);
+
         return DB::transaction(function () use ($worker) {
             $output = GenerationOutput::query()
                 ->where('status', OutputStatus::Queued)

@@ -466,11 +466,11 @@ class SocialPostTest extends TestCase
 
     // ---- Đăng (giao cho worker, 1 job / bài chứa mọi nền tảng, note/gop-luong-dang-bai.txt) ----
 
-    /** Worker được admin gắn "Shop đăng bài" = $user: [worker, token]. */
+    /** Worker đăng bài được admin gắn cho $user: [worker, token]. */
     private function postWorker(User $user, string $name = 'post-worker'): array
     {
-        [$worker, $token] = Worker::register($name.'-'.Str::random(4));
-        $worker->update(['video_user_id' => $user->id]);
+        [$worker, $token] = Worker::register($name.'-'.Str::random(4), Worker::TYPE_PUBLISH);
+        $worker->users()->attach($user->id);
 
         return [$worker, $token];
     }
@@ -522,7 +522,7 @@ class SocialPostTest extends TestCase
 
         // Worker khác (shop khác) / worker chưa gắn shop: không thấy bài này
         $this->claimPostJob($otherToken)->assertNoContent();
-        $this->claimPostJob($this->workerToken('no-shop'))->assertNoContent();
+        $this->claimPostJob(Worker::register('no-shop', Worker::TYPE_PUBLISH)[1])->assertNoContent();
 
         $job = $this->claimPostJob($token)->assertOk()
             ->assertJsonPath('data.type', 'photo')
