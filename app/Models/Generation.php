@@ -37,6 +37,12 @@ class Generation extends Model
         return $this->belongsTo(User::class);
     }
 
+    /** Worker tạo ảnh người dùng chọn; null = worker tạo ảnh nào được gắn cho tài khoản cũng nhận. */
+    public function worker(): BelongsTo
+    {
+        return $this->belongsTo(Worker::class);
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'creator_id');

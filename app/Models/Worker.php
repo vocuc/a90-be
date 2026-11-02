@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Máy nội bộ, có loại (note/quan-ly-worker.txt ở repo frontend), gắn nhiều tài khoản A51 (users, admin gắn ở trang
@@ -40,6 +41,26 @@ class Worker extends Model
         return $query->where('is_active', true)
             ->when($type, fn (Builder $q) => $q->where('type', $type))
             ->whereHas('users', fn (Builder $u) => $u->whereKey($userId));
+    }
+
+    /**
+     * Worker tạo ảnh người dùng chọn khi tạo ảnh / tạo lô (note/chon-worker-tao-anh.txt ở repo frontend): phải là worker
+     * loại image đang bật được gắn cho tài khoản, sai -> 422 errors["worker_id"]. null (không gửi) -> null.
+     */
+    public static function imageWorkerIdFor(int $userId, mixed $workerId): ?int
+    {
+        if ($workerId === null || $workerId === '') {
+            return null;
+        }
+
+        $valid = self::query()->assignedTo($userId, self::TYPE_IMAGE)->whereKey((int) $workerId)->exists();
+        if (! $valid) {
+            throw ValidationException::withMessages(['worker_id' => self::query()->assignedTo($userId, self::TYPE_IMAGE)->exists()
+                ? 'Worker tạo ảnh không còn được gắn cho tài khoản, chọn worker khác.'
+                : 'Tài khoản chưa được gắn worker tạo ảnh, liên hệ A51 để được gắn.']);
+        }
+
+        return (int) $workerId;
     }
 
     public static function typeLabel(string $type): string

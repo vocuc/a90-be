@@ -9,6 +9,7 @@ use App\Http\Resources\GenerationResource;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\Worker;
 use App\Services\AuditLogger;
 use App\Services\GenerationInput;
 use App\Services\GenerationService;
@@ -34,14 +35,17 @@ class GenerationController extends Controller
             'creative_id' => ['required', 'integer'],
             'quantity' => ['required', 'integer', 'min:1', 'max:'.$this->settings->int('generation.max_outputs_limit')],
             'idempotency_key' => ['required', 'string', 'max:100'],
+            // Worker tạo ảnh người dùng chọn (note/chon-worker-tao-anh.txt ở repo frontend)
+            'worker_id' => ['nullable', 'integer'],
         ]);
 
         $creative = AiCreative::query()->find($data['creative_id'])
             ?? throw BusinessException::creativeNotAvailable();
+        $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
         $input = GenerationInput::fromRequest($request, $creative, $this->settings->int('generation.input_max_size_kb'));
 
         $generation = $this->generations->create(
-            $request->user(), $creative, $input, $data['quantity'], $data['idempotency_key'],
+            $request->user(), $creative, $input, $data['quantity'], $data['idempotency_key'], [], null, $workerId,
         );
 
         return (new GenerationResource($generation->load('creative')))->response()->setStatusCode(202);

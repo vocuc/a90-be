@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\V1\Creator\VideoTemplateController;
 use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\ImageBatchController;
+use App\Http\Controllers\Api\V1\ImageWorkerController;
 use App\Http\Controllers\Api\V1\MarketplaceController;
 use App\Http\Controllers\Api\V1\Shipping\GhnController;
 use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
@@ -59,6 +60,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         Route::get('generations/{generation}/outputs/{output}/download', [GenerationController::class, 'download']);
         Route::post('generations/{generation}/outputs/{output}/disable', [GenerationController::class, 'disableOutput']);
         Route::post('generations/{generation}/outputs/{output}/enable', [GenerationController::class, 'enableOutput']);
+        // Worker tạo ảnh được gắn cho tài khoản, chọn khi tạo ảnh / tạo lô (note/chon-worker-tao-anh.txt ở repo frontend)
+        Route::get('image-workers', [ImageWorkerController::class, 'index']);
 
         // Ví Credit
         Route::get('wallet/credit', [CreditWalletController::class, 'show']);

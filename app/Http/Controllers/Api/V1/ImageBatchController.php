@@ -10,6 +10,7 @@ use App\Models\AiCreative;
 use App\Models\ImageBatch;
 use App\Models\ImageBatchImage;
 use App\Models\Product;
+use App\Models\Worker;
 use App\Services\AutoBatchService;
 use App\Services\GenerationInput;
 use App\Services\ImageBatchService;
@@ -61,11 +62,13 @@ class ImageBatchController extends Controller
             'items.*.quantity' => ['required', 'integer', 'min:1'],
             'idempotency_key' => ['required', 'string', 'max:80'],
             'insert_logo' => ['nullable', 'boolean'],
+            'worker_id' => ['nullable', 'integer'],
         ], [
             'items.*.creative_id.distinct' => 'Mỗi mẫu chỉ được chọn một lần trong lô.',
         ]);
 
         $insertLogo = $this->insertLogo($request, $data);
+        $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
 
         $items = array_values($data['items']);
         $creatives = AiCreative::query()
@@ -93,7 +96,7 @@ class ImageBatchController extends Controller
             ];
         }
 
-        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo);
+        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo, [], $workerId);
 
         return $this->resource($batch)->response()->setStatusCode(201);
     }
@@ -132,10 +135,13 @@ class ImageBatchController extends Controller
             'idempotency_key' => ['required', 'string', 'max:80'],
             'insert_logo' => ['nullable', 'boolean'],
             'seed' => ['nullable', 'integer', 'min:0', 'max:'.AutoBatchService::MAX_SEED],
+            'worker_id' => ['nullable', 'integer'],
         ]);
 
         $seed = isset($data['seed']) ? (int) $data['seed'] : null;
-        $result = $auto->create($request->user(), (int) $data['count'], $this->insertLogo($request, $data), $data['idempotency_key'], $seed);
+        $insertLogo = $this->insertLogo($request, $data);
+        $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
+        $result = $auto->create($request->user(), (int) $data['count'], $insertLogo, $data['idempotency_key'], $seed, $workerId);
         $batches = ImageBatch::query()
             ->whereKey(array_map(fn (ImageBatch $b) => $b->id, $result['batches']))
             ->withSummary()

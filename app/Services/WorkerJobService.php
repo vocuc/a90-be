@@ -27,6 +27,8 @@ class WorkerJobService
 
     /**
      * Nhận ảnh đang chờ cũ nhất trong các job do tài khoản gắn với worker tạo (chưa gắn tài khoản nào -> không có job).
+     * Job người dùng đã chọn worker (generations.worker_id) chỉ worker đó nhận; worker đã chọn bị tắt / đổi loại / gỡ khỏi
+     * tài khoản thì worker tạo ảnh khác của tài khoản nhận thay để ảnh không bị treo (note/chon-worker-tao-anh.txt).
      * SKIP LOCKED để nhiều worker gọi cùng lúc không nhận trùng.
      */
     public function claim(Worker $worker): ?GenerationOutput
@@ -34,11 +36,21 @@ class WorkerJobService
         $worker->assertType(Worker::TYPE_IMAGE);
 
         return DB::transaction(function () use ($worker) {
+            $generations = Generation::query()
+                ->select('id')
+                ->whereIn('user_id', DB::table('worker_user')->select('user_id')->where('worker_id', $worker->id))
+                ->where(fn ($q) => $q->whereNull('generations.worker_id')
+                    ->orWhere('generations.worker_id', $worker->id)
+                    ->orWhereNotExists(fn ($chosen) => $chosen->from('workers')
+                        ->join('worker_user', 'worker_user.worker_id', '=', 'workers.id')
+                        ->whereColumn('workers.id', 'generations.worker_id')
+                        ->whereColumn('worker_user.user_id', 'generations.user_id')
+                        ->where('workers.is_active', true)
+                        ->where('workers.type', Worker::TYPE_IMAGE)));
+
             $output = GenerationOutput::query()
                 ->where('status', OutputStatus::Queued)
-                ->whereIn('generation_id', Generation::query()->select('id')->whereIn(
-                    'user_id', DB::table('worker_user')->select('user_id')->where('worker_id', $worker->id)
-                ))
+                ->whereIn('generation_id', $generations)
                 ->orderBy('id')
                 ->lock('for update skip locked')
                 ->first();

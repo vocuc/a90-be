@@ -57,7 +57,7 @@ class AutoBatchService
      *
      * @return array{batches: ImageBatch[], stopped: ?string, required: ?int}
      */
-    public function create(User $user, int $count, bool $insertLogo, string $idempotencyKey, ?int $seed = null): array
+    public function create(User $user, int $count, bool $insertLogo, string $idempotencyKey, ?int $seed = null, ?int $workerId = null): array
     {
         // Hai request cùng lúc của một người dùng (vd. gửi lại cùng idempotency key) không tạo trùng lô
         $lock = Cache::lock("auto-batch:{$user->id}", 120);
@@ -84,12 +84,12 @@ class AutoBatchService
                 }
 
                 try {
-                    $created[] = DB::transaction(function () use ($user, $plan, $key, $insertLogo) {
+                    $created[] = DB::transaction(function () use ($user, $plan, $key, $insertLogo, $workerId) {
                         $batch = $this->batches->create($user, $plan['items'], $key, $insertLogo, [
                             'source' => ImageBatch::SOURCE_AUTO,
                             'product_id' => $plan['product']->id,
                             'creative_group_id' => $plan['group']->id,
-                        ]);
+                        ], $workerId);
                         DB::table('auto_batch_product_counts')->upsert(
                             ['user_id' => $user->id, 'product_id' => $plan['product']->id, 'count' => 1],
                             ['user_id', 'product_id'],

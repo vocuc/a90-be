@@ -36,8 +36,9 @@ class GenerationService
      * Người mua (kể cả chính Creator) tạo ảnh từ Creative đang xuất bản: luôn trừ Credit.
      *
      * @param  array<string, string>  $keptPaths  ảnh đầu vào dùng lại từ lần tạo trước theo tên trường (khi không tải ảnh mới)
+     * @param  ?int  $workerId  worker tạo ảnh người dùng chọn (đã kiểm tra bằng Worker::imageWorkerIdFor), null = worker nào cũng nhận
      */
-    public function create(User $user, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey, array $keptPaths = [], ?Generation $parent = null): Generation
+    public function create(User $user, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey, array $keptPaths = [], ?Generation $parent = null, ?int $workerId = null): Generation
     {
         if ($existing = $this->findExisting($user, $idempotencyKey, $creative->id)) {
             return $existing;
@@ -46,9 +47,13 @@ class GenerationService
         $this->assertAvailable($creative, $user);
 
         // Creator tự dùng mẫu của mình cũng bị trừ Credit như người mua (tạo thử miễn phí dùng createTest)
-        // Sửa nguyên liệu một ảnh của lô ($parent): giữ bật / tắt logo của ảnh cũ
+        // Sửa nguyên liệu một ảnh của lô ($parent): giữ bật / tắt logo và worker của ảnh cũ
         return $this->start($user, $creative, GenerationType::Paid, $quantity, $input->aspectRatio, $idempotencyKey,
-            fn () => [...$this->storeInput($input, $keptPaths), 'insert_logo' => (bool) $parent?->insert_logo], $parent);
+            fn () => [
+                ...$this->storeInput($input, $keptPaths),
+                'insert_logo' => (bool) $parent?->insert_logo,
+                'worker_id' => $workerId ?? $parent?->worker_id,
+            ], $parent);
     }
 
     /** Creator tạo thử (kể cả bản nháp): không trừ Credit. */
@@ -95,6 +100,7 @@ class GenerationService
                 'asset_paths' => $original->asset_paths,
                 'input_values' => $original->input_values,
                 'insert_logo' => $original->insert_logo,
+                'worker_id' => $original->worker_id,
             ],
             $original, $outputs->pluck('id')->all());
     }
