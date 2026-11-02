@@ -32,12 +32,15 @@ class PostController extends Controller
             'status' => ['nullable', Rule::enum(SocialPostStatus::class)],
             'type' => ['nullable', Rule::in([SocialPost::TYPE_PHOTO, SocialPost::TYPE_VIDEO])],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+            // Lọc theo worker đã giao bài (trang /posts ở repo frontend)
+            'worker_id' => ['nullable', 'integer'],
         ]);
 
         $posts = SocialPost::query()
             ->where('user_id', $request->user()->id)
             ->when($data['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($data['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
+            ->when($data['worker_id'] ?? null, fn ($q, $workerId) => $q->where('worker_id', $workerId))
             ->with(SocialPostResource::RELATIONS)
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);

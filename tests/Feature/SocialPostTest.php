@@ -712,6 +712,25 @@ class SocialPostTest extends TestCase
         $this->actingAs($other)->deleteJson("/api/v1/social/posts/{$post->id}")->assertNotFound();
     }
 
+    public function test_list_filters_by_worker(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        [$workerA] = $this->postWorker($user, 'worker-a');
+        [$workerB] = $this->postWorker($user, 'worker-b');
+        $postA = $this->pendingPost($user);
+        $postB = $this->pendingPost($user);
+        $this->pendingPost($user); // chưa giao worker
+        $postA->update(['worker_id' => $workerA->id]);
+        $postB->update(['worker_id' => $workerB->id]);
+
+        $this->actingAs($user)->getJson("/api/v1/social/posts?worker_id={$workerA->id}")
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $postA->id);
+        $this->actingAs($user)->getJson('/api/v1/social/posts')->assertJsonCount(3, 'data');
+        $this->actingAs($user)->getJson('/api/v1/social/posts?worker_id=abc')->assertUnprocessable();
+    }
+
     public function test_delete_only_when_pending_review(): void
     {
         $user = $this->buyer(credit: 5000);
