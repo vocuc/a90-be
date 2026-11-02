@@ -3,20 +3,18 @@
 namespace Tests\Feature;
 
 use App\Enums\OutputStatus;
-use App\Enums\PlatformPublishStatus;
-use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Enums\TransactionStatus;
 use App\Jobs\WriteSocialPostContent;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\Hashtag;
-use App\Models\PublishAccount;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\SocialPublishJob;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Models\VideoTemplate;
 use App\Models\Worker;
 use App\Services\Social\SocialContentJobService;
 use App\Services\Social\SocialContentWriter;
@@ -104,9 +102,10 @@ class SocialPostTest extends TestCase
         return SocialPost::query()->findOrFail($id);
     }
 
-    private function publishBody(SocialPost $post, array $extra = []): array
+    private function publishBody(SocialPost $post, Worker $worker, array $extra = []): array
     {
         return array_merge([
+            'worker_id' => $worker->id,
             'title' => 'Tiêu đề đã sửa',
             'content' => 'Nội dung đã sửa',
             'hashtags' => ['a51', '#ChânDung'],
@@ -465,94 +464,122 @@ class SocialPostTest extends TestCase
             ->assertJsonPath('data.social_ai.price', $this->price());
     }
 
-    // ---- Đăng (worker đăng theo từng nền tảng) ----
+    // ---- Đăng (giao cho worker, 1 job / bài chứa mọi nền tảng, note/gop-luong-dang-bai.txt) ----
 
-    /** Admin gắn tài khoản A51 với một worker của một nền tảng: trả token của worker. */
-    private function publisherToken(User $user, string $name = 'tiktok-worker', bool $active = true, SocialPlatform $platform = SocialPlatform::Tiktok, ?string $targetUrl = null): string
+    /** Worker được admin gắn "Shop đăng bài" = $user: [worker, token]. */
+    private function postWorker(User $user, string $name = 'post-worker'): array
     {
-        $token = $this->workerToken($name);
-        PublishAccount::query()->create([
-            'user_id' => $user->id,
-            'platform' => $platform,
-            'name' => 'A51 Official',
-            'username' => 'a51.vn',
-            'target_url' => $targetUrl,
-            'worker_id' => Worker::query()->where('name', $name)->value('id'),
-            'is_active' => $active,
-        ]);
+        [$worker, $token] = Worker::register($name.'-'.Str::random(4));
+        $worker->update(['video_user_id' => $user->id]);
 
-        return $token;
+        return [$worker, $token];
     }
 
-    private function claimPublishJob(string $token): TestResponse
+    private function publish(User $user, SocialPost $post, array $body): TestResponse
     {
-        return $this->withToken($token)->getJson('/api/v1/publish-jobs');
+        return $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $body);
     }
 
-    private function submitPublish(string $token, int $jobId, array $body = ['status' => 'completed']): TestResponse
+    private function claimPostJob(string $token): TestResponse
     {
-        return $this->withToken($token)->postJson("/api/v1/publish-jobs/{$jobId}", $body);
+        return $this->withToken($token)->getJson('/api/v1/post-jobs');
     }
 
-    public function test_publish_queues_job_and_worker_saves_draft(): void
+    private function submitPostJob(string $token, int $jobId, array $body = ['status' => 'completed']): TestResponse
+    {
+        return $this->withToken($token)->postJson("/api/v1/post-jobs/{$jobId}", $body);
+    }
+
+    public function test_publish_assigns_worker_who_posts_all_platforms_in_one_job(): void
     {
         $user = $this->buyer(credit: 5000);
         $post = $this->pendingPost($user);
         $extra = $this->completedImage($user);
+        [$worker, $token] = $this->postWorker($user);
+        [, $otherToken] = $this->postWorker($this->buyer(), 'other');
 
-        $body = $this->publishBody($post, ['title' => '']); // tiêu đề không bắt buộc
+        $body = $this->publishBody($post, $worker, ['title' => '', 'platforms' => ['tiktok', 'facebook']]); // tiêu đề không bắt buộc
         $body['images'][] = $extra; // ảnh có sẵn thêm ở bước duyệt
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $body)
+        $this->publish($user, $post, $body)
             ->assertOk()
             ->assertJsonPath('data.status', 'queued')
+            ->assertJsonPath('data.type', 'photo')
+            ->assertJsonPath('data.worker.id', $worker->id)
+            ->assertJsonPath('data.selected_platforms', ['tiktok', 'facebook'])
             ->assertJsonPath('data.platforms.tiktok.status', 'queued')
-            ->assertJsonMissingPath('data.platforms.facebook')
-            ->assertJsonPath('data.title', '')
+            ->assertJsonPath('data.platforms.facebook.status', 'queued')
+            ->assertJsonMissingPath('data.platforms.instagram')
             ->assertJsonPath('data.hashtags', ['a51', 'ChânDung'])
-            ->assertJsonPath('data.image_count', 2)
-            ->assertJsonPath('data.images.1.output_id', $extra['output_id']);
+            ->assertJsonPath('data.image_count', 2);
+        // Không gửi giờ đăng: đăng ngay
+        $this->assertTrue($post->fresh()->scheduled_at->lte(now()));
 
-        // Đã bấm đăng: khoá
-        $this->actingAs($user)->deleteJson("/api/v1/social/posts/{$post->id}")->assertStatus(409)->assertJsonPath('code', 'POST_NOT_DELETABLE');
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $body)->assertStatus(409)->assertJsonPath('code', 'POST_NOT_EDITABLE');
+        // Chờ worker nhận: vẫn sửa được (bỏ Facebook)
+        $this->publish($user, $post, ['platforms' => ['tiktok']] + $body)->assertOk()
+            ->assertJsonPath('data.selected_platforms', ['tiktok'])
+            ->assertJsonMissingPath('data.platforms.facebook');
+        $this->publish($user, $post, $body)->assertOk();
+
+        // Worker khác (shop khác) / worker chưa gắn shop: không thấy bài này
+        $this->claimPostJob($otherToken)->assertNoContent();
+        $this->claimPostJob($this->workerToken('no-shop'))->assertNoContent();
+
+        $job = $this->claimPostJob($token)->assertOk()
+            ->assertJsonPath('data.type', 'photo')
+            ->assertJsonPath('data.request.post_id', $post->id)
+            ->assertJsonPath('data.request.platforms', ['tiktok', 'facebook'])
+            ->assertJsonPath('data.request.description', "Nội dung đã sửa\n#a51 #ChânDung")
+            ->assertJsonPath('data.request.template', null)
+            ->assertJsonMissingPath('data.request.account')
+            ->assertJsonCount(2, 'data.request.images')
+            ->json('data');
+        $this->claimPostJob($token)->assertNoContent();
         $this->assertSame(1, SocialPublishJob::query()->count());
-
-        // Worker chưa gắn tài khoản A51 không nhận được job; worker của tài khoản A51 khác không thấy job này
-        $this->claimPublishJob($this->workerToken('no-account'))->assertStatus(409)->assertJsonPath('code', 'ACCOUNT_NOT_ASSIGNED');
-        $this->claimPublishJob($this->publisherToken($this->buyer(), 'other-worker'))->assertNoContent();
-
-        $token = $this->publisherToken($user);
-        $job = $this->claimPublishJob($token)->assertOk()->json('data');
-        $this->assertSame('tiktok_publish', $job['type']);
-        $this->assertSame('tiktok', $job['request']['platform']);
-        $this->assertSame($post->id, $job['request']['post_id']);
-        $this->assertSame("Nội dung đã sửa\n#a51 #ChânDung", $job['request']['description']);
-        $this->assertCount(2, $job['request']['images']);
-        $this->assertSame('a51.vn', $job['request']['account']['username']);
-        $this->claimPublishJob($token)->assertNoContent();
 
         $this->actingAs($user)->getJson("/api/v1/social/posts/{$post->id}")
             ->assertJsonPath('data.status', 'publishing')
-            ->assertJsonPath('data.platforms.tiktok.status', 'publishing');
+            ->assertJsonPath('data.platforms.tiktok.status', 'publishing')
+            ->assertJsonPath('data.platforms.facebook.status', 'publishing');
+        // Worker đã nhận: khoá
+        $this->publish($user, $post, $body)->assertStatus(409)->assertJsonPath('code', 'POST_NOT_EDITABLE');
+        $this->actingAs($user)->deleteJson("/api/v1/social/posts/{$post->id}")->assertStatus(409)->assertJsonPath('code', 'POST_NOT_DELETABLE');
+        // Worker khác không báo kết quả hộ được
+        $this->submitPostJob($otherToken, $job['id'])->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
 
-        $this->submitPublish($token, $job['id'])->assertOk()->assertJsonPath('data.status', 'completed');
-        $post->refresh();
-        $this->assertSame(SocialPostStatus::Published, $post->status);
-        $this->assertNotNull($post->published_at);
-        $this->assertSame(PlatformPublishStatus::Published, $post->tiktok_status);
-        $this->assertSame(PublishAccount::query()->where('user_id', $user->id)->value('id'), SocialPublishJob::query()->find($job['id'])->publish_account_id);
+        $this->submitPostJob($token, $job['id'], ['status' => 'completed', 'post_url' => 'https://www.tiktok.com/@shop/photo/1'])
+            ->assertOk()->assertJsonPath('data.status', 'completed');
+        $this->actingAs($user)->getJson("/api/v1/social/posts/{$post->id}")
+            ->assertJsonPath('data.status', 'published')
+            ->assertJsonPath('data.platforms.tiktok.status', 'published')
+            ->assertJsonPath('data.platforms.facebook.status', 'published')
+            ->assertJsonPath('data.platforms.tiktok.post_url', 'https://www.tiktok.com/@shop/photo/1');
+        $this->assertNotNull($post->fresh()->published_at);
         $this->actingAs($user)->deleteJson("/api/v1/social/posts/{$post->id}")->assertStatus(409)->assertJsonPath('code', 'POST_NOT_DELETABLE');
     }
 
-    public function test_worker_failure_returns_post_to_review_with_generic_error(): void
+    public function test_scheduled_post_waits_until_due(): void
     {
         $user = $this->buyer(credit: 5000);
         $post = $this->pendingPost($user);
-        $token = $this->publisherToken($user);
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post))->assertOk();
+        [$worker, $token] = $this->postWorker($user);
 
-        $jobId = $this->claimPublishJob($token)->json('data.id');
-        $this->submitPublish($token, $jobId, ['status' => 'failed', 'error_code' => 'TIKTOK_CAPTCHA', 'error_message' => 'Captcha'])->assertOk();
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['scheduled_at' => '2030-01-01T09:00:00+07:00']))
+            ->assertOk()->assertJsonPath('data.scheduled_at', '2030-01-01T02:00:00.000000Z');
+        $this->claimPostJob($token)->assertNoContent();
+
+        $this->travelTo('2030-01-01 02:01:00');
+        $this->claimPostJob($token)->assertOk()->assertJsonPath('data.request.post_id', $post->id);
+    }
+
+    public function test_worker_failure_returns_post_to_review_then_retry(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $post = $this->pendingPost($user);
+        [$worker, $token] = $this->postWorker($user);
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['platforms' => ['tiktok', 'instagram']]))->assertOk();
+
+        $jobId = $this->claimPostJob($token)->json('data.id');
+        $this->submitPostJob($token, $jobId, ['status' => 'failed', 'error_code' => 'TIKTOK_CAPTCHA', 'error_message' => 'Captcha'])->assertOk();
 
         $this->actingAs($user)->getJson("/api/v1/social/posts/{$post->id}")
             ->assertJsonPath('data.status', 'pending_review')
@@ -560,195 +587,109 @@ class SocialPostTest extends TestCase
             ->assertJsonPath('data.platforms.tiktok.status', 'failed')
             ->assertJsonPath('data.platforms.tiktok.error', 'Đăng thất bại, vui lòng thử lại.')
             ->assertJsonPath('data.last_error.code', 'PUBLISH_FAILED')
-            ->assertJsonPath('data.last_error.message', 'Đăng lên TikTok thất bại, vui lòng thử lại.')
-            ->assertJsonPath('data.last_error.platforms', ['tiktok']);
-        // Mã lỗi chi tiết chỉ lưu ở job; không giao lại cho worker khác
+            ->assertJsonPath('data.last_error.platforms', ['tiktok', 'instagram']);
+        // Mã lỗi chi tiết chỉ lưu ở job; không tự giao lại
         $this->assertSame('TIKTOK_CAPTCHA', SocialPublishJob::query()->find($jobId)->error_code);
-        $this->claimPublishJob($token)->assertNoContent();
+        $this->claimPostJob($token)->assertNoContent();
 
-        // Người dùng bấm đăng lại: job mới
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post))
-            ->assertOk()->assertJsonPath('data.status', 'queued')->assertJsonPath('data.last_error', null);
-        $this->assertSame(2, SocialPublishJob::query()->count());
+        // Đăng lại: về chờ, worker nhận job mới
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/retry")
+            ->assertOk()->assertJsonPath('data.status', 'queued')->assertJsonPath('data.last_error', null)
+            ->assertJsonPath('data.platforms.instagram.status', 'queued');
+        $this->assertNotSame($jobId, $this->claimPostJob($token)->assertOk()->json('data.id'));
     }
 
-    public function test_expired_publish_lease_fails_post_without_requeue(): void
+    public function test_recreate_while_worker_silent_rejects_old_result(): void
     {
         $user = $this->buyer(credit: 5000);
         $post = $this->pendingPost($user);
-        $token = $this->publisherToken($user);
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post))->assertOk();
-        $jobId = $this->claimPublishJob($token)->json('data.id');
+        [$worker, $token] = $this->postWorker($user);
+        $this->publish($user, $post, $this->publishBody($post, $worker))->assertOk();
+        $old = $this->claimPostJob($token)->json('data.id');
 
-        $this->travel(config('ai90.worker.publish_lease_minutes') + 1)->minutes();
-        $this->artisan('social:sweep')->assertSuccessful();
-
-        $this->assertSame(SocialPostStatus::PendingReview, $post->fresh()->status);
-        $this->assertSame(PlatformPublishStatus::Failed, $post->fresh()->tiktok_status);
-        $this->assertSame('WORKER_TIMEOUT', SocialPublishJob::query()->find($jobId)->error_code);
-        $this->submitPublish($token, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
-        $this->claimPublishJob($token)->assertNoContent();
-    }
-
-    public function test_queued_job_waits_until_an_active_account_worker_claims_it(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $post = $this->pendingPost($user);
-        $token = $this->publisherToken($user, active: false);
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post))->assertOk();
-
-        $this->claimPublishJob($token)->assertStatus(409)->assertJsonPath('code', 'TIKTOK_ACCOUNT_NOT_ASSIGNED');
+        // Job không hết hạn: sweep không đụng tới
         $this->travel(2)->days();
         $this->artisan('social:sweep')->assertSuccessful();
-        $this->assertSame(SocialPostStatus::Queued, $post->fresh()->status, 'Job chờ không hết hạn');
+        $this->assertSame(SocialPostStatus::Publishing, $post->fresh()->status);
+        // Chưa lỗi / chưa nhận thì không "Tạo lại" được: chỉ bài đang đăng / lỗi
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$this->pendingPost($user)->id}/retry")->assertStatus(409);
 
-        PublishAccount::query()->update(['is_active' => true]);
-        $this->claimPublishJob($token)->assertOk();
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/retry")->assertOk()->assertJsonPath('data.status', 'queued');
+        $this->submitPostJob($token, $old)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
+        $new = $this->claimPostJob($token)->assertOk()->json('data.id');
+        $this->assertNotSame($old, $new);
+        $this->submitPostJob($token, $new)->assertOk();
+        $this->assertSame(SocialPostStatus::Published, $post->fresh()->status);
     }
 
-    public function test_publish_validates_limits(): void
+    public function test_publish_as_video_requires_template_and_enough_images(): void
     {
         $user = $this->buyer(credit: 5000);
         $post = $this->pendingPost($user);
+        [$worker, $token] = $this->postWorker($user);
+        $template = VideoTemplate::query()->create([
+            'user_id' => $user->id, 'name' => 'LensPop', 'video_url' => 'https://www.tiktok.com/@a/video/1', 'image_count' => 2,
+        ]);
 
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, [
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['type' => 'video']))
+            ->assertStatus(422)->assertJsonValidationErrors('video_template_id');
+        // Bài mới có 1 ảnh, template cần 2
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['type' => 'video', 'video_template_id' => $template->id]))
+            ->assertStatus(422)->assertJsonValidationErrors(['images' => 'Template "LensPop" cần đúng 2 ảnh, bài đang có 1 ảnh.']);
+
+        $body = $this->publishBody($post, $worker, ['type' => 'video', 'video_template_id' => $template->id]);
+        $body['images'][] = $this->completedImage($user);
+        $this->publish($user, $post, $body)->assertOk()
+            ->assertJsonPath('data.type', 'video')
+            ->assertJsonPath('data.status', 'queued')
+            ->assertJsonPath('data.video.template.name', 'LensPop')
+            ->assertJsonPath('data.image_count', 2);
+
+        $this->claimPostJob($token)->assertOk()
+            ->assertJsonPath('data.type', 'video')
+            ->assertJsonPath('data.request.template.name', 'LensPop')
+            ->assertJsonPath('data.request.template.image_count', 2)
+            ->assertJsonCount(2, 'data.request.images');
+    }
+
+    public function test_publish_validates_worker_platforms_and_limits(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $post = $this->pendingPost($user);
+        [$worker] = $this->postWorker($user);
+        [$foreign] = $this->postWorker($this->buyer(), 'foreign');
+
+        $this->publish($user, $post, ['worker_id' => null] + $this->publishBody($post, $worker))
+            ->assertStatus(422)->assertJsonValidationErrors(['worker_id' => 'Chọn worker.']);
+        $this->publish($user, $post, $this->publishBody($post, $foreign))->assertStatus(422)->assertJsonValidationErrors('worker_id');
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['platforms' => []]))
+            ->assertStatus(422)->assertJsonValidationErrors(['platforms' => 'Chọn ít nhất một nền tảng để đăng.']);
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['platforms' => ['youtube']]))
+            ->assertStatus(422)->assertJsonValidationErrors('platforms.0');
+        $this->publish($user, $post, $this->publishBody($post, $worker, [
             'title' => str_repeat('a', 91),
             'hashtags' => array_map(fn ($i) => "tag{$i}", range(1, 11)),
             'images' => [],
         ]))->assertStatus(422)->assertJsonValidationErrors(['title', 'hashtags', 'images']);
-        $this->assertSame(0, SocialPublishJob::query()->count());
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['platforms' => ['tiktok', 'instagram'], 'content' => str_repeat('a', 2300)]))
+            ->assertStatus(422)->assertJsonValidationErrors(['content' => 'Instagram: nội dung kèm hashtag tối đa 2200 ký tự.']);
+        $this->assertSame(SocialPostStatus::PendingReview, $post->fresh()->status);
     }
 
-    // ---- Nhiều nền tảng ----
-
-    public function test_publish_to_all_assigned_platforms_each_worker_claims_its_own(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $post = $this->pendingPost($user);
-        $tiktok = $this->publisherToken($user, 'tiktok-worker');
-        $facebook = $this->publisherToken($user, 'facebook-worker', platform: SocialPlatform::Facebook, targetUrl: 'https://www.facebook.com/groups/123');
-        $instagram = $this->publisherToken($user, 'instagram-worker', platform: SocialPlatform::Instagram);
-
-        $this->actingAs($user)->getJson('/api/v1/social/accounts')
-            ->assertOk()
-            ->assertJsonPath('data.*.platform', ['tiktok', 'facebook', 'instagram'])
-            ->assertJsonPath('data.1.label', 'Facebook');
-
-        // Bắt buộc chọn nền tảng
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, ['platforms' => []]))
-            ->assertStatus(422)->assertJsonValidationErrors(['platforms' => 'Chọn ít nhất một nền tảng để đăng.']);
-        $body = $this->publishBody($post);
-        unset($body['platforms']);
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $body)->assertStatus(422)->assertJsonValidationErrors('platforms');
-        $this->assertSame(0, SocialPublishJob::query()->count());
-
-        // Chọn cả 3: 1 job / nền tảng
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, ['platforms' => ['tiktok', 'facebook', 'instagram']]))
-            ->assertOk()
-            ->assertJsonPath('data.status', 'queued')
-            ->assertJsonPath('data.platforms.tiktok.status', 'queued')
-            ->assertJsonPath('data.platforms.facebook.status', 'queued')
-            ->assertJsonPath('data.platforms.instagram.status', 'queued');
-        $this->assertSame(['facebook', 'instagram', 'tiktok'], SocialPublishJob::query()->orderBy('platform')->pluck('platform')->map->value->all());
-
-        // Mỗi worker chỉ nhận job của nền tảng mình
-        $fbJob = $this->claimPublishJob($facebook)->assertOk()->json('data');
-        $this->assertSame('facebook_publish', $fbJob['type']);
-        $this->assertSame('https://www.facebook.com/groups/123', $fbJob['request']['account']['target_url']);
-        $this->claimPublishJob($facebook)->assertNoContent();
-        $this->actingAs($user)->getJson("/api/v1/social/posts/{$post->id}")
-            ->assertJsonPath('data.status', 'publishing')
-            ->assertJsonPath('data.platforms.facebook.status', 'publishing')
-            ->assertJsonPath('data.platforms.tiktok.status', 'queued');
-
-        $tkJob = $this->claimPublishJob($tiktok)->assertOk()->json('data');
-        $igJob = $this->claimPublishJob($instagram)->assertOk()->json('data');
-        $this->assertSame('tiktok_publish', $tkJob['type']);
-        $this->assertSame('instagram_publish', $igJob['type']);
-
-        $this->submitPublish($facebook, $fbJob['id'], ['status' => 'completed', 'post_url' => 'https://www.facebook.com/groups/123/posts/9'])->assertOk();
-        $this->submitPublish($tiktok, $tkJob['id'])->assertOk();
-        // Còn Instagram đang đăng: bài vẫn khoá
-        $this->assertSame(SocialPostStatus::Publishing, $post->fresh()->status);
-        $this->submitPublish($instagram, $igJob['id'], ['status' => 'failed', 'error_code' => 'IG_LOGIN_REQUIRED'])->assertOk();
-
-        // Xong hết, có nền tảng lỗi: về chờ gửi, báo nền tảng lỗi
-        $this->actingAs($user)->getJson("/api/v1/social/posts/{$post->id}")
-            ->assertJsonPath('data.status', 'pending_review')
-            ->assertJsonPath('data.platforms.facebook.status', 'published')
-            ->assertJsonPath('data.platforms.facebook.post_url', 'https://www.facebook.com/groups/123/posts/9')
-            ->assertJsonPath('data.platforms.tiktok.status', 'published')
-            ->assertJsonPath('data.platforms.instagram.status', 'failed')
-            ->assertJsonPath('data.last_error.message', 'Đăng lên Instagram thất bại, vui lòng thử lại.')
-            ->assertJsonPath('data.last_error.platforms', ['instagram']);
-        // Đã đăng lên nền tảng khác: không xoá được
-        $this->actingAs($user)->deleteJson("/api/v1/social/posts/{$post->id}")->assertStatus(409)->assertJsonPath('code', 'POST_NOT_DELETABLE');
-
-        // Không đăng lại nền tảng đã xong
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, ['platforms' => ['tiktok', 'instagram']]))
-            ->assertStatus(422)->assertJsonValidationErrors('platforms');
-
-        // Đăng lại nền tảng lỗi
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, ['platforms' => ['instagram']]))
-            ->assertOk()
-            ->assertJsonPath('data.status', 'queued')
-            ->assertJsonPath('data.platforms.instagram.status', 'queued')
-            ->assertJsonPath('data.platforms.tiktok.status', 'published')
-            ->assertJsonPath('data.last_error', null);
-        $this->assertSame(4, SocialPublishJob::query()->count());
-        $this->claimPublishJob($tiktok)->assertNoContent();
-
-        $this->submitPublish($instagram, $this->claimPublishJob($instagram)->json('data.id'))->assertOk();
-        $post->refresh();
-        $this->assertSame(SocialPostStatus::Published, $post->status);
-        $this->assertNotNull($post->published_at);
-    }
-
-    public function test_publish_to_chosen_platforms_waits_for_unassigned_worker(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $post = $this->pendingPost($user);
-        $tiktok = $this->publisherToken($user);
-
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, ['platforms' => ['facebook']]))
-            ->assertOk()
-            ->assertJsonPath('data.platforms.facebook.status', 'queued')
-            ->assertJsonMissingPath('data.platforms.tiktok');
-
-        $this->claimPublishJob($tiktok)->assertNoContent();
-        $facebook = $this->publisherToken($user, 'facebook-worker', platform: SocialPlatform::Facebook, targetUrl: 'https://www.facebook.com/a51');
-        $this->claimPublishJob($facebook)->assertOk()->assertJsonPath('data.type', 'facebook_publish');
-    }
-
-    public function test_publish_validates_platform_limits(): void
+    public function test_instagram_photo_limit(): void
     {
         config(['ai90.social.ai_content' => false]);
         RateLimiter::for('generations', fn () => Limit::none()); // tạo 11 ảnh liên tiếp
         $user = $this->buyer(credit: 50000);
+        [$worker] = $this->postWorker($user);
         $images = array_map(fn () => $this->completedImage($user), range(1, 11));
         $post = SocialPost::query()->findOrFail($this->fromImages($user, $images, ['title' => 'x'])->json('data.id'));
 
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, ['platforms' => ['instagram']]))
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['platforms' => ['instagram']]))
             ->assertStatus(422)->assertJsonValidationErrors(['images' => 'Instagram: tối đa 10 ảnh mỗi bài.']);
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, [
-            'platforms' => ['tiktok', 'instagram'],
-            'content' => str_repeat('a', 2300),
-            'images' => [['image_id' => $post->images()->value('id')]],
-        ]))->assertStatus(422)->assertJsonValidationErrors(['content' => 'Instagram: nội dung kèm hashtag tối đa 2200 ký tự.']);
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, ['platforms' => ['youtube']]))
-            ->assertStatus(422)->assertJsonValidationErrors('platforms.0');
-        $this->assertSame(0, SocialPublishJob::query()->count());
-
         // TikTok / Facebook nhận 11 ảnh
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/publish", $this->publishBody($post, ['platforms' => ['tiktok', 'facebook']]))
+        $this->publish($user, $post, $this->publishBody($post, $worker, ['platforms' => ['tiktok', 'facebook']]))
             ->assertOk()->assertJsonPath('data.image_count', 11);
-    }
-
-    public function test_inactive_account_reports_platform_specific_code(): void
-    {
-        $token = $this->publisherToken($this->buyer(), 'ig-worker', active: false, platform: SocialPlatform::Instagram);
-
-        $this->claimPublishJob($token)->assertStatus(409)->assertJsonPath('code', 'INSTAGRAM_ACCOUNT_NOT_ASSIGNED');
     }
 
     // ---- Xem / xoá ----

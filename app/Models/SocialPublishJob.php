@@ -3,20 +3,16 @@
 namespace App\Models;
 
 use App\Enums\OutputStatus;
-use App\Enums\PublishDriver;
 use App\Enums\SocialPlatform;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Job đăng bài lên một nền tảng cho worker: lấy qua GET /api/v1/publish-jobs, trả qua POST /api/v1/publish-jobs/{id}.
- * Mỗi lần bấm đăng tạo 1 job / nền tảng đã chọn. Job là lịch sử từng lần thử (mã lỗi chi tiết cho admin);
- * trạng thái hiện tại của nền tảng nằm ở social_posts.{platform}_status.
- * Dùng chung trạng thái với job ảnh (queued | processing | completed | failed).
- * driver api (TikTok người dùng tự kết nối): không qua worker, queue job PublishTikTokViaApi gọi TikTok;
- * external_id = publish_id, kết quả qua webhook hoặc status/fetch (checked_at: lần hỏi gần nhất).
- * Một bài gửi vào nhiều tài khoản TikTok một lượt: mỗi tài khoản (đích gửi, targetKey) một job. Trạng thái nền tảng tính từ
- * job mới nhất của từng đích, bỏ qua job superseded (job lỗi của lần đăng trước, không đăng lại).
+ * Một lần worker nhận bài (note/gop-luong-dang-bai.txt ở repo frontend): GET /api/v1/post-jobs, trả qua
+ * POST /api/v1/post-jobs/{id}. 1 job / bài, chứa mọi nền tảng bài cần đăng (platforms); worker báo kết quả 1 lần cho
+ * cả job. Job là lịch sử từng lần thử (mã lỗi chi tiết cho admin); trạng thái hiện tại của nền tảng nằm ở
+ * social_posts.{platform}_status. Không có hạn: worker im lặng thì chủ shop bấm "Tạo lại" (job cũ superseded).
+ * Dùng chung trạng thái với job ảnh (queued | processing | completed | failed); job tạo ra là processing luôn.
  */
 class SocialPublishJob extends Model
 {
@@ -27,22 +23,17 @@ class SocialPublishJob extends Model
     protected function casts(): array
     {
         return [
-            'platform' => SocialPlatform::class,
-            'driver' => PublishDriver::class,
+            'platforms' => 'array',
             'status' => OutputStatus::class,
-            'lease_expires_at' => 'datetime',
-            'checked_at' => 'datetime',
             'finished_at' => 'datetime',
             'superseded' => 'boolean',
         ];
     }
 
-    /** Đích gửi: worker của nền tảng, hoặc một tài khoản TikTok (theo open_id, giữ nguyên khi kết nối lại). */
-    public function targetKey(): string
+    /** @return SocialPlatform[] */
+    public function platformEnums(): array
     {
-        return $this->driver === PublishDriver::Api
-            ? 'api:'.($this->account_open_id ?? $this->publish_account_id)
-            : 'worker';
+        return array_map(fn (string $value) => SocialPlatform::from($value), $this->platforms ?? []);
     }
 
     public function post(): BelongsTo
@@ -50,8 +41,8 @@ class SocialPublishJob extends Model
         return $this->belongsTo(SocialPost::class, 'social_post_id');
     }
 
-    public function publishAccount(): BelongsTo
+    public function worker(): BelongsTo
     {
-        return $this->belongsTo(PublishAccount::class, 'publish_account_id');
+        return $this->belongsTo(Worker::class);
     }
 }

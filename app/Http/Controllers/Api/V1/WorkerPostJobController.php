@@ -6,35 +6,36 @@ use App\Http\Controllers\Controller;
 use App\Models\SocialPublishJob;
 use App\Models\Worker;
 use App\Services\Social\SocialPublishJobService;
-use App\Services\Social\VideoPostService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
 /**
- * API cho worker dựng + đăng bài video có lịch (note/lap-lich-worker.txt ở repo frontend): nhận 1 bài đã tới giờ của
- * worker, dựng video theo template từ ảnh của bài, đăng bằng tài khoản đăng bài worker giữ, rồi báo kết quả.
- * Worker chưa giữ tài khoản đăng bài -> 409 ACCOUNT_NOT_ASSIGNED. Job không hết hạn.
+ * API chung cho worker đăng bài (note/gop-luong-dang-bai.txt ở repo frontend): nhận 1 bài (ảnh hoặc video) đã tới giờ
+ * được giao cho worker, đăng lên mọi nền tảng trong job (bài video: dựng video theo template trước), rồi báo kết quả 1 lần.
+ * Worker tự lo đăng bằng tài khoản nào. Job không hết hạn.
+ *
+ * GET  /api/v1/post-jobs       204: chưa có bài tới giờ. 200 { data: { id, type: photo|video, request } }
+ * POST /api/v1/post-jobs/{id}  { status: completed|failed, post_url?, error_code?, error_message? }
+ *      409 JOB_NOT_ASSIGNED: chủ shop đã bấm "Tạo lại" (job bị bỏ), worker không cần làm gì thêm.
  */
-class WorkerVideoPostController extends Controller
+class WorkerPostJobController extends Controller
 {
-    public function __construct(
-        private VideoPostService $videos,
-        private SocialPublishJobService $jobs,
-    ) {}
+    public function __construct(private SocialPublishJobService $jobs) {}
 
     public function next(Request $request): JsonResponse|Response
     {
-        $job = $this->videos->claim($this->worker($request));
+        $job = $this->jobs->claim($this->worker($request));
         if (! $job) {
             return response()->noContent();
         }
 
-        // request: như job đăng bài ảnh (tiêu đề, nội dung, hashtag, description, images, account) + template, product
+        $request = $this->jobs->request($job);
+
         return response()->json(['data' => [
             'id' => $job->id,
-            'type' => $job->platform->value.'_video_publish',
-            'request' => [...$this->jobs->request($job), ...$this->videos->videoRequest($job)],
+            'type' => $request['type'],
+            'request' => $request,
         ]]);
     }
 

@@ -186,7 +186,7 @@ class WorkerVideoImageTest extends TestCase
         $shop2 = $this->buyer();
         $this->actingAs($this->admin());
 
-        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee('Tài khoản tạo video');
+        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee('Shop đăng bài');
 
         $this->put("/admin/workers/{$worker->id}/video-user", ['video_email' => "  {$shop->email} "])->assertSessionHas('success');
         $this->assertSame($shop->id, $worker->fresh()->video_user_id);

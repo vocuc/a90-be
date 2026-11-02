@@ -14,8 +14,8 @@ use Illuminate\View\View;
 /**
  * Worker: máy nội bộ (tạo ảnh, viết nội dung, đăng bài) xác thực bằng token. Admin tạo worker, xem lại / đổi token
  * (dán vào .env của máy), bật / tắt, gắn tài khoản A51 mà worker nhận job tạo ảnh (chưa gắn -> không nhận job ảnh).
- * Worker tạo video: gắn đúng 1 tài khoản A51 (lấy ảnh trong các lô của shop đó).
- * Gắn worker với tài khoản TikTok / Facebook / Instagram ở trang Tài khoản đăng bài.
+ * Shop đăng bài (video_user_id): worker đăng bài ảnh / video được giao + tạo video cho đúng 1 shop
+ *   (note/gop-luong-dang-bai.txt ở repo frontend). Worker tự đăng nhập tài khoản mạng xã hội trên máy.
  * Không xoá worker (job cũ còn liên kết): không dùng nữa thì tắt.
  */
 class WorkerController extends Controller
@@ -24,7 +24,7 @@ class WorkerController extends Controller
 
     public function index(): View
     {
-        $workers = Worker::query()->with(['publishAccount', 'videoUser'])->withCount('imageUsers')->orderBy('name')->get();
+        $workers = Worker::query()->with(['videoUser'])->withCount('imageUsers')->orderBy('name')->get();
 
         return view('admin.workers.index', compact('workers'));
     }
@@ -55,7 +55,7 @@ class WorkerController extends Controller
     /** Trang xem token của worker (ghi nhật ký mỗi lần xem). */
     public function show(Worker $worker): View
     {
-        $worker->load(['publishAccount', 'videoUser', 'imageUsers' => fn ($q) => $q->orderBy('email')]);
+        $worker->load(['videoUser', 'imageUsers' => fn ($q) => $q->orderBy('email')]);
         if ($worker->plainToken() !== null) {
             $this->audit->log('admin.worker.view_token', $worker);
         }
@@ -123,7 +123,7 @@ class WorkerController extends Controller
         return back()->with('success', "Worker \"{$worker->name}\" không nhận job tạo ảnh của {$user->email} nữa.");
     }
 
-    /** Gắn tài khoản A51 (theo email) cho worker tạo video: worker lấy ảnh trong các lô của shop này. Mỗi worker 1 tài khoản, gắn mới thay tài khoản cũ. */
+    /** Gắn shop (theo email) worker đăng bài + tạo video cho. Mỗi worker 1 shop, gắn mới thay shop cũ. */
     public function setVideoUser(Request $request, Worker $worker): RedirectResponse
     {
         $request->merge(['video_email' => trim((string) $request->input('video_email'))]);
@@ -139,17 +139,17 @@ class WorkerController extends Controller
         $worker->update(['video_user_id' => $user->id]);
         $this->audit->log('admin.worker.set_video_user', $worker, ['user_id' => $user->id, 'email' => $user->email]);
 
-        return back()->with('success', "Worker \"{$worker->name}\" sẽ tạo video từ ảnh của {$user->email}.");
+        return back()->with('success', "Worker \"{$worker->name}\" sẽ đăng bài + tạo video cho {$user->email}.");
     }
 
-    /** Bỏ tài khoản tạo video: worker không lấy được ảnh nữa (409 VIDEO_ACCOUNT_NOT_ASSIGNED). */
+    /** Bỏ shop đăng bài: shop không chọn được worker để đăng bài, worker không lấy được ảnh tạo video nữa. */
     public function clearVideoUser(Worker $worker): RedirectResponse
     {
         $email = $worker->videoUser?->email;
         $worker->update(['video_user_id' => null]);
         $this->audit->log('admin.worker.clear_video_user', $worker, ['email' => $email]);
 
-        return back()->with('success', "Worker \"{$worker->name}\" không tạo video nữa.");
+        return back()->with('success', "Worker \"{$worker->name}\" không đăng bài / tạo video cho shop nào nữa.");
     }
 
     /** Tắt: worker bị từ chối (401) tới khi bật lại. */

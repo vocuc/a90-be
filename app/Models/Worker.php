@@ -6,29 +6,27 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 
 /**
- * Máy nội bộ: tạo ảnh (GET /api/v1/jobs),
- * đăng bài (GET /api/v1/publish-jobs, chỉ worker được gắn tài khoản đăng bài của một nền tảng),
- * tạo video (GET /api/v1/video-images, chỉ worker được gắn tài khoản tạo video),
- * dựng + đăng bài video có lịch (GET /api/v1/video-posts, note/lap-lich-worker.txt ở repo frontend).
+ * Máy nội bộ: tạo ảnh (GET /api/v1/jobs, các tài khoản tạo ảnh imageUsers),
+ * đăng bài ảnh / video được giao (GET /api/v1/post-jobs, note/gop-luong-dang-bai.txt ở repo frontend),
+ * lấy ảnh tạo video / đồng bộ template (GET /api/v1/video-images, PUT /api/v1/video-templates/sync).
+ * video_user_id: shop worker đăng bài + tạo video cho (admin gắn ở trang Worker, mục "Shop đăng bài").
  */
 class Worker extends Model
 {
     protected $guarded = ['id'];
 
     /**
-     * Worker đang bật được gắn cho tài khoản $userId (note/quan-ly-worker.txt ở repo frontend): tạo ảnh cho tài khoản, lấy
-     * ảnh tạo video từ tài khoản, hoặc giữ tài khoản đăng bài của tài khoản.
+     * Worker đang bật được gắn cho tài khoản $userId (note/quan-ly-worker.txt ở repo frontend): tạo ảnh cho tài khoản, hoặc
+     * đăng bài + tạo video cho tài khoản (video_user_id).
      */
     public function scopeAssignedTo(Builder $query, int $userId): Builder
     {
         return $query->where('is_active', true)->where(fn (Builder $q) => $q
             ->whereHas('imageUsers', fn (Builder $u) => $u->whereKey($userId))
-            ->orWhere('video_user_id', $userId)
-            ->orWhereHas('publishAccount', fn (Builder $a) => $a->where('user_id', $userId)));
+            ->orWhere('video_user_id', $userId));
     }
 
     protected $hidden = ['token_hash', 'token_encrypted'];
@@ -84,12 +82,6 @@ class Worker extends Model
     public static function hashToken(string $token): string
     {
         return hash('sha256', $token);
-    }
-
-    /** Tài khoản đăng bài worker đang giữ (admin gắn ở trang Tài khoản đăng bài): quyết định nền tảng worker đăng. */
-    public function publishAccount(): HasOne
-    {
-        return $this->hasOne(PublishAccount::class);
     }
 
     /** Tài khoản A51 worker nhận job tạo ảnh (admin gắn ở trang Worker). Chưa gắn tài khoản nào -> không nhận job ảnh. */

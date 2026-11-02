@@ -3,8 +3,8 @@
 namespace App\Enums;
 
 /**
- * Nền tảng đăng bài. Mỗi nền tảng có 1 cột trạng thái trong social_posts ({value}_status),
- * worker riêng (PublishAccount.platform) và giới hạn riêng, kiểm tra lúc bấm đăng.
+ * Nền tảng đăng bài. Mỗi nền tảng có 1 cột trạng thái trong social_posts ({value}_status) và giới hạn riêng, kiểm tra
+ * lúc bấm đăng. Worker được giao bài tự đăng lên mọi nền tảng đã chọn (note/gop-luong-dang-bai.txt ở repo frontend).
  */
 enum SocialPlatform: string
 {
@@ -44,12 +44,6 @@ enum SocialPlatform: string
             self::Facebook => 63206,
             self::Instagram => 2200,
         };
-    }
-
-    /** Mã lỗi khi worker chưa được gắn tài khoản đang bật của nền tảng, vd TIKTOK_ACCOUNT_NOT_ASSIGNED. */
-    public function notAssignedCode(): string
-    {
-        return strtoupper($this->value).'_ACCOUNT_NOT_ASSIGNED';
     }
 
     /** @return string[] */

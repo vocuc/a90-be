@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Máy làm template (D:\video-tmp, npm run sync-templates) gửi TOÀN BỘ danh sách template đang có, A51 đồng bộ vào shop
- * worker được gắn (admin -> Worker -> Tài khoản tạo video):
+ * worker được gắn (admin -> Worker -> Shop đăng bài):
  *   PUT /api/v1/video-templates/sync { templates: [ { key, name, image_count }, ... ] }
  * - key (ID template trên máy làm template) chưa có -> tạo; có rồi -> cập nhật tên / số ảnh, đang ẩn thì hiện lại.
  * - Template đồng bộ trước đây nhưng không còn trong danh sách -> ẩn (không random / chọn được; bài đã tạo giữ nguyên).

@@ -7,8 +7,8 @@
         <div class="card-header d-flex align-items-center">
             <p class="text-muted small mb-0">
                 Mỗi máy chạy worker (tạo ảnh, viết nội dung, đăng bài) dùng <b>1 token</b>, dán vào file <code>.env</code> của máy.
-                Worker đăng bài cần được gắn với tài khoản TikTok / Facebook / Instagram ở trang
-                <a href="{{ route('admin.publish-accounts.index') }}">Tài khoản đăng bài</a>.
+                Worker đăng bài ảnh / video cho shop nào thì gắn shop đó ở mục <b>Shop đăng bài</b> trong trang chi tiết worker;
+                worker tự đăng nhập tài khoản TikTok / Facebook / Instagram trên máy.
             </p>
             <a href="{{ route('admin.workers.create') }}" class="btn btn-sm btn-primary ml-auto text-nowrap">
                 <i class="fas fa-plus"></i> Thêm worker
@@ -19,7 +19,7 @@
                 <thead>
                 <tr>
                     <th>Worker</th>
-                    <th>Tài khoản đăng bài</th>
+                    <th>Shop đăng bài</th>
                     <th>Hoạt động</th>
                     <th class="text-center">Trạng thái</th>
                     <th class="text-right" style="width:200px"></th>
@@ -34,14 +34,10 @@
                             <div class="small text-muted">
                                 Job tạo ảnh: {{ $worker->image_users_count ? $worker->image_users_count.' tài khoản' : 'chưa gắn tài khoản (không nhận)' }}
                             </div>
-                            @if ($worker->videoUser)
-                                <div class="small text-muted">Tạo video: {{ $worker->videoUser->email }}</div>
-                            @endif
                         </td>
                         <td>
-                            @if ($account = $worker->publishAccount)
-                                <i class="fab fa-{{ $account->platform->value }}"></i> {{ $account->platform->label() }}
-                                · <a href="{{ route('admin.publish-accounts.edit', $account) }}">{{ $account->name }}</a>
+                            @if ($worker->videoUser)
+                                {{ $worker->videoUser->email }}
                             @else
                                 <span class="small text-muted">Chưa gắn (worker tạo ảnh / viết nội dung, hoặc chưa dùng)</span>
                             @endif

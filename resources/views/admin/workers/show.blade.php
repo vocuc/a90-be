@@ -50,18 +50,19 @@
 
             <div class="card">
                 <div class="card-header">
-                    <h3 class="card-title">Tài khoản tạo video</h3>
+                    <h3 class="card-title">Shop đăng bài</h3>
                 </div>
                 <div class="card-body">
                     <p class="text-muted small">
-                        Worker tạo video lấy ảnh ngẫu nhiên trong các lô ảnh của shop này (lô của chủ shop + lô nhân viên tạo).
-                        Mỗi worker <b>1 tài khoản</b>, gắn tài khoản khác sẽ thay tài khoản cũ. Không phải worker tạo video thì để trống.
+                        Chủ shop chọn được worker này ở trang bài đăng; worker đăng bài ảnh / video được giao lên TikTok /
+                        Facebook / Instagram bằng tài khoản đăng nhập trên máy, lấy ảnh tạo video và đồng bộ template cho shop này.
+                        Mỗi worker <b>1 shop</b>, gắn shop khác sẽ thay shop cũ. Không đăng bài cho shop nào thì để trống.
                     </p>
                     @if ($worker->videoUser)
                         <div class="d-flex align-items-center mb-3">
                             <div><b>{{ $worker->videoUser->name }}</b> <span class="text-muted">{{ $worker->videoUser->email }}</span></div>
                             <form method="POST" action="{{ route('admin.workers.video-user.clear', $worker) }}" class="ml-auto"
-                                  data-confirm="Bỏ {{ $worker->videoUser->email }} khỏi worker &quot;{{ $worker->name }}&quot;? Worker sẽ không lấy được ảnh để tạo video nữa.">
+                                  data-confirm="Bỏ {{ $worker->videoUser->email }} khỏi worker &quot;{{ $worker->name }}&quot;? Shop sẽ không chọn được worker này để đăng bài nữa.">
                                 @csrf @method('DELETE')
                                 <button class="btn btn-xs btn-outline-danger"><i class="fas fa-times"></i> Bỏ</button>
                             </form>
@@ -139,16 +140,6 @@
                         </div>
                     </form>
                     <dl class="mb-0">
-                        <dt>Tài khoản đăng bài</dt>
-                        <dd>
-                            @if ($account = $worker->publishAccount)
-                                <i class="fab fa-{{ $account->platform->value }}"></i> {{ $account->platform->label() }}
-                                · <a href="{{ route('admin.publish-accounts.edit', $account) }}">{{ $account->name }}</a>
-                            @else
-                                <span class="text-muted">Chưa gắn.</span>
-                                <a href="{{ route('admin.publish-accounts.create') }}">Gắn với tài khoản đăng bài</a>
-                            @endif
-                        </dd>
                         <dt>Hoạt động gần nhất</dt>
                         <dd>{{ $worker->last_seen_at ? $worker->last_seen_at->format('d/m/Y H:i').' ('.$worker->last_seen_at->diffForHumans().')' : 'Chưa kết nối' }}</dd>
                         <dt>Tạo lúc</dt>

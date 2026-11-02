@@ -4,7 +4,6 @@ namespace App\Http\Resources;
 
 use App\Enums\OutputStatus;
 use App\Enums\PlatformPublishStatus;
-use App\Enums\PublishDriver;
 use App\Models\ImageBatchImage;
 use App\Models\SocialPost;
 use App\Models\SocialPostImage;
@@ -14,7 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
- * Cần load: images.output, images.generation.creative, publishJobs (SocialPostResource::RELATIONS).
+ * Cần load: images.output, images.generation.creative, publishJobs, worker, product (SocialPostResource::RELATIONS).
  *
  * @mixin SocialPost
  */
@@ -35,6 +34,10 @@ class SocialPostResource extends JsonResource
             'type' => $this->type,
             'status' => $this->status,
             'source' => $this->source,
+            // Worker được giao đăng bài, giờ đăng, nền tảng đã chọn (note/gop-luong-dang-bai.txt ở repo frontend)
+            'worker' => $this->worker ? ['id' => $this->worker->id, 'name' => $this->worker->name] : null,
+            'scheduled_at' => $this->scheduled_at,
+            'selected_platforms' => $this->platforms ?? [],
             // Bài video: worker dựng + đăng, template (bản chụp lúc chọn), sản phẩm lấy ảnh, giờ đăng. Bài ảnh: null
             'video' => $this->isVideo() ? [
                 'worker' => $this->worker ? ['id' => $this->worker->id, 'name' => $this->worker->name] : null,
@@ -56,7 +59,7 @@ class SocialPostResource extends JsonResource
             'image_count' => $images->count(),
             'cover_url' => $images->firstWhere('thumb_url', '!==', null)['thumb_url'] ?? null,
             'images' => $images,
-            // Nền tảng đã chọn đăng: { tiktok: { status, post_url, error, finished_at, accounts }, ... }
+            // Trạng thái từng nền tảng đã bấm đăng: { tiktok: { status, post_url, error, finished_at }, ... }
             'platforms' => $this->platforms(),
             'last_error' => $this->last_error,
             'created_at' => $this->created_at,
@@ -69,33 +72,13 @@ class SocialPostResource extends JsonResource
         $jobs = $this->publishJobs->sortBy('id');
         $result = [];
         foreach ($this->platformStatuses() as $platform => $status) {
-            $platformJobs = $jobs->filter(fn ($job) => $job->platform->value === $platform);
-            // Job gần nhất của nền tảng
-            $job = $platformJobs->last();
-            // Job mới nhất của từng tài khoản TikTok tự kết nối (bỏ job lỗi của lần đăng trước)
-            $apiJobs = $platformJobs
-                ->filter(fn ($j) => $j->driver === PublishDriver::Api && ! $j->superseded)
-                ->keyBy(fn ($j) => $j->targetKey())
-                ->values();
-            $failedApi = $apiJobs->first(fn ($j) => $j->status === OutputStatus::Failed && $j->error_message);
+            // Job gần nhất có nền tảng này (1 job / lần worker nhận bài, chứa mọi nền tảng)
+            $job = $jobs->filter(fn ($j) => in_array($platform, $j->platforms ?? [], true))->last();
             $result[$platform] = [
                 'status' => $status,
-                // worker | api (TikTok người dùng tự kết nối: "Đã gửi vào hộp thư")
-                'driver' => $job?->driver?->value,
-                'post_url' => $job?->post_url,
-                // Đăng qua API lỗi do tài khoản TikTok của chính người dùng (hết lượt, mất kết nối...): hiện thông báo cụ thể
-                'error' => $status === PlatformPublishStatus::Failed
-                    ? ($failedApi?->error_message ?? self::PLATFORM_FAILED_MESSAGE)
-                    : null,
+                'post_url' => $job?->status === OutputStatus::Completed ? $job->post_url : null,
+                'error' => $status === PlatformPublishStatus::Failed ? self::PLATFORM_FAILED_MESSAGE : null,
                 'finished_at' => $job?->finished_at,
-                // TikTok gửi vào nhiều tài khoản: trạng thái từng tài khoản. Worker: []
-                'accounts' => $apiJobs->map(fn ($j) => [
-                    'account_id' => $j->publish_account_id,
-                    'name' => $j->account_name,
-                    'status' => PlatformPublishStatus::fromJob($j->status),
-                    'error' => $j->status === OutputStatus::Failed ? ($j->error_message ?: self::PLATFORM_FAILED_MESSAGE) : null,
-                    'finished_at' => $j->finished_at,
-                ])->all(),
             ];
         }
 

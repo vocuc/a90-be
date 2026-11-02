@@ -18,15 +18,15 @@ class AdminWorkerTest extends TestCase
         return $admin;
     }
 
-    /** Token hợp lệ: qua được xác thực (worker chưa gắn tài khoản đăng bài -> 409, không phải 401). */
+    /** Token hợp lệ: qua được xác thực (chưa có bài nào được giao -> 204, không phải 401). */
     private function assertTokenWorks(string $token): void
     {
-        $this->withToken($token)->getJson('/api/v1/publish-jobs')->assertStatus(409);
+        $this->withToken($token)->getJson('/api/v1/post-jobs')->assertNoContent();
     }
 
     private function assertTokenRejected(string $token): void
     {
-        $this->withToken($token)->getJson('/api/v1/publish-jobs')->assertStatus(401);
+        $this->withToken($token)->getJson('/api/v1/post-jobs')->assertStatus(401);
     }
 
     public function test_only_admin_can_open_worker_pages(): void

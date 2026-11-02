@@ -2,8 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Enums\SocialPlatform;
-use App\Models\PublishAccount;
 use App\Models\Worker;
 use Tests\TestCase;
 
@@ -25,14 +23,6 @@ class ShopWorkerTest extends TestCase
         // Đăng bài + tạo video cho shop, offline
         [$publish] = Worker::register('a-dang-bai');
         $publish->forceFill(['video_user_id' => $shop->id, 'last_seen_at' => now()->subHour()])->save();
-        PublishAccount::query()->create([
-            'user_id' => $shop->id,
-            'platform' => SocialPlatform::Facebook,
-            'name' => 'Shop Hoa',
-            'username' => 'shophoa',
-            'worker_id' => $publish->id,
-            'is_active' => true,
-        ]);
 
         // Không hiện: worker của shop khác, worker đang tắt
         [$foreign] = Worker::register('c-khac');
@@ -45,12 +35,11 @@ class ShopWorkerTest extends TestCase
 
         $this->assertSame('a-dang-bai', $data[0]['name']);
         $this->assertSame(['publish', 'video'], $data[0]['functions']);
-        $this->assertSame(['platform' => 'facebook', 'platform_label' => 'Facebook', 'name' => '@shophoa'], $data[0]['publish_account']);
+        $this->assertArrayNotHasKey('publish_account', $data[0]);
         $this->assertFalse($data[0]['online']);
 
         $this->assertSame('b-anh', $data[1]['name']);
         $this->assertSame(['image'], $data[1]['functions']);
-        $this->assertNull($data[1]['publish_account']);
         $this->assertTrue($data[1]['online']);
         $this->assertSame($imageToken, $data[1]['token']);
     }

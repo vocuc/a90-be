@@ -16,9 +16,10 @@ use Illuminate\Support\Str;
  * Trạng thái từng nền tảng: tiktok_status / facebook_status / instagram_status (null: không đăng lên nền tảng đó);
  * status là trạng thái chung, tính lại bằng syncStatus() mỗi khi trạng thái một nền tảng đổi.
  *
- * Bài video (type video, note/lap-lich-worker.txt ở repo frontend): worker được chọn (worker_id) dựng video theo template
- * từ ảnh của bài rồi tự đăng bằng tài khoản đăng bài nó giữ, chỉ khi đã tới giờ (scheduled_at). AI viết xong -> queued
- * (chờ tới giờ, còn sửa / xoá được); worker nhận -> publishing; xong -> published; lỗi -> pending_review + last_error.
+ * Mọi bài (ảnh / video, note/gop-luong-dang-bai.txt ở repo frontend) giao cho 1 worker (worker_id), đăng lên các nền tảng
+ * đã chọn (platforms) khi tới giờ (scheduled_at). Bấm đăng -> các nền tảng queued (chờ tới giờ, còn sửa / xoá được);
+ * worker nhận -> publishing; xong -> published; lỗi -> pending_review + last_error. Worker tự lo tài khoản đăng.
+ * Bài video (type video, note/lap-lich-worker.txt): worker dựng video theo template từ ảnh của bài rồi đăng.
  */
 class SocialPost extends Model
 {
@@ -66,6 +67,7 @@ class SocialPost extends Model
             'instagram_status' => PlatformPublishStatus::class,
             'ai_content' => 'boolean',
             'hashtags' => 'array',
+            'platforms' => 'array',
             'last_error' => 'array',
             'published_at' => 'datetime',
             'scheduled_at' => 'datetime',
@@ -77,10 +79,40 @@ class SocialPost extends Model
         return $this->type === self::TYPE_VIDEO;
     }
 
-    /** Trạng thái khi nội dung đã sẵn sàng: bài ảnh chờ người dùng bấm đăng, bài video chờ tới giờ cho worker nhận. */
+    /**
+     * Trạng thái khi nội dung đã sẵn sàng: bài đã chọn sẵn worker + nền tảng (tạo video) chờ tới giờ cho worker nhận,
+     * bài ảnh từ lô chờ chủ shop bấm đăng.
+     */
     public function readyStatus(): SocialPostStatus
     {
-        return $this->isVideo() ? SocialPostStatus::Queued : SocialPostStatus::PendingReview;
+        return $this->worker_id && $this->platforms ? SocialPostStatus::Queued : SocialPostStatus::PendingReview;
+    }
+
+    /** Bài đang chờ tới giờ (worker chưa nhận) hoặc chờ gửi: còn sửa / đăng lại / xoá được. */
+    public function isEditable(): bool
+    {
+        return $this->status === SocialPostStatus::PendingReview || $this->status === SocialPostStatus::Queued;
+    }
+
+    /** @return SocialPlatform[] nền tảng đã chọn */
+    public function selectedPlatforms(): array
+    {
+        return array_map(fn (string $value) => SocialPlatform::from($value), $this->platforms ?? []);
+    }
+
+    /**
+     * Đưa các nền tảng đã chọn (platforms) vào hàng chờ: nền tảng đã đăng xong giữ nguyên, nền tảng đã chọn -> queued,
+     * nền tảng bỏ chọn -> null. Không tính lại status (gọi syncStatus() nếu cần), không lưu.
+     */
+    public function queuePlatforms(): void
+    {
+        $selected = $this->platforms ?? [];
+        foreach (SocialPlatform::cases() as $platform) {
+            if ($this->platformStatus($platform) === PlatformPublishStatus::Published) {
+                continue;
+            }
+            $this->{$platform->statusColumn()} = in_array($platform->value, $selected, true) ? PlatformPublishStatus::Queued : null;
+        }
     }
 
     /**
@@ -232,7 +264,7 @@ class SocialPost extends Model
         return $this->belongsTo(ImageBatch::class, 'image_batch_id');
     }
 
-    /** Bài video: worker dựng + đăng. */
+    /** Worker được giao đăng bài (ảnh / video). */
     public function worker(): BelongsTo
     {
         return $this->belongsTo(Worker::class);

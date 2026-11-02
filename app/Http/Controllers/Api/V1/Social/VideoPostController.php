@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Social;
 
+use App\Enums\SocialPlatform;
 use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\SocialPostResource;
@@ -13,10 +14,12 @@ use App\Models\VideoTemplate;
 use App\Services\MediaStorage;
 use App\Services\ShopImageLibrary;
 use App\Services\Social\SocialContentJobService;
+use App\Services\Social\SocialPublishJobService;
 use App\Services\Social\VideoPostService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\Rule;
 
 /**
  * Bài đăng video có lịch của chủ shop (note/lap-lich-worker.txt ở repo frontend), cần hồ sơ người bán.
@@ -27,7 +30,7 @@ class VideoPostController extends Controller
     public function __construct(private VideoPostService $videos) {}
 
     /**
-     * "Tạo video": worker_id, count, first_at (giờ đăng bài đầu), gap_min / gap_max (phút giữa 2 bài liên tiếp).
+     * "Tạo video": worker_id, platforms (mặc định ['tiktok']), count, first_at (giờ đăng bài đầu), gap_min / gap_max (phút giữa 2 bài liên tiếp).
      * 201 { data: { created, requested, stopped: null|insufficient_credit|no_template|not_enough_images, post_ids } }.
      * Không tạo được bài nào: 422 VIDEO_NO_TEMPLATE / VIDEO_NOT_ENOUGH_IMAGES, 402 INSUFFICIENT_CREDIT.
      */
@@ -35,12 +38,15 @@ class VideoPostController extends Controller
     {
         $data = $request->validate([
             'worker_id' => ['required', 'integer'],
+            'platforms' => ['nullable', 'array', 'min:1'],
+            'platforms.*' => ['string', 'distinct', Rule::enum(SocialPlatform::class)],
             'count' => ['required', 'integer', 'min:1', 'max:'.VideoPostService::MAX_COUNT],
             'first_at' => ['required', 'date'],
             'gap_min' => ['required', 'integer', 'min:0', 'max:'.VideoPostService::MAX_GAP_MINUTES],
             'gap_max' => ['required', 'integer', 'gte:gap_min', 'max:'.VideoPostService::MAX_GAP_MINUTES],
             'idempotency_key' => ['required', 'string', 'max:80', 'regex:/^[A-Za-z0-9-]+$/'],
         ], [
+            ...PostController::platformMessages(),
             'count.max' => 'Mỗi lần tạo tối đa '.VideoPostService::MAX_COUNT.' bài.',
             'gap_max.gte' => 'Khoảng cách tối đa phải lớn hơn hoặc bằng tối thiểu.',
             'gap_min.max' => 'Khoảng cách tối đa '.VideoPostService::MAX_GAP_MINUTES.' phút.',
@@ -50,7 +56,7 @@ class VideoPostController extends Controller
         $user = $request->user();
         $worker = $this->videos->findWorker($user, (int) $data['worker_id']);
         $result = $this->videos->autoCreate(
-            $user, $worker, (int) $data['count'], Carbon::parse($data['first_at'])->setTimezone(config('app.timezone')),
+            $user, $worker, $data['platforms'] ?? [SocialPlatform::Tiktok->value], (int) $data['count'], Carbon::parse($data['first_at'])->setTimezone(config('app.timezone')),
             (int) $data['gap_min'], (int) $data['gap_max'], $data['idempotency_key'],
         );
 
@@ -99,10 +105,10 @@ class VideoPostController extends Controller
         return $this->resource($this->videos->update($request->user(), $post, $data));
     }
 
-    /** "Đăng lại" (bài lỗi) / "Tạo lại" (worker im lặng): bài về chờ tới giờ. */
-    public function retry(Request $request, int $post): SocialPostResource
+    /** "Đăng lại" (bài lỗi) / "Tạo lại" (worker im lặng): bài về chờ tới giờ. Như POST /social/posts/{id}/retry. */
+    public function retry(Request $request, int $post, SocialPublishJobService $publisher): SocialPostResource
     {
-        return $this->resource($this->videos->retry($request->user(), $this->findVideo($request, $post)));
+        return $this->resource($publisher->retry($request->user(), $this->findVideo($request, $post)));
     }
 
     /**
@@ -145,11 +151,12 @@ class VideoPostController extends Controller
             ->get(['id', 'name', 'video_url', 'image_count'])]);
     }
 
-    /** Worker, template, sản phẩm, ảnh, giờ đăng: dùng chung cho tạo thủ công và sửa. */
+    /** Worker, nền tảng, template, sản phẩm, ảnh, giờ đăng: dùng chung cho tạo thủ công và sửa. */
     private static function selectionRules(): array
     {
         return [
             'worker_id' => ['required', 'integer'],
+            ...PostController::platformRules(),
             'video_template_id' => ['required', 'integer'],
             'product_id' => ['nullable', 'integer'],
             'images' => ['required', 'array', 'min:1', 'max:'.SocialPost::MAX_IMAGES],
@@ -162,6 +169,7 @@ class VideoPostController extends Controller
     private static function selectionMessages(): array
     {
         return [
+            ...PostController::platformMessages(),
             'worker_id.required' => 'Chọn worker.',
             'video_template_id.required' => 'Chọn template.',
             'images.required' => 'Chọn ảnh cho bài.',

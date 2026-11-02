@@ -2,10 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Enums\SocialPlatform;
 use App\Models\ImageBatch;
 use App\Models\Product;
-use App\Models\PublishAccount;
 use App\Models\SocialPost;
 use App\Models\User;
 use App\Models\VideoTemplate;
@@ -16,7 +14,7 @@ use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
-/** Bài đăng video có lịch (note/lap-lich-worker.txt ở repo frontend). */
+/** Bài đăng video có lịch (note/lap-lich-worker.txt, note/gop-luong-dang-bai.txt ở repo frontend). */
 class VideoPostTest extends TestCase
 {
     public ?array $aiResult = ['title' => 'Video mới', 'content' => 'Nội dung video', 'hashtags' => []];
@@ -72,20 +70,12 @@ class VideoPostTest extends TestCase
         return $product;
     }
 
-    /**
-     * Worker tạo video của shop ($videoUser), có / không giữ tài khoản TikTok của shop: [worker, token].
-     */
-    private function worker(User $shop, bool $withAccount = true, bool $videoUser = true): array
+    /** Worker đăng bài + tạo video cho shop (admin gắn "Shop đăng bài"): [worker, token]. */
+    private function worker(User $shop, bool $assigned = true): array
     {
         [$worker, $token] = Worker::register('may-'.Str::random(5));
-        if ($videoUser) {
+        if ($assigned) {
             $worker->update(['video_user_id' => $shop->id]);
-        }
-        if ($withAccount) {
-            PublishAccount::query()->create([
-                'user_id' => $shop->id, 'platform' => SocialPlatform::Tiktok, 'name' => 'Shop', 'username' => 'shop',
-                'worker_id' => $worker->id, 'is_active' => true,
-            ]);
         }
 
         return [$worker, $token];
@@ -106,7 +96,12 @@ class VideoPostTest extends TestCase
 
     private function nextJob(string $token): TestResponse
     {
-        return $this->withToken($token)->getJson('/api/v1/video-posts');
+        return $this->withToken($token)->getJson('/api/v1/post-jobs');
+    }
+
+    private function submit(string $token, int $jobId, array $body = ['status' => 'completed']): TestResponse
+    {
+        return $this->withToken($token)->postJson("/api/v1/post-jobs/{$jobId}", $body);
     }
 
     // ---- Tests ----
@@ -137,6 +132,9 @@ class VideoPostTest extends TestCase
             $this->assertSame($product->id, $post->product_id);
             $this->assertSame($worker->id, $post->worker_id);
             $this->assertSame(2, $post->images()->count());
+            // Không chọn nền tảng: mặc định TikTok
+            $this->assertSame(['tiktok'], $post->platforms);
+            $this->assertSame('queued', $post->tiktok_status->value);
             if ($i > 0) {
                 $gap = $posts[$i - 1]->scheduled_at->diffInMinutes($post->scheduled_at);
                 $this->assertTrue($gap >= 40 && $gap <= 60, "Khoảng cách {$gap} phút");
@@ -203,7 +201,8 @@ class VideoPostTest extends TestCase
         $this->travel(2)->hours();
         $this->nextJob($otherToken)->assertNoContent();
         $job = $this->nextJob($token)->assertOk()
-            ->assertJsonPath('data.type', 'tiktok_video_publish')
+            ->assertJsonPath('data.type', 'video')
+            ->assertJsonPath('data.request.platforms', ['tiktok'])
             ->assertJsonPath('data.request.post_id', $id)
             ->assertJsonPath('data.request.title', 'Video mới')
             ->assertJsonPath('data.request.template.image_count', 2)
@@ -215,30 +214,32 @@ class VideoPostTest extends TestCase
         // Worker đã nhận: không sửa / xoá được
         $this->actingAs($shop)->deleteJson("/api/v1/social/posts/{$id}")->assertStatus(409);
 
-        $this->withToken($token)->postJson("/api/v1/video-posts/{$job['id']}", ['status' => 'completed', 'post_url' => 'https://www.tiktok.com/@shop/video/2'])
-            ->assertOk();
+        $this->submit($token, $job['id'], ['status' => 'completed', 'post_url' => 'https://www.tiktok.com/@shop/video/2'])->assertOk();
         $this->actingAs($shop)->getJson("/api/v1/social/posts/{$id}")
             ->assertJsonPath('data.status', 'published')
             ->assertJsonPath('data.platforms.tiktok.status', 'published');
     }
 
-    public function test_video_worker_without_publish_account_claims_as_tiktok(): void
+    public function test_auto_posts_to_chosen_platforms_in_one_job(): void
     {
         $shop = $this->creator(credit: 100000);
         $this->template($shop, 1);
         $this->productWithImages($shop, 1);
-        [$worker, $token] = $this->worker($shop, withAccount: false);
-        $id = $this->auto($shop, $worker, ['count' => 1, 'first_at' => now()->subMinute()->toIso8601String()])->json('data.post_ids.0');
+        [$worker, $token] = $this->worker($shop);
+        $this->auto($shop, $worker, ['platforms' => ['youtube']])->assertStatus(422)->assertJsonValidationErrors('platforms.0');
+        $id = $this->auto($shop, $worker, [
+            'count' => 1, 'platforms' => ['tiktok', 'facebook'], 'first_at' => now()->subMinute()->toIso8601String(),
+        ])->json('data.post_ids.0');
 
         $job = $this->nextJob($token)->assertOk()
-            ->assertJsonPath('data.type', 'tiktok_video_publish')
-            ->assertJsonPath('data.request.platform', 'tiktok')
-            ->assertJsonPath('data.request.account', null)
+            ->assertJsonPath('data.request.platforms', ['tiktok', 'facebook'])
+            ->assertJsonMissingPath('data.request.account')
             ->json('data');
-        $this->withToken($token)->postJson("/api/v1/video-posts/{$job['id']}", ['status' => 'completed'])->assertOk();
+        $this->submit($token, $job['id'])->assertOk();
         $this->actingAs($shop)->getJson("/api/v1/social/posts/{$id}")
             ->assertJsonPath('data.status', 'published')
-            ->assertJsonPath('data.platforms.tiktok.status', 'published');
+            ->assertJsonPath('data.platforms.tiktok.status', 'published')
+            ->assertJsonPath('data.platforms.facebook.status', 'published');
     }
 
     public function test_manual_create_one_post_with_chosen_template_product_images(): void
@@ -255,6 +256,7 @@ class VideoPostTest extends TestCase
         );
         $body = [
             'worker_id' => $worker->id,
+            'platforms' => ['tiktok'],
             'video_template_id' => $template->id,
             'product_id' => $product->id,
             'images' => array_slice($images, 0, 2),
@@ -266,6 +268,7 @@ class VideoPostTest extends TestCase
         $this->postJson('/api/v1/social/video-posts', ['images' => $images] + $body)->assertStatus(422)->assertJsonValidationErrors('images');
         $this->postJson('/api/v1/social/video-posts', ['video_template_id' => $off->id] + $body)->assertStatus(422)->assertJsonValidationErrors('video_template_id');
         $this->postJson('/api/v1/social/video-posts', ['worker_id' => null] + $body)->assertStatus(422)->assertJsonValidationErrors('worker_id');
+        $this->postJson('/api/v1/social/video-posts', ['platforms' => []] + $body)->assertStatus(422)->assertJsonValidationErrors('platforms');
 
         $balance = $this->balance($shop);
         $id = $this->postJson('/api/v1/social/video-posts', $body)->assertCreated()
@@ -301,7 +304,7 @@ class VideoPostTest extends TestCase
         $template = $post->video_template_id === $first->id ? $second : $first;
 
         $job = $this->nextJob($token)->json('data');
-        $this->withToken($token)->postJson("/api/v1/video-posts/{$job['id']}", ['status' => 'failed', 'error_code' => 'RENDER_FAILED'])->assertOk();
+        $this->submit($token, $job['id'], ['status' => 'failed', 'error_code' => 'RENDER_FAILED'])->assertOk();
         $this->actingAs($shop)->getJson("/api/v1/social/posts/{$id}")
             ->assertJsonPath('data.status', 'pending_review')
             ->assertJsonPath('data.last_error.code', SocialPost::PUBLISH_FAILED);
@@ -310,6 +313,7 @@ class VideoPostTest extends TestCase
         $images = $this->actingAs($shop)->getJson("/api/v1/social/video-posts/images?product_id={$product->id}")->assertOk()->json('data');
         $body = [
             'worker_id' => $worker->id,
+            'platforms' => ['tiktok', 'instagram'],
             'video_template_id' => $template->id,
             'product_id' => $product->id,
             'images' => array_map(fn ($i) => ['generation_id' => $i['generation_id'], 'output_id' => $i['output_id']], $images),
@@ -325,13 +329,16 @@ class VideoPostTest extends TestCase
             ->assertJsonPath('data.hashtags', ['giay'])
             ->assertJsonPath('data.video.template.id', $template->id)
             ->assertJsonPath('data.image_count', $template->image_count)
+            ->assertJsonPath('data.selected_platforms', ['tiktok', 'instagram'])
             ->assertJsonPath('data.status', 'pending_review');
 
         // Đăng lại: về chờ tới giờ (ngày mai)
         $this->postJson("/api/v1/social/video-posts/{$id}/retry")->assertOk()->assertJsonPath('data.status', 'queued')->assertJsonPath('data.last_error', null);
         $this->nextJob($token)->assertNoContent();
         $this->travel(2)->days();
-        $this->nextJob($token)->assertOk()->assertJsonPath('data.request.title', 'Sửa tay');
+        $this->nextJob($token)->assertOk()
+            ->assertJsonPath('data.request.title', 'Sửa tay')
+            ->assertJsonPath('data.request.platforms', ['tiktok', 'instagram']);
     }
 
     public function test_recreate_while_worker_silent_and_old_result_rejected(): void
@@ -349,7 +356,7 @@ class VideoPostTest extends TestCase
         $this->actingAs($shop)->getJson("/api/v1/social/posts/{$id}")->assertJsonPath('data.status', 'publishing');
 
         $this->postJson("/api/v1/social/video-posts/{$id}/retry")->assertOk()->assertJsonPath('data.status', 'queued');
-        $this->withToken($token)->postJson("/api/v1/video-posts/{$old}", ['status' => 'completed'])->assertStatus(409);
+        $this->submit($token, $old)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
         $new = $this->nextJob($token)->assertOk()->json('data.id');
         $this->assertNotSame($old, $new);
     }
@@ -360,15 +367,14 @@ class VideoPostTest extends TestCase
         $this->template($shop, 1);
         $this->productWithImages($shop, 1);
         [$worker] = $this->worker($shop);
-        [, $noAccountToken] = $this->worker($shop, withAccount: false, videoUser: false);
-        $id = $this->auto($shop, $worker, ['count' => 1])->json('data.post_ids.0');
+        [, $unassignedToken] = $this->worker($shop, assigned: false);
+        $id = $this->auto($shop, $worker, ['count' => 1, 'first_at' => now()->subMinute()->toIso8601String()])->json('data.post_ids.0');
 
-        // Bài video không dùng nút đăng của bài ảnh, chưa lỗi thì không "đăng lại"
-        $this->postJson("/api/v1/social/posts/{$id}/publish", ['images' => [['image_id' => 1]], 'platforms' => ['tiktok']])->assertStatus(409);
+        // Chưa lỗi / worker chưa nhận thì không "đăng lại"
         $this->postJson("/api/v1/social/video-posts/{$id}/retry")->assertStatus(409);
 
-        // Worker không giữ tài khoản đăng bài, cũng không gắn tài khoản tạo video
-        $this->nextJob($noAccountToken)->assertStatus(409)->assertJsonPath('code', 'ACCOUNT_NOT_ASSIGNED');
+        // Worker không gắn shop: không nhận được bài nào
+        $this->nextJob($unassignedToken)->assertNoContent();
 
         // Worker không gắn cho shop
         [$foreign] = $this->worker($this->creator());

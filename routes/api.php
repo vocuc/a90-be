@@ -20,13 +20,10 @@ use App\Http\Controllers\Api\V1\MarketplaceController;
 use App\Http\Controllers\Api\V1\Shipping\GhnController;
 use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
-use App\Http\Controllers\Api\V1\Social\TikTokController;
-use App\Http\Controllers\Api\V1\Social\TikTokWebhookController;
 use App\Http\Controllers\Api\V1\Social\VideoPostController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
-use App\Http\Controllers\Api\V1\WorkerPublishJobController;
+use App\Http\Controllers\Api\V1\WorkerPostJobController;
 use App\Http\Controllers\Api\V1\WorkerVideoImageController;
-use App\Http\Controllers\Api\V1\WorkerVideoPostController;
 use App\Http\Controllers\Api\V1\WorkerVideoTemplateController;
 use Illuminate\Support\Facades\Route;
 
@@ -42,9 +39,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('me', [AuthController::class, 'me']);
         });
     });
-
-    // Webhook TikTok (TikTok gọi, xác thực bằng chữ ký): kết quả gửi bài qua API, gỡ quyền ứng dụng
-    Route::post('social/tiktok/webhook', TikTokWebhookController::class);
 
     // Marketplace (công khai)
     Route::get('banners', [MarketplaceController::class, 'banners']);
@@ -160,14 +154,15 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::delete('{batch}/images/{image}', [ImageBatchController::class, 'destroyImage'])->whereNumber(['batch', 'image']);
         });
 
-        // Đăng bài lên TikTok / Facebook / Instagram: bấm đăng tạo 1 job / nền tảng cho worker (note/dang-bai-da-nen-tang.txt ở repo frontend)
+        // Bài đăng ảnh / video: bấm đăng giao cho worker đã chọn, worker đăng lên các nền tảng khi tới giờ
+        // (note/gop-luong-dang-bai.txt ở repo frontend)
         Route::prefix('social')->group(function () {
-            Route::get('accounts', [PostController::class, 'accounts']);
             Route::get('posts', [PostController::class, 'index']);
             Route::post('posts/from-images', [PostController::class, 'storeFromImages']);
             Route::get('posts/{post}', [PostController::class, 'show'])->whereNumber('post');
             Route::delete('posts/{post}', [PostController::class, 'destroy'])->whereNumber('post');
             Route::post('posts/{post}/publish', [PostController::class, 'publish'])->whereNumber('post');
+            Route::post('posts/{post}/retry', [PostController::class, 'retry'])->whereNumber('post');
             // "Viết lại bằng AI" (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trả nội dung, không lưu vào bài
             Route::post('posts/{post}/ai-content', [PostController::class, 'aiContent'])->whereNumber('post')->middleware('throttle:generations');
 
@@ -181,11 +176,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
                 Route::post('{post}/retry', [VideoPostController::class, 'retry'])->whereNumber('post');
             });
 
-            // Người dùng tự kết nối TikTok để đăng qua API (note/dang-tiktok-qua-api.txt ở repo frontend)
-            Route::post('tiktok/oauth/authorize', [TikTokController::class, 'authorizeUrl'])->middleware('throttle:auth');
-            Route::post('tiktok/oauth/callback', [TikTokController::class, 'callback'])->middleware('throttle:auth');
-            // Một tài khoản A51 kết nối nhiều tài khoản TikTok (note/uy-quyen-nhieu-tiktok.txt ở repo frontend)
-            Route::delete('tiktok/accounts/{account}', [TikTokController::class, 'destroy'])->whereNumber('account');
         });
 
         // Admin
@@ -201,20 +191,15 @@ Route::prefix('v1/jobs')->middleware('worker')->group(function () {
     Route::post('{id}', [WorkerJobController::class, 'submit'])->whereNumber('id');
 });
 
-// Worker đăng bài: giữ 1 tài khoản của 1 nền tảng (admin gắn), chỉ nhận job của nền tảng đó.
-Route::prefix('v1/publish-jobs')->middleware('worker')->group(function () {
-    Route::get('/', [WorkerPublishJobController::class, 'next']);
-    Route::post('{id}', [WorkerPublishJobController::class, 'submit'])->whereNumber('id');
+// Worker đăng bài (ảnh / video): nhận bài đã tới giờ được giao cho chính worker, 1 job / bài chứa mọi nền tảng
+// (note/gop-luong-dang-bai.txt ở repo frontend)
+Route::prefix('v1/post-jobs')->middleware('worker')->group(function () {
+    Route::get('/', [WorkerPostJobController::class, 'next']);
+    Route::post('{id}', [WorkerPostJobController::class, 'submit'])->whereNumber('id');
 });
 
 // Worker tạo video: gắn 1 tài khoản A51 (admin gắn), xin N ảnh ngẫu nhiên trong các lô ảnh của shop đó để dựng video.
 Route::get('v1/video-images', [WorkerVideoImageController::class, 'index'])->middleware('worker');
 
-// Worker dựng + đăng bài video có lịch: chỉ nhận bài đã tới giờ, được giao cho chính worker (note/lap-lich-worker.txt ở repo frontend)
 // Máy làm template (D:ideo-tmp, npm run sync-templates) đồng bộ danh sách template vào shop worker được gắn (tài khoản tạo video)
 Route::put('v1/video-templates/sync', [WorkerVideoTemplateController::class, 'sync'])->middleware('worker');
-
-Route::prefix('v1/video-posts')->middleware('worker')->group(function () {
-    Route::get('/', [WorkerVideoPostController::class, 'next']);
-    Route::post('{id}', [WorkerVideoPostController::class, 'submit'])->whereNumber('id');
-});

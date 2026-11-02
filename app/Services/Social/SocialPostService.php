@@ -137,20 +137,19 @@ class SocialPostService
     }
 
     /**
-     * Xoá bài khi đang chờ gửi và chưa đăng xong nền tảng nào. Đang tạo nội dung / chờ đăng / đang đăng / đã đăng: không
-     * xoá được. Bài video đang chờ tới giờ (worker chưa nhận) cũng xoá được (note/lap-lich-worker.txt ở repo frontend).
+     * Xoá bài khi đang chờ gửi hoặc chờ tới giờ (worker chưa nhận) và chưa đăng xong nền tảng nào. Đang tạo nội dung /
+     * đang đăng / đã đăng: không xoá được (note/gop-luong-dang-bai.txt ở repo frontend).
      */
     public function delete(User $user, SocialPost $post): void
     {
         DB::transaction(function () use ($user, $post) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
             $published = collect($post->platformStatuses())->filter(fn ($status) => $status === PlatformPublishStatus::Published)->keys();
-            $deletable = $post->status === SocialPostStatus::PendingReview
-                || ($post->isVideo() && $post->status === SocialPostStatus::Queued);
+            $deletable = $post->isEditable();
             if (! $deletable || $published->isNotEmpty()) {
                 throw new BusinessException('POST_NOT_DELETABLE', match ($post->status) {
                     SocialPostStatus::Generating => 'Bài đang được tạo nội dung, vui lòng chờ xong rồi xoá.',
-                    SocialPostStatus::Queued, SocialPostStatus::Publishing => 'Bài đang được đăng, không xoá được.',
+                    SocialPostStatus::Publishing => 'Worker đang đăng bài, không xoá được.',
                     default => 'Bài đã đăng lên '.$published->map(fn ($p) => SocialPlatform::from($p)->label())->implode(', ').', không xoá được trên A51.',
                 }, 409);
             }
@@ -193,9 +192,10 @@ class SocialPostService
         return $result;
     }
 
+    /** Chờ gửi hoặc chờ tới giờ (worker chưa nhận). */
     public function assertEditable(SocialPost $post): void
     {
-        if ($post->status !== SocialPostStatus::PendingReview) {
+        if (! $post->isEditable()) {
             throw BusinessException::postNotEditable();
         }
     }

@@ -4,48 +4,27 @@ namespace App\Http\Controllers\Api\V1\Social;
 
 use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
-use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\SocialPostResource;
 use App\Models\Hashtag;
-use App\Models\PublishAccount;
 use App\Models\SocialPost;
 use App\Services\Social\SocialContentJobService;
 use App\Services\Social\SocialPostService;
 use App\Services\Social\SocialPublishJobService;
-use App\Services\TikTok\TikTokConnectionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 
 /**
- * Bài đăng của người dùng (đăng lên TikTok / Facebook / Instagram), xem note/nghiep-vu-dang-bai-tiktik.txt (mục 5)
- * và note/dang-bai-da-nen-tang.txt. Bài của người khác -> 404.
+ * Bài đăng của người dùng (ảnh / video, worker đăng lên TikTok / Facebook / Instagram), xem note/gop-luong-dang-bai.txt
+ * ở repo frontend. Bài của người khác -> 404.
  */
 class PostController extends Controller
 {
     public function __construct(private SocialPostService $posts) {}
-
-    /**
-     * Tài khoản đăng bài của người dùng (admin gắn worker, hoặc TikTok tự kết nối): trang đăng bài chọn sẵn các nền tảng này.
-     * driver api: kèm connection { status: active | expired | revoked | scope_missing, avatar_url, connected_at }.
-     * TikTok tự kết nối có thể nhiều dòng; id dùng cho tiktok_account_ids khi đăng và để huỷ kết nối.
-     */
-    public function accounts(Request $request, SocialPublishJobService $publisher, TikTokConnectionService $tiktok): JsonResponse
-    {
-        return response()->json(['data' => $publisher->accounts($request->user())->map(fn (PublishAccount $account) => [
-            'id' => $account->id,
-            'platform' => $account->platform->value,
-            'label' => $account->platform->label(),
-            'name' => $account->name,
-            'username' => $account->username,
-            'is_active' => $account->is_active,
-            'driver' => $account->driver->value,
-            'connection' => $account->isApi() ? $tiktok->connection($account) : null,
-        ])->values()]);
-    }
 
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -100,38 +79,46 @@ class PostController extends Controller
     }
 
     /**
-     * "Đăng bài": body là toàn bộ chỉnh sửa trên trang + các nền tảng người dùng chọn trong popup (platforms, bắt buộc,
-     * một hoặc nhiều); tạo 1 job / nền tảng cho worker, bài sang queued.
+     * "Đăng bài" (note/gop-luong-dang-bai.txt ở repo frontend): body là toàn bộ chỉnh sửa trên trang + worker (chọn ở thanh
+     * tiêu đề), loại bài (photo | video: thêm video_template_id, đúng số ảnh template cần), nền tảng (một hoặc nhiều),
+     * giờ đăng (không gửi: bây giờ). Bài sang queued, worker nhận khi tới giờ. Bài chờ gửi hoặc đang chờ tới giờ.
      */
     public function publish(Request $request, int $post, SocialPublishJobService $publisher): SocialPostResource
     {
         $post = $this->findPost($request, $post);
-        // Bài video do worker tự đăng khi tới giờ; đăng lại dùng /social/video-posts/{id}/retry
-        if ($post->isVideo()) {
-            throw new BusinessException('NOT_PHOTO_POST', 'Bài video được worker tự đăng khi tới giờ.', 409);
-        }
         $data = $request->validate([
             ...self::contentRules(),
+            'worker_id' => ['required', 'integer'],
+            'type' => ['nullable', Rule::in([SocialPost::TYPE_PHOTO, SocialPost::TYPE_VIDEO])],
+            'video_template_id' => ['required_if:type,video', 'nullable', 'integer'],
+            'product_id' => ['nullable', 'integer'],
+            'scheduled_at' => ['nullable', 'date'],
             'images' => ['required', 'array', 'min:1', 'max:'.SocialPost::MAX_IMAGES],
             'images.*' => ['array'],
             'images.*.image_id' => ['nullable', 'integer'],
             'images.*.generation_id' => ['required_without:images.*.image_id', 'nullable', 'integer'],
             'images.*.output_id' => ['required_without:images.*.image_id', 'nullable', 'integer'],
-            'platforms' => ['required', 'array', 'min:1'],
-            'platforms.*' => ['string', 'distinct', Rule::enum(SocialPlatform::class)],
-            // TikTok tự kết nối: gửi vào các tài khoản này (bỏ trống khi chỉ có 1 tài khoản)
-            'tiktok_account_ids' => ['nullable', 'array', 'max:'.TikTokConnectionService::maxAccounts()],
-            'tiktok_account_ids.*' => ['integer', 'distinct'],
+            ...self::platformRules(),
         ], [
-            'platforms.required' => 'Chọn ít nhất một nền tảng để đăng.',
-            'platforms.min' => 'Chọn ít nhất một nền tảng để đăng.',
-            'platforms.*.enum' => 'Nền tảng không hợp lệ.',
+            'worker_id.required' => 'Chọn worker.',
+            'video_template_id.required_if' => 'Chọn video template.',
             'images.max' => 'Tối đa '.SocialPost::MAX_IMAGES.' ảnh mỗi bài.',
+            ...self::platformMessages(),
             ...self::contentMessages(),
         ]);
         $data['images'] = array_values($data['images']);
+        $data['type'] ??= SocialPost::TYPE_PHOTO;
+        $data['scheduled_at'] = isset($data['scheduled_at'])
+            ? Carbon::parse($data['scheduled_at'])->setTimezone(config('app.timezone'))
+            : now();
 
         return $this->resource($publisher->publish($request->user(), $post, $data));
+    }
+
+    /** "Đăng lại" (bài lỗi) / "Tạo lại" (worker nhận rồi im lặng, có thể đăng trùng): bài về chờ tới giờ. */
+    public function retry(Request $request, int $post, SocialPublishJobService $publisher): SocialPostResource
+    {
+        return $this->resource($publisher->retry($request->user(), $this->findPost($request, $post)));
     }
 
     /**
@@ -167,6 +154,24 @@ class PostController extends Controller
     private static function contentMessages(): array
     {
         return ['hashtags.max' => 'Tối đa '.SocialPost::MAX_HASHTAGS.' hashtag.'];
+    }
+
+    /** Nền tảng đăng (bắt buộc, một hoặc nhiều). Dùng chung với bài video. */
+    public static function platformRules(): array
+    {
+        return [
+            'platforms' => ['required', 'array', 'min:1'],
+            'platforms.*' => ['string', 'distinct', Rule::enum(SocialPlatform::class)],
+        ];
+    }
+
+    public static function platformMessages(): array
+    {
+        return [
+            'platforms.required' => 'Chọn ít nhất một nền tảng để đăng.',
+            'platforms.min' => 'Chọn ít nhất một nền tảng để đăng.',
+            'platforms.*.enum' => 'Nền tảng không hợp lệ.',
+        ];
     }
 
     private function findPost(Request $request, int $id): SocialPost

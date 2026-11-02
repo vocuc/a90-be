@@ -13,8 +13,8 @@ use Illuminate\Http\Request;
  *
  * Worker được gắn cho shop khi có ít nhất một chức năng của shop:
  * - image: tài khoản shop nằm trong tài khoản tạo ảnh của worker (worker_user)
- * - video: worker lấy ảnh tạo video từ tài khoản shop (video_user_id)
- * - publish: worker giữ tài khoản đăng bài của shop (publish_accounts.worker_id)
+ * - publish + video: worker đăng bài ảnh / video và tạo video cho shop (video_user_id). Worker tự lo tài khoản đăng
+ *   (note/gop-luong-dang-bai.txt ở repo frontend).
  */
 class ShopWorkerController extends Controller
 {
@@ -27,31 +27,23 @@ class ShopWorkerController extends Controller
 
         $workers = Worker::query()
             ->assignedTo($userId)
-            ->with([
-                'imageUsers' => fn ($u) => $u->whereKey($userId),
-                'publishAccount' => fn ($a) => $a->where('user_id', $userId),
-            ])
+            ->with(['imageUsers' => fn ($u) => $u->whereKey($userId)])
             ->orderBy('name')
             ->get();
 
         $onlineSince = now()->subMinutes(self::ONLINE_MINUTES);
 
         return response()->json(['data' => $workers->map(function (Worker $worker) use ($userId, $onlineSince) {
-            $account = $worker->publishAccount;
+            $posts = $worker->video_user_id === $userId;
 
             return [
                 'id' => $worker->id,
                 'name' => $worker->name,
                 'functions' => array_values(array_filter([
                     $worker->imageUsers->isNotEmpty() ? 'image' : null,
-                    $account ? 'publish' : null,
-                    $worker->video_user_id === $userId ? 'video' : null,
+                    $posts ? 'publish' : null,
+                    $posts ? 'video' : null,
                 ])),
-                'publish_account' => $account ? [
-                    'platform' => $account->platform->value,
-                    'platform_label' => $account->platform->label(),
-                    'name' => $account->displayName(),
-                ] : null,
                 'online' => (bool) $worker->last_seen_at?->greaterThanOrEqualTo($onlineSince),
                 'last_seen_at' => $worker->last_seen_at,
                 // Chủ shop tự chạy máy worker nên được xem token; null với worker tạo trước khi lưu token mã hoá

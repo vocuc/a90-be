@@ -2,7 +2,6 @@
 
 namespace App\Exceptions;
 
-use App\Models\PublishAccount;
 use Illuminate\Http\JsonResponse;
 use RuntimeException;
 
@@ -51,23 +50,6 @@ class BusinessException extends RuntimeException
     public static function invalidState(string $message): self
     {
         return new self('INVALID_STATE', $message, 409);
-    }
-
-    /** reason: not_connected | expired | revoked | scope_missing (frontend hiện nút "Kết nối" / "Kết nối lại"). */
-    /** account: tài khoản TikTok tự kết nối bị mất kết nối (người dùng có thể có nhiều tài khoản). */
-    public static function tiktokNotConnected(string $reason = 'expired', ?PublishAccount $account = null): self
-    {
-        return new self(
-            'TIKTOK_NOT_CONNECTED',
-            $account ? "Mất kết nối TikTok {$account->displayName()}, vui lòng kết nối lại rồi đăng." : 'Mất kết nối TikTok, vui lòng kết nối lại rồi đăng.',
-            409,
-            ['reason' => $reason, 'account_id' => $account?->id],
-        );
-    }
-
-    public static function tiktokUnavailable(): self
-    {
-        return new self('TIKTOK_UNAVAILABLE', 'Không kết nối được TikTok, vui lòng thử lại sau.', 502);
     }
 
     public static function postNotEditable(): self
