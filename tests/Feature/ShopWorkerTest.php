@@ -52,4 +52,66 @@ class ShopWorkerTest extends TestCase
         $this->actingAs($this->buyer())->getJson(self::URL)->assertForbidden();
         $this->actingAs($this->creator())->getJson(self::URL)->assertOk()->assertJsonCount(0, 'data');
     }
+
+    public function test_shop_renames_assigned_worker(): void
+    {
+        $shop = $this->creator();
+        [$worker] = Worker::register('may-1', Worker::TYPE_PUBLISH);
+        $worker->users()->attach($shop->id);
+        Worker::register('trung-ten');
+
+        $url = self::URL."/{$worker->id}/name";
+
+        $this->actingAs($shop)->patchJson($url, ['name' => '  May dang bai  '])
+            ->assertOk()->assertJsonPath('name', 'May dang bai')->assertJsonPath('type', 'publish');
+        $this->assertSame('May dang bai', $worker->fresh()->name);
+
+        $this->actingAs($shop)->patchJson($url, ['name' => ''])->assertUnprocessable()->assertJsonValidationErrors('name');
+        $this->actingAs($shop)->patchJson($url, ['name' => 'trung-ten'])->assertUnprocessable()->assertJsonValidationErrors('name');
+        $this->actingAs($shop)->patchJson($url, ['name' => str_repeat('a', 101)])->assertUnprocessable();
+    }
+
+    public function test_cannot_rename_worker_not_assigned_or_inactive(): void
+    {
+        $shop = $this->creator();
+        [$foreign] = Worker::register('khac');
+        $foreign->users()->attach($this->creator()->id);
+        [$off] = Worker::register('tat');
+        $off->users()->attach($shop->id);
+        $off->update(['is_active' => false]);
+
+        $this->actingAs($shop)->patchJson(self::URL."/{$foreign->id}/name", ['name' => 'x'])->assertNotFound();
+        $this->actingAs($shop)->patchJson(self::URL."/{$off->id}/name", ['name' => 'x'])->assertNotFound();
+        $this->assertSame('khac', $foreign->fresh()->name);
+        $this->actingAs($this->buyer())->patchJson(self::URL."/{$foreign->id}/name", ['name' => 'x'])->assertForbidden();
+    }
+
+    public function test_shop_regenerates_token_of_assigned_worker(): void
+    {
+        $shop = $this->creator();
+        [$worker, $oldToken] = Worker::register('may-token', Worker::TYPE_IMAGE);
+        $worker->users()->attach($shop->id);
+
+        $newToken = $this->actingAs($shop)->postJson(self::URL."/{$worker->id}/token")
+            ->assertOk()->assertJsonPath('id', $worker->id)->json('token');
+
+        $this->assertNotSame($oldToken, $newToken);
+        $this->assertNull(Worker::findActiveByToken($oldToken));
+        $this->assertSame($worker->id, Worker::findActiveByToken($newToken)?->id);
+    }
+
+    public function test_cannot_regenerate_token_of_worker_not_assigned_or_inactive(): void
+    {
+        $shop = $this->creator();
+        [$foreign, $foreignToken] = Worker::register('khac-token');
+        $foreign->users()->attach($this->creator()->id);
+        [$off] = Worker::register('tat-token');
+        $off->users()->attach($shop->id);
+        $off->update(['is_active' => false]);
+
+        $this->actingAs($shop)->postJson(self::URL."/{$foreign->id}/token")->assertNotFound();
+        $this->actingAs($shop)->postJson(self::URL."/{$off->id}/token")->assertNotFound();
+        $this->assertSame($foreign->id, Worker::findActiveByToken($foreignToken)?->id);
+        $this->actingAs($this->buyer())->postJson(self::URL."/{$foreign->id}/token")->assertForbidden();
+    }
 }

@@ -117,8 +117,10 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::patch('video-templates/{template}/enabled', [VideoTemplateController::class, 'setEnabled'])->whereNumber('template');
             Route::delete('video-templates/{template}', [VideoTemplateController::class, 'destroy'])->whereNumber('template');
 
-            // Worker admin gắn cho shop, chỉ xem (note/quan-ly-worker.txt ở repo frontend)
+            // Worker admin gắn cho shop: xem, đổi tên, tạo lại token (note/quan-ly-worker.txt ở repo frontend)
             Route::get('workers', [ShopWorkerController::class, 'index']);
+            Route::patch('workers/{worker}/name', [ShopWorkerController::class, 'rename'])->whereNumber('worker');
+            Route::post('workers/{worker}/token', [ShopWorkerController::class, 'regenerateToken'])->whereNumber('worker');
 
             Route::get('dashboard', [DashboardController::class, 'dashboard']);
             Route::get('wallet', [DashboardController::class, 'wallet']);
