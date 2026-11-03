@@ -107,10 +107,13 @@ class ImageBatchController extends Controller
         $data = $request->validate([
             'count' => ['required', 'integer', 'min:1', 'max:'.AutoBatchService::MAX_COUNT],
             'seed' => ['nullable', 'integer', 'min:0', 'max:'.AutoBatchService::MAX_SEED],
+            // Chọn sản phẩm thủ công; không gửi = mọi sản phẩm. Id không thuộc người dùng thì bị bỏ qua
+            'product_ids' => ['nullable', 'array', 'max:'.AutoBatchService::MAX_COUNT],
+            'product_ids.*' => ['integer'],
         ]);
         $user = $request->user();
         $media = app(MediaStorage::class);
-        $preview = $auto->preview($user, (int) $data['count'], isset($data['seed']) ? (int) $data['seed'] : null);
+        $preview = $auto->preview($user, (int) $data['count'], isset($data['seed']) ? (int) $data['seed'] : null, self::productIds($data));
 
         $plans = array_map(fn (array $plan) => [
             'product' => self::productSummary($plan['product'], $media),
@@ -136,12 +139,14 @@ class ImageBatchController extends Controller
             'insert_logo' => ['nullable', 'boolean'],
             'seed' => ['nullable', 'integer', 'min:0', 'max:'.AutoBatchService::MAX_SEED],
             'worker_id' => ['nullable', 'integer'],
+            'product_ids' => ['nullable', 'array', 'max:'.AutoBatchService::MAX_COUNT],
+            'product_ids.*' => ['integer'],
         ]);
 
         $seed = isset($data['seed']) ? (int) $data['seed'] : null;
         $insertLogo = $this->insertLogo($request, $data);
         $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
-        $result = $auto->create($request->user(), (int) $data['count'], $insertLogo, $data['idempotency_key'], $seed, $workerId);
+        $result = $auto->create($request->user(), (int) $data['count'], $insertLogo, $data['idempotency_key'], $seed, $workerId, self::productIds($data));
         $batches = ImageBatch::query()
             ->whereKey(array_map(fn (ImageBatch $b) => $b->id, $result['batches']))
             ->withSummary()
@@ -236,6 +241,12 @@ class ImageBatchController extends Controller
         }
 
         return $insertLogo;
+    }
+
+    /** @return int[]|null */
+    private static function productIds(array $data): ?array
+    {
+        return empty($data['product_ids']) ? null : array_values(array_unique(array_map('intval', $data['product_ids'])));
     }
 
     private static function productSummary(Product $product, MediaStorage $media): array

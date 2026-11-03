@@ -40,31 +40,36 @@ class AutoBatchService
 
     /**
      * Xem trước $count lô sẽ tạo (cùng quy tắc, không tạo, không xét số dư). Không gửi seed thì random seed mới;
-     * gửi seed trả về khi tạo thật để ra đúng các lô đã xem.
+     * gửi seed trả về khi tạo thật để ra đúng các lô đã xem. $productIds: chỉ dùng các sản phẩm này (người dùng chọn tay),
+     * null = mọi sản phẩm.
      *
+     * @param  int[]|null  $productIds
      * @return array{plans: array<int, array{product: Product, group: CreativeGroup, items: array, cost: int}>, seed: int}
      */
-    public function preview(User $user, int $count, ?int $seed = null): array
+    public function preview(User $user, int $count, ?int $seed = null, ?array $productIds = null): array
     {
         $seed ??= random_int(1, self::MAX_SEED);
 
-        return ['plans' => $this->planner($user)->plan($count, $seed), 'seed' => $seed];
+        return ['plans' => $this->planner($user, $productIds)->plan($count, $seed), 'seed' => $seed];
     }
 
     /**
      * Tạo tối đa $count lô. Mỗi lô có idempotency_key riêng "auto:{key}:{n}": gửi lại cùng key thì trả đúng các lô
      * đã tạo, không trừ tiền lần nữa. Không gửi seed thì seed lấy từ idempotency key (gửi lại vẫn chọn như lần đầu).
      *
+     * $productIds: như preview.
+     *
+     * @param  int[]|null  $productIds
      * @return array{batches: ImageBatch[], stopped: ?string, required: ?int}
      */
-    public function create(User $user, int $count, bool $insertLogo, string $idempotencyKey, ?int $seed = null, ?int $workerId = null): array
+    public function create(User $user, int $count, bool $insertLogo, string $idempotencyKey, ?int $seed = null, ?int $workerId = null, ?array $productIds = null): array
     {
         // Hai request cùng lúc của một người dùng (vd. gửi lại cùng idempotency key) không tạo trùng lô
         $lock = Cache::lock("auto-batch:{$user->id}", 120);
         $lock->block(30);
 
         try {
-            $plans = $this->planner($user)->plan($count, $seed ?? crc32($idempotencyKey) % self::MAX_SEED);
+            $plans = $this->planner($user, $productIds)->plan($count, $seed ?? crc32($idempotencyKey) % self::MAX_SEED);
             $created = [];
             $stopped = null;
             $required = null;
@@ -123,9 +128,15 @@ class AutoBatchService
         return (int) (CreditWallet::query()->where('user_id', $user->id)->value('balance') ?? 0);
     }
 
-    private function planner(User $user): AutoBatchPlanner
+    /** @param  int[]|null  $productIds */
+    private function planner(User $user, ?array $productIds = null): AutoBatchPlanner
     {
-        $products = Product::query()->ownedBy($user)->with('images')->orderBy('id')->get();
+        $products = Product::query()
+            ->ownedBy($user)
+            ->when($productIds !== null, fn ($q) => $q->whereKey($productIds))
+            ->with('images')
+            ->orderBy('id')
+            ->get();
         $groups = CreativeGroup::query()
             ->where('user_id', $user->id)
             ->with(['creatives.config', 'creatives.model'])
