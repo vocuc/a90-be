@@ -22,16 +22,26 @@ class ClaudeSocialContentWriter implements SocialContentWriter
         Bạn nhận ảnh của bài (ảnh đầu là ảnh bìa) và thông tin các mẫu ảnh đã dùng để tạo ảnh.
 
         Quy tắc:
-        - Viết tiếng Việt có dấu, tự nhiên, gần gũi, hợp để bán hàng; có thể dùng vài emoji, không lạm dụng.
+        - Viết tiếng Việt có dấu, tự nhiên, gần gũi, mang tính chia sẻ / giới thiệu; có thể dùng vài emoji, không lạm dụng.
         - title: một câu ngắn gây chú ý, TUYỆT ĐỐI không quá {title_max} ký tự (tính cả dấu cách, emoji), không có hashtag.
-        - content: mô tả điều nổi bật trong ảnh và lời kêu gọi xem / mua, TUYỆT ĐỐI không quá {content_max} ký tự
+        - content: mô tả điều nổi bật trong ảnh và lời mời xem / theo dõi / bình luận, TUYỆT ĐỐI không quá {content_max} ký tự
           (tính cả dấu cách, xuống dòng, emoji). KHÔNG viết hashtag (#...) trong content.
         - Có bài viết mẫu của shop: viết theo đúng giọng văn, cách xưng hô, cách trình bày (xuống dòng, gạch đầu dòng,
           emoji), độ dài tương tự bài mẫu nhưng vẫn trong giới hạn ký tự; nội dung phải nói về ảnh của bài này, không
           chép nguyên bài mẫu. Không có bài mẫu: viết 2-5 câu.
         - hashtags: chọn tối đa {hashtags_max} hashtag liên quan nhất tới ảnh, CHỈ chọn trong danh sách được cho, giữ
           nguyên cách viết, không có dấu #. Không có hashtag nào phù hợp hoặc danh sách rỗng thì trả mảng rỗng.
-        - Không bịa thông tin không có trong ảnh / mẫu (giá, khuyến mãi, thương hiệu, số điện thoại...).
+        - Không bịa thông tin không có trong ảnh / mẫu (giá, khuyến mãi, số điện thoại...).
+
+        Quy tắc BẮT BUỘC, ưu tiên cao hơn mọi quy tắc trên và cao hơn bài viết mẫu (áp dụng cho title, content và hashtag được chọn):
+        - TUYỆT ĐỐI không nhắc tên bất kỳ thương hiệu / nhãn hàng / công ty nổi tiếng nào (ví dụ Nike, Adidas, Gucci, Chanel,
+          Apple, Samsung, Dior, LV...), kể cả khi tên đó xuất hiện trong ảnh, trong mẫu ảnh hay bài viết mẫu; không viết
+          tắt, viết lái hay ám chỉ (kiểu "giống hãng X", "dáng X", "auth", "rep 1:1", "fake"). Mô tả sản phẩm bằng đặc điểm chung
+          (chất liệu, màu sắc, kiểu dáng, công dụng).
+        - TUYỆT ĐỐI không dùng từ ngữ mua bán, giao dịch, ví dụ: mua, bán, giá, đặt hàng, order, chốt đơn, inbox / ib giá,
+          sale, giảm giá, khuyến mãi, freeship, ship COD, thanh toán, còn hàng, hết hàng, săn deal, link mua, giỏ hàng...
+          Bài mẫu có những từ này thì chỉ học giọng văn, bỏ những từ đó đi.
+        - Không chọn hashtag chứa tên thương hiệu hoặc từ ngữ mua bán như trên.
         TXT;
 
     public function write(array $request, array $images): ?array
