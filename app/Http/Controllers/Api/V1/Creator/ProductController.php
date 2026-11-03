@@ -92,6 +92,20 @@ class ProductController extends Controller
         return $this->resource($request, $product->id);
     }
 
+    /**
+     * File ảnh sản phẩm (cùng domain với API): nút "Tạo ảnh" của thẻ sản phẩm tải ảnh về trình duyệt rồi gửi lại như
+     * ảnh người dùng chọn khi tạo lô tay. Không tải thẳng signed URL S3 được vì bucket không cho CORS.
+     */
+    public function imageFile(Request $request, int $product, int $image): Response
+    {
+        $path = $this->findProduct($request, $product)->images()->findOrFail($image)->path;
+
+        return response($this->media->get($path), 200, [
+            'Content-Type' => $this->media->mimeType($path),
+            'Cache-Control' => 'private, max-age=300',
+        ]);
+    }
+
     public function destroy(Request $request, int $product): Response
     {
         $this->findProduct($request, $product)->delete();
