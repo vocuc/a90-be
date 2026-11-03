@@ -31,13 +31,14 @@ class MediaStorage
 
     /**
      * Lưu ảnh đã tối ưu, mỗi giới hạn cạnh dài một file (vd [1600, 600] = ảnh chính + thumbnail).
+     * $widthOnly = true: giới hạn chiều rộng thay vì cạnh dài, chiều cao theo tỷ lệ.
      *
      * @param  int[]  $maxSides
      * @return string[] đường dẫn cùng thứ tự với $maxSides
      */
-    public function storeOptimizedImage(UploadedFile $file, string $directory, array $maxSides): array
+    public function storeOptimizedImage(UploadedFile $file, string $directory, array $maxSides, bool $widthOnly = false): array
     {
-        $variants = $this->optimizer->optimize($file, $maxSides);
+        $variants = $this->optimizer->optimize($file, $maxSides, $widthOnly);
         $base = trim($directory, '/').'/'.Str::uuid();
 
         $paths = [];

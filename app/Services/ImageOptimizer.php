@@ -18,12 +18,13 @@ class ImageOptimizer
     private const WEBP_QUALITY = 82;
 
     /**
-     * Tạo một bản cho mỗi giới hạn cạnh dài trong $maxSides (không phóng to ảnh nhỏ).
+     * Tạo một bản cho mỗi giới hạn trong $maxSides (không phóng to ảnh nhỏ).
+     * Mặc định giới hạn cạnh dài; $widthOnly = true thì chỉ giới hạn chiều rộng, chiều cao theo tỷ lệ.
      *
      * @param  int[]  $maxSides
      * @return array<int, array{contents: string, extension: string}> cùng thứ tự với $maxSides
      */
-    public function optimize(UploadedFile $file, array $maxSides): array
+    public function optimize(UploadedFile $file, array $maxSides, bool $widthOnly = false): array
     {
         $original = $file->getContent();
         $size = @getimagesizefromstring($original);
@@ -47,7 +48,7 @@ class ImageOptimizer
 
         $variants = [];
         foreach ($maxSides as $maxSide) {
-            $resized = $this->fit($image, $maxSide);
+            $resized = $this->fit($image, $maxSide, $widthOnly);
             $contents = $this->encodeWebp($resized ?? $image);
             if ($resized) {
                 imagedestroy($resized);
@@ -65,15 +66,16 @@ class ImageOptimizer
     }
 
     /** Trả về ảnh đã thu nhỏ, hoặc null nếu ảnh đã nằm trong giới hạn. */
-    private function fit(GdImage $image, int $maxSide): ?GdImage
+    private function fit(GdImage $image, int $maxSide, bool $widthOnly = false): ?GdImage
     {
         $width = imagesx($image);
         $height = imagesy($image);
-        if (max($width, $height) <= $maxSide) {
+        $side = $widthOnly ? $width : max($width, $height);
+        if ($side <= $maxSide) {
             return null;
         }
 
-        $ratio = $maxSide / max($width, $height);
+        $ratio = $maxSide / $side;
         $newWidth = max(1, (int) round($width * $ratio));
         $newHeight = max(1, (int) round($height * $ratio));
 

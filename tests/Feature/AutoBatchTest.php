@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -119,6 +120,27 @@ class AutoBatchTest extends TestCase
         $this->actingAs($this->creator())->getJson("/api/v1/creator/products/{$product->id}")->assertNotFound();
         $this->actingAs($user)->deleteJson("/api/v1/creator/products/{$product->id}")->assertNoContent();
         $this->assertSame(0, Product::query()->count());
+    }
+
+    public function test_product_image_gets_thumb_400_wide_and_original_is_kept(): void
+    {
+        $user = $this->creator();
+
+        $response = $this->actingAs($user)->post('/api/v1/creator/products', [
+            'images' => [['file' => UploadedFile::fake()->image('tall.png', 1000, 1500), 'field_key' => 'product_image']],
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $image = Product::query()->sole()->images()->sole();
+        $this->assertNotNull($image->thumb_path);
+        $this->assertNotSame($image->path, $image->thumb_path);
+
+        $disk = Storage::disk('media');
+        $this->assertSame([1000, 1500], array_slice(getimagesizefromstring($disk->get($image->path)), 0, 2));
+        $this->assertSame([400, 600], array_slice(getimagesizefromstring($disk->get($image->thumb_path)), 0, 2));
+
+        $response->assertJsonPath('data.cover_url', "https://media.test/{$image->thumb_path}")
+            ->assertJsonPath('data.images.0.url', "https://media.test/{$image->path}")
+            ->assertJsonPath('data.images.0.thumb_url', "https://media.test/{$image->thumb_path}");
     }
 
     public function test_product_validates_field_keys(): void

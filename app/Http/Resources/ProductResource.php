@@ -21,10 +21,11 @@ class ProductResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
-            'cover_url' => $media->url($this->images->first()?->path),
+            'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),
             'images' => $this->images->map(fn ($image) => [
                 'id' => $image->id,
                 'url' => $media->url($image->path),
+                'thumb_url' => $media->url($image->thumbPathOrOriginal()),
                 'field_key' => $image->field_key,
             ])->values(),
             'hashtags' => HashtagResource::collection($this->whenLoaded('hashtags')),

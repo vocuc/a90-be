@@ -251,7 +251,7 @@ class ImageBatchController extends Controller
 
     private static function productSummary(Product $product, MediaStorage $media): array
     {
-        return ['id' => $product->id, 'name' => $product->name, 'cover_url' => $media->url($product->images->first()?->path)];
+        return ['id' => $product->id, 'name' => $product->name, 'cover_url' => $media->url($product->images->first()?->thumbPathOrOriginal())];
     }
 
     private function findBatch(Request $request, int $id): ImageBatch

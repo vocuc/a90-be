@@ -47,7 +47,7 @@ class ImageBatchResource extends JsonResource
             'product' => $this->product ? [
                 'id' => $this->product->id,
                 'name' => $this->product->name,
-                'cover_url' => app(MediaStorage::class)->url($this->product->coverImage?->path),
+                'cover_url' => app(MediaStorage::class)->url($this->product->coverImage?->thumbPathOrOriginal()),
             ] : null,
             'group' => $this->group ? ['id' => $this->group->id, 'name' => $this->group->name] : null,
             ...$counts,

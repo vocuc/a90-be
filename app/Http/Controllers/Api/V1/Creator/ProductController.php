@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers\Api\V1\Creator;
 
+use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CreativeRequest;
 use App\Http\Resources\ProductResource;
 use App\Models\Hashtag;
 use App\Models\Product;
+use App\Models\ProductImage;
 use App\Services\MediaStorage;
 use App\Services\SettingService;
 use Closure;
@@ -14,6 +16,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -120,14 +123,35 @@ class ProductController extends Controller
      */
     private function syncImages(Request $request, Product $product, array $images): void
     {
-        $oldPaths = $product->images()->pluck('path', 'id');
+        $old = $product->images()->get(['id', 'path', 'thumb_path'])->keyBy('id');
         $product->images()->delete();
 
+        $directory = "products/{$product->user_id}";
         foreach (array_values($images) as $position => $image) {
-            $path = ! empty($image['id'])
-                ? $oldPaths[(int) $image['id']]
-                : $this->media->storeUpload($request->file("images.{$position}.file"), "products/{$product->user_id}");
-            $product->images()->create(['field_key' => $image['field_key'], 'path' => $path, 'position' => $position]);
+            if (! empty($image['id'])) {
+                $kept = $old[(int) $image['id']];
+                [$path, $thumbPath] = [$kept->path, $kept->thumb_path];
+            } else {
+                $file = $request->file("images.{$position}.file");
+                $path = $this->media->storeUpload($file, $directory);
+                $thumbPath = $this->storeThumb($file, $directory);
+            }
+            $product->images()->create([
+                'field_key' => $image['field_key'],
+                'path' => $path,
+                'thumb_path' => $thumbPath,
+                'position' => $position,
+            ]);
+        }
+    }
+
+    /** Ảnh gốc giữ nguyên để tạo ảnh; thumbnail chỉ để hiển thị. Lỗi tạo thumbnail không chặn lưu sản phẩm. */
+    private function storeThumb(UploadedFile $file, string $directory): ?string
+    {
+        try {
+            return $this->media->storeOptimizedImage($file, $directory, [ProductImage::THUMB_WIDTH], true)[0];
+        } catch (BusinessException) {
+            return null;
         }
     }
 
