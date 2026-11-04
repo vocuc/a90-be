@@ -244,6 +244,36 @@ class AutoBatchTest extends TestCase
         }
     }
 
+    public function test_inactive_products_are_skipped(): void
+    {
+        $user = $this->creator(credit: 100000);
+        foreach (range(1, 3) as $i) {
+            $this->group($user, [$this->publishedCreative($user)], "G{$i}");
+        }
+        $active = $this->product($user);
+        $inactive = $this->product($user);
+
+        $this->actingAs($this->creator())->putJson("/api/v1/creator/products/{$inactive->id}/active", ['is_active' => false])->assertNotFound();
+        $this->actingAs($user)->putJson("/api/v1/creator/products/{$inactive->id}/active", ['is_active' => false])
+            ->assertOk()
+            ->assertJsonPath('data.is_active', false);
+        $this->actingAs($user)->getJson("/api/v1/creator/products/{$active->id}")->assertJsonPath('data.is_active', true);
+
+        $this->actingAs($user)->getJson('/api/v1/image-batches/auto/preview?count=3')
+            ->assertOk()
+            ->assertJsonCount(1, 'data.batches')
+            ->assertJsonPath('data.batches.0.product.id', $active->id);
+
+        // Chọn thủ công sản phẩm đang tắt cũng không tạo
+        $this->auto($user, 1, ['product_ids' => [$inactive->id]])->assertStatus(422);
+        $this->auto($user, 3)->assertCreated()->assertJsonCount(1, 'data.batches');
+        $this->assertSame([$active->id], array_column($this->pairs($user), 0));
+
+        // Bật lại thì được tạo
+        $this->actingAs($user)->putJson("/api/v1/creator/products/{$inactive->id}/active", ['is_active' => true])->assertOk();
+        $this->auto($user, 1, ['product_ids' => [$inactive->id]])->assertCreated();
+    }
+
     public function test_products_and_groups_are_picked_randomly(): void
     {
         $user = $this->creator();

@@ -15,6 +15,8 @@ class Product extends Model
 {
     protected $guarded = ['id'];
 
+    protected $casts = ['is_active' => 'boolean'];
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
@@ -37,6 +39,12 @@ class Product extends Model
         return $this->belongsToMany(Hashtag::class, 'product_hashtag')
             ->withPivot('sort_order')
             ->orderByPivot('sort_order');
+    }
+
+    /** Sản phẩm đang hoạt động, chỉ những sản phẩm này được tạo lô tự động. */
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where('is_active', true);
     }
 
     public function scopeOwnedBy(Builder $query, User $user): Builder

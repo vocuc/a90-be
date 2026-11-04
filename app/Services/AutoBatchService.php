@@ -133,6 +133,8 @@ class AutoBatchService
     {
         $products = Product::query()
             ->ownedBy($user)
+            // Sản phẩm đang tắt bị bỏ qua, kể cả khi người dùng chọn thủ công
+            ->active()
             ->when($productIds !== null, fn ($q) => $q->whereKey($productIds))
             ->with('images')
             ->orderBy('id')

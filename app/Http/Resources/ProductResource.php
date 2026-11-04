@@ -21,6 +21,8 @@ class ProductResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            // Tắt thì không được tạo lô tự động
+            'is_active' => (bool) ($this->is_active ?? true),
             'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),
             'images' => $this->images->map(fn ($image) => [
                 'id' => $image->id,

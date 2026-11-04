@@ -109,6 +109,16 @@ class ProductController extends Controller
         ]);
     }
 
+    /** { is_active: bool } Công tắc Hoạt động / Tắt: sản phẩm tắt không được tạo lô tự động. */
+    public function setActive(Request $request, int $product): ProductResource
+    {
+        $product = $this->findProduct($request, $product);
+        $data = $request->validate(['is_active' => ['required', 'boolean']]);
+        $product->update(['is_active' => $data['is_active']]);
+
+        return $this->resource($request, $product->id);
+    }
+
     public function destroy(Request $request, int $product): Response
     {
         $this->findProduct($request, $product)->delete();
