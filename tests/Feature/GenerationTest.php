@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\CreativeStatus;
 use App\Enums\GenerationStatus;
 use App\Enums\OutputStatus;
 use App\Enums\RevenueStatus;
@@ -443,19 +444,16 @@ class GenerationTest extends TestCase
         $a = $this->generate($buyer, $first, quantity: 2)->json('data.id');
         $b = $this->generate($buyer, $second)->json('data.id');
         $this->runWorker([null, null, null]);
-        // Chỉ ảnh đầu của đơn a nằm trong lô gắn sản phẩm, ảnh còn lại không
-        $inBatch = Generation::query()->findOrFail($a)->outputs->first();
+        // Đơn a gắn sản phẩm (generations.product_id), đơn b không
         $product = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Áo thun']);
-        Product::query()->create(['user_id' => $buyer->id, 'name' => 'Chưa có lô']);
-        $batch = ImageBatch::query()->create(['user_id' => $buyer->id, 'idempotency_key' => 'k1', 'product_id' => $product->id]);
-        $batch->images()->create(['generation_id' => $a, 'output_id' => $inBatch->id, 'position' => 1]);
+        Product::query()->create(['user_id' => $buyer->id, 'name' => 'Chưa có ảnh']);
+        Generation::query()->whereKey($a)->update(['product_id' => $product->id]);
         $list = fn (string $query) => $this->actingAs($buyer)->getJson("/api/v1/generations?tab=active&{$query}")->assertOk();
 
         $list("creative_id={$second->id}")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $b);
         $list("product_id={$product->id}")->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $a)
-            ->assertJsonCount(1, 'data.0.outputs')
-            ->assertJsonPath('data.0.outputs.0.id', $inBatch->id);
+            ->assertJsonCount(2, 'data.0.outputs');
         $list("product_id={$product->id}&creative_id={$second->id}")->assertJsonCount(0, 'data');
         // Sản phẩm của người khác: không thấy ảnh nào
         $this->actingAs($this->buyer())->getJson("/api/v1/generations?product_id={$product->id}")->assertOk()->assertJsonCount(0, 'data');
@@ -463,14 +461,34 @@ class GenerationTest extends TestCase
         $product->images()->create(['field_key' => 'product_image', 'path' => 'products/ao.png', 'thumb_path' => 'products/ao-thumb.png', 'position' => 1]);
         $filters = $this->actingAs($buyer)->getJson('/api/v1/generations/filters')->assertOk()
             ->assertJsonCount(2, 'data.creatives')
-            ->assertJsonCount(1, 'data.products')
-            ->assertJsonPath('data.products.0.name', 'Áo thun');
+            ->assertJsonCount(2, 'data.products');
         // Ảnh bìa để hiện trong ô lọc: creative lấy ảnh mẫu đầu, sản phẩm lấy thumb của ảnh đầu
         $this->assertStringContainsString('creatives/sample.png', $filters->json('data.creatives.0.cover_url'));
-        $this->assertStringContainsString('products/ao-thumb.png', $filters->json('data.products.0.cover_url'));
-        $this->actingAs($this->buyer())->getJson('/api/v1/generations/filters')->assertOk()
-            ->assertJsonCount(0, 'data.creatives')
-            ->assertJsonCount(0, 'data.products');
+        $ao = collect($filters->json('data.products'))->firstWhere('name', 'Áo thun');
+        $this->assertStringContainsString('products/ao-thumb.png', $ao['cover_url']);
+    }
+
+    public function test_history_filters_list_all_active_creatives_and_products(): void
+    {
+        $creator = $this->creator();
+        $bought = $this->publishedCreative($creator, price: 1000);
+        $notBought = $this->publishedCreative($creator, price: 1000);
+        $paused = $this->publishedCreative($creator, price: 1000);
+        $paused->update(['status' => CreativeStatus::Paused]);
+        $hidden = $this->publishedCreative($creator, price: 1000);
+        $hidden->update(['hidden_at' => now()]);
+        $buyer = $this->buyer(credit: 10000);
+        $this->generate($buyer, $bought)->assertStatus(202);
+        $active = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Đang bán']);
+        Product::query()->create(['user_id' => $buyer->id, 'name' => 'Đang tắt', 'is_active' => false]);
+        Product::query()->create(['user_id' => $this->buyer()->id, 'name' => 'Của người khác']);
+
+        $filters = $this->actingAs($buyer)->getJson('/api/v1/generations/filters')->assertOk();
+
+        // Creative đang hoạt động (kể cả chưa mua); bỏ creative tạm dừng / bị ẩn
+        $this->assertEqualsCanonicalizing([$bought->id, $notBought->id], array_column($filters->json('data.creatives'), 'id'));
+        // Sản phẩm đang hoạt động của mình (kể cả chưa có ảnh); bỏ sản phẩm đang tắt / của người khác
+        $this->assertSame([$active->id], array_column($filters->json('data.products'), 'id'));
     }
 
     public function test_only_completed_output_can_be_disabled(): void

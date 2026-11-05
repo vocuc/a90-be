@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
+use App\Models\GenerationOutput;
 use App\Models\ImageBatch;
 use App\Models\Product;
 use App\Models\User;
@@ -29,12 +30,11 @@ class WorkerVideoImageTest extends TestCase
                 'inputs' => ['product_image' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
             ]],
             'idempotency_key' => (string) Str::uuid(),
+            'product_id' => $product?->id,
         ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
         $this->runWorker(array_fill(0, $quantity, null));
-        $batch = ImageBatch::query()->findOrFail($id);
-        $batch->forceFill(['product_id' => $product?->id])->save();
 
-        return $batch;
+        return ImageBatch::query()->findOrFail($id);
     }
 
     /** @return array{0: Worker, 1: string} */
@@ -136,8 +136,8 @@ class WorkerVideoImageTest extends TestCase
         $shop = $this->buyer(credit: 100000);
         $a = $this->product($shop, 'A');
         $b = $this->product($shop, 'B');
-        $idsOf = fn (Product $p) => ImageBatch::query()->where('product_id', $p->id)->get()
-            ->flatMap(fn (ImageBatch $batch) => $batch->images()->pluck('output_id'))->all();
+        $idsOf = fn (Product $p) => GenerationOutput::query()
+            ->whereHas('generation', fn ($q) => $q->where('product_id', $p->id))->pluck('id')->all();
         $this->completedBatch($shop, 2, $a);
         $this->completedBatch($shop, 2, $b);
         $this->completedBatch($shop, 1, $this->product($shop, 'C')); // không đủ 2 ảnh -> không bao giờ được chọn

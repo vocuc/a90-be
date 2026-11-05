@@ -81,7 +81,7 @@ class AutoBatchTest extends TestCase
     /** Cặp [product_id, group_id] của các lô tự động theo thứ tự tạo. */
     private function pairs(User $user): array
     {
-        return ImageBatch::query()->where('user_id', $user->id)->orderBy('id')->get()
+        return ImageBatch::query()->withProductId()->where('user_id', $user->id)->orderBy('id')->get()
             ->map(fn (ImageBatch $b) => [$b->product_id, $b->creative_group_id])->all();
     }
 

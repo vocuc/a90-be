@@ -63,9 +63,9 @@ class VideoPostTest extends TestCase
                 'inputs' => ['product_image' => UploadedFile::fake()->image('p.png', 64, 64), 'aspectRatio' => '1:1'],
             ]],
             'idempotency_key' => (string) Str::uuid(),
-        ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
+            'product_id' => $product->id,
+        ], ['Accept' => 'application/json'])->assertCreated();
         $this->runWorker(array_fill(0, $images, null));
-        ImageBatch::query()->findOrFail($id)->forceFill(['product_id' => $product->id])->save();
 
         return $product;
     }

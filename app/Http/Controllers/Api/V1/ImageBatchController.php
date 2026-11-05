@@ -269,6 +269,6 @@ class ImageBatchController extends Controller
 
     private function resource(ImageBatch $batch): ImageBatchResource
     {
-        return new ImageBatchResource($batch->fresh(ImageBatchResource::RELATIONS)->loadCount('posts'));
+        return new ImageBatchResource(ImageBatch::query()->withProductId()->with(ImageBatchResource::RELATIONS)->withCount('posts')->findOrFail($batch->id));
     }
 }

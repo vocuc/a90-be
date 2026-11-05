@@ -90,11 +90,11 @@ class AutoBatchService
 
                 try {
                     $created[] = DB::transaction(function () use ($user, $plan, $key, $insertLogo, $workerId) {
+                        // Sản phẩm chỉ lưu ở generations.product_id của các ảnh, không lưu ở lô
                         $batch = $this->batches->create($user, $plan['items'], $key, $insertLogo, [
                             'source' => ImageBatch::SOURCE_AUTO,
-                            'product_id' => $plan['product']->id,
                             'creative_group_id' => $plan['group']->id,
-                        ], $workerId);
+                        ], $workerId, $plan['product']->id);
                         DB::table('auto_batch_product_counts')->upsert(
                             ['user_id' => $user->id, 'product_id' => $plan['product']->id, 'count' => 1],
                             ['user_id', 'product_id'],

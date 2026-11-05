@@ -59,7 +59,7 @@ class GenerationController extends Controller
      * Lịch sử mua. tab lọc theo ảnh, mỗi đơn chỉ kèm ảnh của tab đó, đơn không có ảnh nào của tab thì không trả về:
      * active = ảnh chưa tắt và không lỗi (gồm ảnh đang tạo), failed = ảnh tạo thất bại, disabled = ảnh người dùng đã tắt.
      * Không có tab: mọi đơn, kèm ảnh chưa tắt (như cũ, dùng cho ô chọn ảnh).
-     * creative_id: chỉ đơn của creative đó. product_id: chỉ ảnh nằm trong các lô gắn sản phẩm đó (lô tự động / chọn sản phẩm).
+     * creative_id: chỉ đơn của creative đó. product_id: chỉ đơn có generations.product_id = sản phẩm đó.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -80,22 +80,12 @@ class GenerationController extends Controller
             'disabled' => fn ($q) => $q->whereNotNull('disabled_at'),
             default => self::enabledOutputs(...),
         };
-        $filter = function ($q) use ($tabFilter, $productId, $userId) {
-            $tabFilter($q);
-            if ($productId) {
-                $q->whereIn('generation_outputs.id', fn ($s) => $s->select('image_batch_images.output_id')
-                    ->from('image_batch_images')
-                    ->join('image_batches', 'image_batches.id', '=', 'image_batch_images.image_batch_id')
-                    ->where('image_batches.product_id', $productId)
-                    ->where('image_batches.user_id', $userId));
-            }
-        };
-
         $generations = Generation::query()
             ->where('user_id', $userId)
             ->when($data['creative_id'] ?? null, fn ($q, $id) => $q->where('creative_id', $id))
-            ->when($tab || $productId, fn ($q) => $q->whereHas('outputs', $filter))
-            ->with(['creative', 'outputs' => $filter])
+            ->when($productId, fn ($q, $id) => $q->where('product_id', $id))
+            ->when($tab || $productId, fn ($q) => $q->whereHas('outputs', $tabFilter))
+            ->with(['creative', 'outputs' => $tabFilter])
             ->latest('id')
             ->paginate(min((int) $request->query('per_page', 20), 50));
 
@@ -103,18 +93,19 @@ class GenerationController extends Controller
     }
 
     /**
-     * Lựa chọn cho bộ lọc lịch sử mua: creative người dùng đã mua (theo tên) và sản phẩm của người dùng có lô ảnh.
+     * Lựa chọn cho bộ lọc lịch sử mua: mọi creative đang hoạt động người dùng dùng được (đang bán trên Marketplace hoặc
+     * creative private của chính mình, theo tên) và mọi sản phẩm đang hoạt động của người dùng (mới nhất trước).
      * { data: { creatives: [{ id, title, cover_url }], products: [{ id, name, cover_url }] } }
      */
     public function filters(Request $request): JsonResponse
     {
-        $userId = $request->user()->id;
+        $user = $request->user();
         $media = app(MediaStorage::class);
 
         // cover_url: ảnh bìa (thumb) hiện trong ô lọc, null nếu không có ảnh
         return response()->json(['data' => [
             'creatives' => AiCreative::query()
-                ->whereIn('id', Generation::query()->where('user_id', $userId)->select('creative_id'))
+                ->availableTo($user)
                 ->with('images')
                 ->orderBy('title')
                 ->get(['id', 'title'])
@@ -124,9 +115,8 @@ class GenerationController extends Controller
                     'cover_url' => $media->url($c->images->first()?->thumbPathOrOriginal()),
                 ]),
             'products' => Product::query()
-                ->where('user_id', $userId)
-                ->whereIn('id', fn ($q) => $q->select('product_id')->from('image_batches')
-                    ->where('user_id', $userId)->whereNotNull('product_id'))
+                ->ownedBy($user)
+                ->active()
                 ->with('coverImage')
                 ->latest('id')
                 ->get(['id', 'name'])
