@@ -66,6 +66,21 @@ class Product extends Model
         return $productId;
     }
 
+    /**
+     * Cột generated_image_count = số ảnh đã tạo xong cho sản phẩm (generations.product_id), không tính ảnh lỗi /
+     * đang tạo / người dùng đã tắt. Gọi sau withAutoBatchCount (scope đó đặt lại select).
+     */
+    public function scopeWithGeneratedImageCount(Builder $query): Builder
+    {
+        return $query->addSelect(['generated_image_count' => DB::table('generation_outputs')
+            ->join('generations', 'generations.id', '=', 'generation_outputs.generation_id')
+            ->whereColumn('generations.product_id', 'products.id')
+            ->where('generation_outputs.status', 'completed')
+            ->whereNotNull('generation_outputs.image_path')
+            ->whereNull('generation_outputs.disabled_at')
+            ->selectRaw('COUNT(*)')]);
+    }
+
     /** Cột auto_batch_count = số lần chạy tự động của $user với sản phẩm. */
     public function scopeWithAutoBatchCount(Builder $query, User $user): Builder
     {

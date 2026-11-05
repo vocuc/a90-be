@@ -24,6 +24,26 @@ class GenerationProductTest extends TestCase
         $this->assertSame(0, Generation::query()->findOrFail($without)->product_id);
     }
 
+    public function test_product_list_shows_generated_image_count(): void
+    {
+        $shop = $this->creator(credit: 10000);
+        $creative = $this->publishedCreative($this->creator());
+        $product = Product::query()->create(['user_id' => $shop->id, 'name' => 'Áo thun']);
+        $other = Product::query()->create(['user_id' => $shop->id, 'name' => 'Chưa có ảnh']);
+        $this->generate($shop, $creative, quantity: 3, extra: ['product_id' => $product->id])->assertStatus(202);
+        $this->generate($shop, $creative, extra: ['idempotency_key' => 'k-2'])->assertStatus(202); // không gắn sản phẩm
+        // 2 ảnh xong, 1 ảnh lỗi (không tính), ảnh không gắn sản phẩm xong
+        $this->runWorker([null, null, 'TIMEOUT', null]);
+        Generation::query()->where('product_id', $product->id)->firstOrFail()->outputs()->where('status', 'completed')->first()
+            ->update(['disabled_at' => now()]); // ảnh đã tắt không tính
+
+        $data = collect($this->actingAs($shop)->getJson('/api/v1/creator/products')->assertOk()->json('data'))->keyBy('id');
+
+        $this->assertSame(1, $data[$product->id]['generated_image_count']);
+        $this->assertSame(0, $data[$other->id]['generated_image_count']);
+        $this->actingAs($shop)->getJson("/api/v1/creator/products/{$product->id}")->assertJsonPath('data.generated_image_count', 1);
+    }
+
     public function test_rejects_product_of_other_user(): void
     {
         $creative = $this->publishedCreative($this->creator());

@@ -33,6 +33,8 @@ class ProductResource extends JsonResource
             'hashtags' => HashtagResource::collection($this->whenLoaded('hashtags')),
             // Số lần chạy tự động của người đang xem (mỗi nhân viên đếm riêng)
             'auto_batch_count' => (int) $this->auto_batch_count,
+            // Số ảnh đã tạo xong cho sản phẩm (generations.product_id), không tính ảnh lỗi / đang tạo / đã tắt
+            'generated_image_count' => (int) $this->generated_image_count,
             'created_at' => $this->created_at,
         ];
     }

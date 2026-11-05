@@ -37,7 +37,7 @@ class ProductController extends Controller
 
         $products = Product::query()
             ->ownedBy($request->user())
-            ->withAutoBatchCount($request->user())
+            ->withAutoBatchCount($request->user())->withGeneratedImageCount()
             ->with(['images', 'hashtags'])
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);
@@ -203,7 +203,7 @@ class ProductController extends Controller
 
     private function resource(Request $request, int $id): ProductResource
     {
-        return new ProductResource(Product::query()->withAutoBatchCount($request->user())->with(['images', 'hashtags'])->findOrFail($id));
+        return new ProductResource(Product::query()->withAutoBatchCount($request->user())->withGeneratedImageCount()->with(['images', 'hashtags'])->findOrFail($id));
     }
 
     private function findProduct(Request $request, int $id): Product
