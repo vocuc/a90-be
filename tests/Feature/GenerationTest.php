@@ -460,10 +460,14 @@ class GenerationTest extends TestCase
         // Sản phẩm của người khác: không thấy ảnh nào
         $this->actingAs($this->buyer())->getJson("/api/v1/generations?product_id={$product->id}")->assertOk()->assertJsonCount(0, 'data');
 
-        $this->actingAs($buyer)->getJson('/api/v1/generations/filters')->assertOk()
+        $product->images()->create(['field_key' => 'product_image', 'path' => 'products/ao.png', 'thumb_path' => 'products/ao-thumb.png', 'position' => 1]);
+        $filters = $this->actingAs($buyer)->getJson('/api/v1/generations/filters')->assertOk()
             ->assertJsonCount(2, 'data.creatives')
             ->assertJsonCount(1, 'data.products')
             ->assertJsonPath('data.products.0.name', 'Áo thun');
+        // Ảnh bìa để hiện trong ô lọc: creative lấy ảnh mẫu đầu, sản phẩm lấy thumb của ảnh đầu
+        $this->assertStringContainsString('creatives/sample.png', $filters->json('data.creatives.0.cover_url'));
+        $this->assertStringContainsString('products/ao-thumb.png', $filters->json('data.products.0.cover_url'));
         $this->actingAs($this->buyer())->getJson('/api/v1/generations/filters')->assertOk()
             ->assertJsonCount(0, 'data.creatives')
             ->assertJsonCount(0, 'data.products');

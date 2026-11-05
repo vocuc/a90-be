@@ -101,23 +101,37 @@ class GenerationController extends Controller
 
     /**
      * Lựa chọn cho bộ lọc lịch sử mua: creative người dùng đã mua (theo tên) và sản phẩm của người dùng có lô ảnh.
-     * { data: { creatives: [{ id, title }], products: [{ id, name }] } }
+     * { data: { creatives: [{ id, title, cover_url }], products: [{ id, name, cover_url }] } }
      */
     public function filters(Request $request): JsonResponse
     {
         $userId = $request->user()->id;
+        $media = app(MediaStorage::class);
 
+        // cover_url: ảnh bìa (thumb) hiện trong ô lọc, null nếu không có ảnh
         return response()->json(['data' => [
             'creatives' => AiCreative::query()
                 ->whereIn('id', Generation::query()->where('user_id', $userId)->select('creative_id'))
+                ->with('images')
                 ->orderBy('title')
-                ->get(['id', 'title']),
+                ->get(['id', 'title'])
+                ->map(fn (AiCreative $c) => [
+                    'id' => $c->id,
+                    'title' => $c->title,
+                    'cover_url' => $media->url($c->images->first()?->thumbPathOrOriginal()),
+                ]),
             'products' => Product::query()
                 ->where('user_id', $userId)
                 ->whereIn('id', fn ($q) => $q->select('product_id')->from('image_batches')
                     ->where('user_id', $userId)->whereNotNull('product_id'))
+                ->with('coverImage')
                 ->latest('id')
-                ->get(['id', 'name']),
+                ->get(['id', 'name'])
+                ->map(fn (Product $p) => [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'cover_url' => $media->url($p->coverImage?->thumbPathOrOriginal()),
+                ]),
         ]]);
     }
 
