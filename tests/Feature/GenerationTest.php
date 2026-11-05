@@ -459,34 +459,35 @@ class GenerationTest extends TestCase
         $this->actingAs($this->buyer())->getJson("/api/v1/generations?product_id={$product->id}")->assertOk()->assertJsonCount(0, 'data');
 
         $product->images()->create(['field_key' => 'product_image', 'path' => 'products/ao.png', 'thumb_path' => 'products/ao-thumb.png', 'position' => 1]);
+        // Creative đã mua của creator khác không có trong ô lọc (chỉ creative của chính shop)
         $filters = $this->actingAs($buyer)->getJson('/api/v1/generations/filters')->assertOk()
-            ->assertJsonCount(2, 'data.creatives')
+            ->assertJsonCount(0, 'data.creatives')
             ->assertJsonCount(2, 'data.products');
-        // Ảnh bìa để hiện trong ô lọc: creative lấy ảnh mẫu đầu, sản phẩm lấy thumb của ảnh đầu
-        $this->assertStringContainsString('creatives/sample.png', $filters->json('data.creatives.0.cover_url'));
+        // Ảnh bìa để hiện trong ô lọc: sản phẩm lấy thumb của ảnh đầu
         $ao = collect($filters->json('data.products'))->firstWhere('name', 'Áo thun');
         $this->assertStringContainsString('products/ao-thumb.png', $ao['cover_url']);
     }
 
-    public function test_history_filters_list_all_active_creatives_and_products(): void
+    public function test_history_filters_list_own_active_creatives_and_products(): void
     {
-        $creator = $this->creator();
-        $bought = $this->publishedCreative($creator, price: 1000);
-        $notBought = $this->publishedCreative($creator, price: 1000);
-        $paused = $this->publishedCreative($creator, price: 1000);
+        $shop = $this->creator();
+        $sold = $this->publishedCreative($shop, price: 1000);
+        $notUsed = $this->publishedCreative($shop, price: 1000);
+        $paused = $this->publishedCreative($shop, price: 1000);
         $paused->update(['status' => CreativeStatus::Paused]);
-        $hidden = $this->publishedCreative($creator, price: 1000);
+        $hidden = $this->publishedCreative($shop, price: 1000);
         $hidden->update(['hidden_at' => now()]);
-        $buyer = $this->buyer(credit: 10000);
-        $this->generate($buyer, $bought)->assertStatus(202);
-        $active = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Đang bán']);
-        Product::query()->create(['user_id' => $buyer->id, 'name' => 'Đang tắt', 'is_active' => false]);
+        $this->publishedCreative($this->creator(), price: 1000); // creative của shop khác
+        $active = Product::query()->create(['user_id' => $shop->id, 'name' => 'Đang bán']);
+        Product::query()->create(['user_id' => $shop->id, 'name' => 'Đang tắt', 'is_active' => false]);
         Product::query()->create(['user_id' => $this->buyer()->id, 'name' => 'Của người khác']);
 
-        $filters = $this->actingAs($buyer)->getJson('/api/v1/generations/filters')->assertOk();
+        $filters = $this->actingAs($shop)->getJson('/api/v1/generations/filters')->assertOk();
 
-        // Creative đang hoạt động (kể cả chưa mua); bỏ creative tạm dừng / bị ẩn
-        $this->assertEqualsCanonicalizing([$bought->id, $notBought->id], array_column($filters->json('data.creatives'), 'id'));
+        // Creative đang bán của chính shop (kể cả chưa dùng); bỏ creative tạm dừng / bị ẩn / của shop khác
+        $this->assertEqualsCanonicalizing([$sold->id, $notUsed->id], array_column($filters->json('data.creatives'), 'id'));
+        // Ảnh bìa creative: ảnh mẫu đầu
+        $this->assertStringContainsString('creatives/sample.png', $filters->json('data.creatives.0.cover_url'));
         // Sản phẩm đang hoạt động của mình (kể cả chưa có ảnh); bỏ sản phẩm đang tắt / của người khác
         $this->assertSame([$active->id], array_column($filters->json('data.products'), 'id'));
     }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\CreativeStatus;
 use App\Enums\OutputStatus;
 use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
@@ -93,8 +94,8 @@ class GenerationController extends Controller
     }
 
     /**
-     * Lựa chọn cho bộ lọc lịch sử mua: mọi creative đang hoạt động người dùng dùng được (đang bán trên Marketplace hoặc
-     * creative private của chính mình, theo tên) và mọi sản phẩm đang hoạt động của người dùng (mới nhất trước).
+     * Lựa chọn cho bộ lọc lịch sử mua: creative đang bán của chính shop (creator_id = người dùng, không bị Admin ẩn,
+     * theo tên) và mọi sản phẩm đang hoạt động của người dùng (mới nhất trước). Không có creative của người khác.
      * { data: { creatives: [{ id, title, cover_url }], products: [{ id, name, cover_url }] } }
      */
     public function filters(Request $request): JsonResponse
@@ -105,7 +106,9 @@ class GenerationController extends Controller
         // cover_url: ảnh bìa (thumb) hiện trong ô lọc, null nếu không có ảnh
         return response()->json(['data' => [
             'creatives' => AiCreative::query()
-                ->availableTo($user)
+                ->where('creator_id', $user->id)
+                ->where('status', CreativeStatus::Published)
+                ->whereNull('hidden_at')
                 ->with('images')
                 ->orderBy('title')
                 ->get(['id', 'title'])
