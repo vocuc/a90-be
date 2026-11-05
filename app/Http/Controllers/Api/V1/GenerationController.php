@@ -38,15 +38,18 @@ class GenerationController extends Controller
             'idempotency_key' => ['required', 'string', 'max:100'],
             // Worker tạo ảnh người dùng chọn (note/chon-worker-tao-anh.txt ở repo frontend)
             'worker_id' => ['nullable', 'integer'],
+            // Sản phẩm ảnh này tạo cho (lưu vào generations.product_id), không gửi = 0
+            'product_id' => ['nullable', 'integer'],
         ]);
 
         $creative = AiCreative::query()->find($data['creative_id'])
             ?? throw BusinessException::creativeNotAvailable();
         $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
+        $productId = Product::resolveOwnedId($request->user(), $data['product_id'] ?? null);
         $input = GenerationInput::fromRequest($request, $creative, $this->settings->int('generation.input_max_size_kb'));
 
         $generation = $this->generations->create(
-            $request->user(), $creative, $input, $data['quantity'], $data['idempotency_key'], [], null, $workerId,
+            $request->user(), $creative, $input, $data['quantity'], $data['idempotency_key'], [], null, $workerId, $productId,
         );
 
         return (new GenerationResource($generation->load('creative')))->response()->setStatusCode(202);

@@ -63,12 +63,15 @@ class ImageBatchController extends Controller
             'idempotency_key' => ['required', 'string', 'max:80'],
             'insert_logo' => ['nullable', 'boolean'],
             'worker_id' => ['nullable', 'integer'],
+            // Sản phẩm: chỉ lưu vào generations.product_id của mọi ảnh trong lô, không gắn vào lô (image_batches.product_id)
+            'product_id' => ['nullable', 'integer'],
         ], [
             'items.*.creative_id.distinct' => 'Mỗi mẫu chỉ được chọn một lần trong lô.',
         ]);
 
         $insertLogo = $this->insertLogo($request, $data);
         $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
+        $productId = Product::resolveOwnedId($request->user(), $data['product_id'] ?? null);
 
         $items = array_values($data['items']);
         $creatives = AiCreative::query()
@@ -96,7 +99,7 @@ class ImageBatchController extends Controller
             ];
         }
 
-        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo, [], $workerId);
+        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo, [], $workerId, $productId);
 
         return $this->resource($batch)->response()->setStatusCode(201);
     }

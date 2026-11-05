@@ -52,6 +52,20 @@ class Product extends Model
         return $query->where('user_id', $user->id);
     }
 
+    /**
+     * product_id người dùng gửi khi tạo ảnh (lưu vào generations.product_id): rỗng -> null,
+     * không phải sản phẩm của người dùng -> 422 errors[$field].
+     */
+    public static function resolveOwnedId(User $user, mixed $productId, string $field = 'product_id'): ?int
+    {
+        $productId = $productId ? (int) $productId : null;
+        if ($productId && ! static::query()->ownedBy($user)->whereKey($productId)->exists()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([$field => 'Sản phẩm không tồn tại.']);
+        }
+
+        return $productId;
+    }
+
     /** Cột auto_batch_count = số lần chạy tự động của $user với sản phẩm. */
     public function scopeWithAutoBatchCount(Builder $query, User $user): Builder
     {

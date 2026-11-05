@@ -39,8 +39,10 @@ class ImageBatchService
      * @param  bool  $insertLogo  chèn logo shop vào mọi ảnh của lô (worker tạo ảnh chèn, note/logo-tao-anh.txt)
      * @param  array<string, mixed>  $attributes  cột thêm của lô (lô tự động: source, product_id, creative_group_id)
      * @param  ?int  $workerId  worker tạo ảnh người dùng chọn cho cả lô (note/chon-worker-tao-anh.txt), null = worker nào cũng nhận
+     * @param  ?int  $productId  sản phẩm lưu vào generations.product_id của mọi ảnh trong lô (không ghi vào lô);
+     *                           null = lấy $attributes['product_id'] (lô tự động), không có thì 0
      */
-    public function create(User $user, array $items, string $idempotencyKey, bool $insertLogo = false, array $attributes = [], ?int $workerId = null): ImageBatch
+    public function create(User $user, array $items, string $idempotencyKey, bool $insertLogo = false, array $attributes = [], ?int $workerId = null, ?int $productId = null): ImageBatch
     {
         if ($existing = $this->findExisting($user, $idempotencyKey)) {
             return $existing;
@@ -49,7 +51,9 @@ class ImageBatchService
         $total = array_sum(array_map(fn (array $item) => $item['creative']->price_per_image * $item['quantity'], $items));
 
         try {
-            return DB::transaction(function () use ($user, $items, $idempotencyKey, $total, $insertLogo, $attributes, $workerId) {
+            $productId ??= $attributes['product_id'] ?? null;
+
+            return DB::transaction(function () use ($user, $items, $idempotencyKey, $total, $insertLogo, $attributes, $workerId, $productId) {
                 // Kiểm tra tổng phí trước để báo đúng số tiền cần (không dừng giữa chừng ở mẫu thứ n)
                 $this->credits->assertSufficient($this->credits->lockWallet($user->id), $total);
 
@@ -64,7 +68,7 @@ class ImageBatchService
 
                     for ($done = 0, $part = 0; $done < $item['quantity']; $done += $chunk, $part++) {
                         $quantity = min($chunk, $item['quantity'] - $done);
-                        $generation = $this->generations->create($user, $creative, $input, $quantity, "batch:{$batch->id}:{$i}:{$part}", $kept, null, $workerId);
+                        $generation = $this->generations->create($user, $creative, $input, $quantity, "batch:{$batch->id}:{$i}:{$part}", $kept, null, $workerId, $productId);
                         // Cùng transaction với lúc tạo output nên worker chưa nhận job trước khi đặt cờ logo
                         if ($insertLogo) {
                             $generation->update(['insert_logo' => true]);

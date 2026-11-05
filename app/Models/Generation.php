@@ -24,6 +24,7 @@ class Generation extends Model
             'asset_paths' => 'array',
             'input_values' => 'array',
             'insert_logo' => 'boolean',
+            'product_id' => 'integer',
         ];
     }
 
@@ -41,6 +42,12 @@ class Generation extends Model
     public function worker(): BelongsTo
     {
         return $this->belongsTo(Worker::class);
+    }
+
+    /** Sản phẩm generation tạo ảnh cho; product_id = 0: không gắn sản phẩm (không có khoá ngoại). */
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class);
     }
 
     public function creator(): BelongsTo
