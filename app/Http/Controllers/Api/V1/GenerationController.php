@@ -9,6 +9,7 @@ use App\Http\Resources\GenerationResource;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\Product;
 use App\Models\Worker;
 use App\Services\AuditLogger;
 use App\Services\GenerationInput;
@@ -55,11 +56,19 @@ class GenerationController extends Controller
      * Lịch sử mua. tab lọc theo ảnh, mỗi đơn chỉ kèm ảnh của tab đó, đơn không có ảnh nào của tab thì không trả về:
      * active = ảnh chưa tắt và không lỗi (gồm ảnh đang tạo), failed = ảnh tạo thất bại, disabled = ảnh người dùng đã tắt.
      * Không có tab: mọi đơn, kèm ảnh chưa tắt (như cũ, dùng cho ô chọn ảnh).
+     * creative_id: chỉ đơn của creative đó. product_id: chỉ ảnh nằm trong các lô gắn sản phẩm đó (lô tự động / chọn sản phẩm).
      */
     public function index(Request $request): AnonymousResourceCollection
     {
-        $tab = $request->validate(['tab' => ['nullable', 'in:active,failed,disabled']])['tab'] ?? null;
-        $filter = match ($tab) {
+        $data = $request->validate([
+            'tab' => ['nullable', 'in:active,failed,disabled'],
+            'creative_id' => ['nullable', 'integer'],
+            'product_id' => ['nullable', 'integer'],
+        ]);
+        $tab = $data['tab'] ?? null;
+        $userId = $request->user()->id;
+        $productId = $data['product_id'] ?? null;
+        $tabFilter = match ($tab) {
             'active' => fn ($q) => $q->whereNull('disabled_at')->where('status', '!=', OutputStatus::Failed),
             // Ảnh lỗi đã bấm "Tạo lại" (có output mới retry_of_output_id trỏ tới) thì không hiện nữa
             'failed' => fn ($q) => $q->where('status', OutputStatus::Failed)
@@ -68,15 +77,48 @@ class GenerationController extends Controller
             'disabled' => fn ($q) => $q->whereNotNull('disabled_at'),
             default => self::enabledOutputs(...),
         };
+        $filter = function ($q) use ($tabFilter, $productId, $userId) {
+            $tabFilter($q);
+            if ($productId) {
+                $q->whereIn('generation_outputs.id', fn ($s) => $s->select('image_batch_images.output_id')
+                    ->from('image_batch_images')
+                    ->join('image_batches', 'image_batches.id', '=', 'image_batch_images.image_batch_id')
+                    ->where('image_batches.product_id', $productId)
+                    ->where('image_batches.user_id', $userId));
+            }
+        };
 
         $generations = Generation::query()
-            ->where('user_id', $request->user()->id)
-            ->when($tab, fn ($q) => $q->whereHas('outputs', $filter))
+            ->where('user_id', $userId)
+            ->when($data['creative_id'] ?? null, fn ($q, $id) => $q->where('creative_id', $id))
+            ->when($tab || $productId, fn ($q) => $q->whereHas('outputs', $filter))
             ->with(['creative', 'outputs' => $filter])
             ->latest('id')
             ->paginate(min((int) $request->query('per_page', 20), 50));
 
         return GenerationResource::collection($generations);
+    }
+
+    /**
+     * Lựa chọn cho bộ lọc lịch sử mua: creative người dùng đã mua (theo tên) và sản phẩm của người dùng có lô ảnh.
+     * { data: { creatives: [{ id, title }], products: [{ id, name }] } }
+     */
+    public function filters(Request $request): JsonResponse
+    {
+        $userId = $request->user()->id;
+
+        return response()->json(['data' => [
+            'creatives' => AiCreative::query()
+                ->whereIn('id', Generation::query()->where('user_id', $userId)->select('creative_id'))
+                ->orderBy('title')
+                ->get(['id', 'title']),
+            'products' => Product::query()
+                ->where('user_id', $userId)
+                ->whereIn('id', fn ($q) => $q->select('product_id')->from('image_batches')
+                    ->where('user_id', $userId)->whereNotNull('product_id'))
+                ->latest('id')
+                ->get(['id', 'name']),
+        ]]);
     }
 
     public function show(Request $request, Generation $generation): GenerationResource

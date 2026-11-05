@@ -10,6 +10,8 @@ use App\Models\CreatorRevenue;
 use App\Models\CreatorWallet;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\ImageBatch;
+use App\Models\Product;
 use App\Models\Transaction;
 use App\Models\Worker;
 use App\Services\GenerationFinalizer;
@@ -430,6 +432,41 @@ class GenerationTest extends TestCase
         ])->assertStatus(202)->json('data.id');
         $tab('failed')->assertJsonCount(0, 'data');
         $tab('active')->assertJsonPath('data.0.id', $retry);
+    }
+
+    public function test_history_filters_by_creative_and_product(): void
+    {
+        $creator = $this->creator();
+        $first = $this->publishedCreative($creator, price: 1000);
+        $second = $this->publishedCreative($creator, price: 1000);
+        $buyer = $this->buyer(credit: 10000);
+        $a = $this->generate($buyer, $first, quantity: 2)->json('data.id');
+        $b = $this->generate($buyer, $second)->json('data.id');
+        $this->runWorker([null, null, null]);
+        // Chỉ ảnh đầu của đơn a nằm trong lô gắn sản phẩm, ảnh còn lại không
+        $inBatch = Generation::query()->findOrFail($a)->outputs->first();
+        $product = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Áo thun']);
+        Product::query()->create(['user_id' => $buyer->id, 'name' => 'Chưa có lô']);
+        $batch = ImageBatch::query()->create(['user_id' => $buyer->id, 'idempotency_key' => 'k1', 'product_id' => $product->id]);
+        $batch->images()->create(['generation_id' => $a, 'output_id' => $inBatch->id, 'position' => 1]);
+        $list = fn (string $query) => $this->actingAs($buyer)->getJson("/api/v1/generations?tab=active&{$query}")->assertOk();
+
+        $list("creative_id={$second->id}")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $b);
+        $list("product_id={$product->id}")->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $a)
+            ->assertJsonCount(1, 'data.0.outputs')
+            ->assertJsonPath('data.0.outputs.0.id', $inBatch->id);
+        $list("product_id={$product->id}&creative_id={$second->id}")->assertJsonCount(0, 'data');
+        // Sản phẩm của người khác: không thấy ảnh nào
+        $this->actingAs($this->buyer())->getJson("/api/v1/generations?product_id={$product->id}")->assertOk()->assertJsonCount(0, 'data');
+
+        $this->actingAs($buyer)->getJson('/api/v1/generations/filters')->assertOk()
+            ->assertJsonCount(2, 'data.creatives')
+            ->assertJsonCount(1, 'data.products')
+            ->assertJsonPath('data.products.0.name', 'Áo thun');
+        $this->actingAs($this->buyer())->getJson('/api/v1/generations/filters')->assertOk()
+            ->assertJsonCount(0, 'data.creatives')
+            ->assertJsonCount(0, 'data.products');
     }
 
     public function test_only_completed_output_can_be_disabled(): void

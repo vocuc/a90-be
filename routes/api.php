@@ -54,6 +54,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         // Tạo ảnh
         Route::post('generations', [GenerationController::class, 'store'])->middleware('throttle:generations');
         Route::get('generations', [GenerationController::class, 'index']);
+        Route::get('generations/filters', [GenerationController::class, 'filters']);
         Route::get('generations/{generation}', [GenerationController::class, 'show']);
         Route::get('generations/{generation}/status', [GenerationController::class, 'status']);
         Route::post('generations/{generation}/retry', [GenerationController::class, 'retry'])->middleware('throttle:generations');
