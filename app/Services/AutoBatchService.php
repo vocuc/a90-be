@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\CreativeStatus;
+use App\Enums\OutputStatus;
 use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
 use App\Models\CreativeGroup;
@@ -20,8 +21,9 @@ use Illuminate\Support\Facades\DB;
  *
  * Không xét hashtag: mọi sản phẩm ghép được với mọi nhóm.
  *
- * Chọn: $count lô = $count sản phẩm ngẫu nhiên ghép với $count nhóm ngẫu nhiên, không lặp sản phẩm / nhóm nên số lô tối đa
- * bằng min(số sản phẩm, số nhóm) (xem AutoBatchPlanner). Cặp không có creative nào dùng được thì đổi nhóm khác.
+ * Chọn (xem AutoBatchPlanner): sản phẩm ít ảnh đã tạo nhất trước, mỗi sản phẩm ghép nhóm có ít lượt tạo nhất với sản phẩm
+ * đó; bằng nhau thì ngẫu nhiên. Không lặp sản phẩm / nhóm nên số lô tối đa bằng min(số sản phẩm, số nhóm).
+ * Nhóm không có creative nào dùng được với sản phẩm thì bỏ qua.
  * Hết tiền giữa chừng thì dừng; lô là đơn vị nhỏ nhất (trừ tiền cả lô như lô tạo tay).
  * Số lô tự động đã tạo của từng sản phẩm lưu ở auto_batch_product_counts (chỉ để hiển thị, không ảnh hưởng cách chọn).
  */
@@ -145,7 +147,41 @@ class AutoBatchService
             ->orderBy('id')
             ->get();
 
-        return new AutoBatchPlanner($products, $groups, fn (Product $p, CreativeGroup $g) => $this->items($user, $p, $g->creatives));
+        return new AutoBatchPlanner(
+            $products,
+            $groups,
+            fn (Product $p, CreativeGroup $g) => $this->items($user, $p, $g->creatives),
+            $this->generatedCounts($products->modelKeys()),
+        );
+    }
+
+    /**
+     * Lượt tạo [product_id][creative_id] => số ảnh của các sản phẩm (generations.product_id). Tính ảnh đã xong và
+     * đang tạo (để bấm tạo tự động liên tiếp không chọn lại đúng sản phẩm / nhóm vừa tạo), không tính ảnh lỗi / đã tắt.
+     *
+     * @param  int[]  $productIds
+     * @return array<int, array<int, int>>
+     */
+    private function generatedCounts(array $productIds): array
+    {
+        if (! $productIds) {
+            return [];
+        }
+
+        $counts = [];
+        DB::table('generation_outputs')
+            ->join('generations', 'generations.id', '=', 'generation_outputs.generation_id')
+            ->whereIn('generations.product_id', $productIds)
+            ->where('generation_outputs.status', '!=', OutputStatus::Failed->value)
+            ->whereNull('generation_outputs.disabled_at')
+            ->groupBy('generations.product_id', 'generations.creative_id')
+            ->selectRaw('generations.product_id, generations.creative_id, COUNT(*) AS total')
+            ->get()
+            ->each(function ($row) use (&$counts) {
+                $counts[(int) $row->product_id][(int) $row->creative_id] = (int) $row->total;
+            });
+
+        return $counts;
     }
 
     /**

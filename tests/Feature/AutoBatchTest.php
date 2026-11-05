@@ -429,6 +429,81 @@ class AutoBatchTest extends TestCase
         $this->assertSame([1, 1], [$this->autoCount($p1), $this->autoCount($p2)]);
     }
 
+    /** $n ảnh đã tạo cho $product bằng $creative (generations.product_id), ảnh đang tạo cũng tính. */
+    private function madeImages(User $user, AiCreative $creative, Product $product, int $n): void
+    {
+        $this->generate($user, $creative, quantity: $n, extra: ['product_id' => $product->id, 'idempotency_key' => (string) Str::uuid()])
+            ->assertStatus(202);
+    }
+
+    /** @return array<int, array{0: int, 1: int}> cặp [product_id, group_id] của bản xem trước với $seed */
+    private function previewPairs(User $user, int $count, int $seed): array
+    {
+        return array_map(
+            fn (array $b) => [$b['product']['id'], $b['group']['id']],
+            $this->actingAs($user)->getJson("/api/v1/image-batches/auto/preview?count={$count}&seed={$seed}")->assertOk()->json('data.batches'),
+        );
+    }
+
+    public function test_products_with_fewest_images_come_first(): void
+    {
+        $user = $this->creator(credit: 100000);
+        $creative = $this->publishedCreative($user, price: 1000);
+        foreach (['G1', 'G2', 'G3'] as $name) {
+            $this->group($user, [$this->publishedCreative($user, price: 1000)], $name);
+        }
+        [$many, $none, $one] = [$this->product($user), $this->product($user), $this->product($user)];
+        $this->madeImages($user, $creative, $many, 2);
+        $this->madeImages($user, $creative, $one, 1);
+
+        foreach ([1, 2, 3, 42, 999] as $seed) {
+            $this->assertSame([$none->id, $one->id, $many->id], array_column($this->previewPairs($user, 3, $seed), 0));
+        }
+    }
+
+    public function test_products_with_same_image_count_are_picked_randomly(): void
+    {
+        $user = $this->creator(credit: 100000);
+        $this->group($user, [$this->publishedCreative($user, price: 1000)], 'G1');
+        foreach (range(1, 5) as $_) {
+            $this->product($user);
+        }
+
+        $firsts = array_map(fn (int $seed) => $this->previewPairs($user, 1, $seed)[0][0], range(1, 20));
+
+        $this->assertGreaterThan(1, count(array_unique($firsts)));
+    }
+
+    public function test_each_product_gets_group_with_fewest_uses_for_that_product(): void
+    {
+        $user = $this->creator(credit: 100000);
+        [$c1, $c2] = [$this->publishedCreative($user, price: 1000), $this->publishedCreative($user, price: 1000)];
+        $this->group($user, [$c1], 'G1');
+        $g2 = $this->group($user, [$c2], 'G2');
+        $product = $this->product($user);
+        $other = $this->product($user);
+        $this->madeImages($user, $c1, $product, 2); // sản phẩm này đã dùng G1 nhiều
+        $this->madeImages($user, $c2, $other, 3);   // lượt tạo của sản phẩm khác không tính cho $product
+
+        foreach ([1, 2, 3, 42, 999] as $seed) {
+            $pairs = collect($this->previewPairs($user, 2, $seed))->keyBy(0);
+            $this->assertSame($g2->id, $pairs[$product->id][1]);
+        }
+    }
+
+    public function test_groups_with_same_uses_are_picked_randomly(): void
+    {
+        $user = $this->creator(credit: 100000);
+        foreach (range(1, 4) as $i) {
+            $this->group($user, [$this->publishedCreative($user, price: 1000)], "G{$i}");
+        }
+        $this->product($user);
+
+        $groups = array_map(fn (int $seed) => $this->previewPairs($user, 1, $seed)[0][1], range(1, 20));
+
+        $this->assertGreaterThan(1, count(array_unique($groups)));
+    }
+
     public function test_preview_creates_nothing(): void
     {
         $user = $this->creator(credit: 1500);
