@@ -55,7 +55,7 @@ class RevenueAndSweepTest extends TestCase
         $this->assertSame(200, $wallet->fresh()->available_balance);
     }
 
-    public function test_images_no_worker_claims_are_failed_and_refunded(): void
+    public function test_images_no_worker_claims_stay_queued(): void
     {
         $creative = $this->publishedCreative($this->creator(), price: 1000);
         $buyer = $this->buyer(credit: 5000);
@@ -63,17 +63,13 @@ class RevenueAndSweepTest extends TestCase
         $this->generate($buyer, $creative, quantity: 2)->assertStatus(202);
         $this->assertSame(3000, $this->balance($buyer));
 
-        $this->travel(29)->minutes();
+        // Không tự thất bại dù chờ lâu: người dùng tự hủy ở trang lô
+        $this->travel(1)->days();
         $this->artisan('generations:sweep-stuck')->assertSuccessful();
+
         $this->assertSame(2, GenerationOutput::query()->where('status', OutputStatus::Queued)->count());
-
-        $this->travel(2)->minutes();
-        $this->artisan('generations:sweep-stuck')->assertSuccessful();
-
-        $this->assertSame(2, GenerationOutput::query()->where('status', OutputStatus::Failed)->where('error_code', 'TIMEOUT')->count());
-        $this->assertSame(2, Transaction::query()->where('status', TransactionStatus::Refunded)->count());
-        $this->assertSame(5000, $this->balance($buyer));
-        $this->assertLedgerMatchesBalance($buyer);
+        $this->assertSame(0, Transaction::query()->where('status', TransactionStatus::Refunded)->count());
+        $this->assertSame(3000, $this->balance($buyer));
     }
 
     public function test_expired_lease_goes_back_to_queue_for_another_worker(): void

@@ -28,6 +28,7 @@ class ImageBatchService
         private CreditService $credits,
         private MediaStorage $media,
         private AuditLogger $audit,
+        private GenerationFinalizer $finalizer,
     ) {}
 
     /**
@@ -188,6 +189,35 @@ class ImageBatchService
 
             $this->audit->log('image_batch.delete_image', $batch, ['image_id' => $image->id], $user->id);
             $image->delete();
+        });
+    }
+
+    /**
+     * "Hủy ảnh đang chờ": mọi ảnh của lô còn trong hàng đợi (chưa worker nào nhận) thành thất bại CANCELLED và hoàn
+     * Credit. Ảnh worker đang tạo (processing) không hủy. Khoá FOR UPDATE nên worker (claim dùng SKIP LOCKED) không
+     * nhận được ảnh đang hủy. Bấm lại khi không còn ảnh chờ: trả 0, không lỗi.
+     *
+     * @return int số ảnh đã hủy
+     */
+    public function cancelQueued(User $user, ImageBatch $batch): int
+    {
+        return DB::transaction(function () use ($user, $batch) {
+            $ids = GenerationOutput::query()
+                ->whereIn('id', ImageBatchImage::query()->where('image_batch_id', $batch->id)->select('output_id'))
+                ->where('status', OutputStatus::Queued)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id');
+
+            foreach ($ids as $id) {
+                $this->finalizer->fail($id, GenerationFinalizer::CANCELLED, 'Đã hủy theo yêu cầu, Credit đã được hoàn.');
+            }
+
+            if ($ids->isNotEmpty()) {
+                $this->audit->log('image_batch.cancel', $batch, ['images' => $ids->count()], $user->id);
+            }
+
+            return $ids->count();
         });
     }
 

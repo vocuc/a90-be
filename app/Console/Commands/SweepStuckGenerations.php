@@ -2,37 +2,25 @@
 
 namespace App\Console\Commands;
 
-use App\Enums\OutputStatus;
-use App\Models\GenerationOutput;
-use App\Services\GenerationFinalizer;
 use App\Services\WorkerJobService;
 use Illuminate\Console\Command;
 
 /**
- * Lưới an toàn: worker giữ job quá hạn thì giao lại (hoặc thất bại khi hết lượt);
- * ảnh nằm trong hàng đợi quá lâu (tính từ lần vào hàng đợi gần nhất) thì đánh dấu thất bại và hoàn Credit.
+ * Lưới an toàn: worker giữ job quá hạn thì giao lại (hoặc thất bại khi hết lượt).
+ * Ảnh còn trong hàng đợi (chưa worker nào nhận) thì chờ mãi, không tự thất bại; người dùng tự bấm
+ * "Hủy ảnh đang chờ" ở trang lô để hoàn tiền (POST /image-batches/{id}/cancel).
  */
 class SweepStuckGenerations extends Command
 {
     protected $signature = 'generations:sweep-stuck';
 
-    protected $description = 'Giao lại job worker giữ quá hạn, hoàn Credit cho các ảnh bị kẹt quá lâu';
+    protected $description = 'Giao lại job worker giữ quá hạn, thất bại và hoàn Credit khi hết lượt';
 
-    public function handle(WorkerJobService $jobs, GenerationFinalizer $finalizer): int
+    public function handle(WorkerJobService $jobs): int
     {
         $leases = $jobs->releaseExpiredLeases();
 
-        $queuedBefore = now()->subMinutes(config('ai90.generation.stuck_queued_minutes'));
-        $ids = GenerationOutput::query()
-            ->where('status', OutputStatus::Queued)
-            ->where('updated_at', '<', $queuedBefore) // giao lại thì updated_at được làm mới
-            ->pluck('id');
-
-        foreach ($ids as $id) {
-            $finalizer->fail($id, 'TIMEOUT', 'Quá thời gian chờ worker xử lý.');
-        }
-
-        $this->info("Giao lại {$leases['requeued']} ảnh, thất bại {$leases['failed']} ảnh hết lượt, {$ids->count()} ảnh chờ quá lâu.");
+        $this->info("Giao lại {$leases['requeued']} ảnh, thất bại {$leases['failed']} ảnh hết lượt.");
 
         return self::SUCCESS;
     }

@@ -352,6 +352,47 @@ class ImageBatchTest extends TestCase
         $this->assertSame(1, Generation::query()->count());
     }
 
+    // ---- Hủy ảnh đang chờ ----
+
+    public function test_cancel_refunds_queued_images_but_keeps_processing_and_done(): void
+    {
+        $user = $this->buyer(credit: 10000);
+        $creative = $this->publishedCreative($this->creator(), price: 1000);
+        $batchId = $this->createBatch($user, [[$creative, 4]])->assertCreated()->json('data.id');
+        $this->assertSame(6000, $this->balance($user));
+
+        // Ảnh 1 xong, ảnh 2 worker đang tạo, ảnh 3-4 còn chờ
+        $token = $this->workerToken();
+        $done = $this->claimJob($token)->json('data.id');
+        $this->completeJob($token, $done)->assertOk();
+        $processing = $this->claimJob($token)->json('data.id');
+        $this->flushHeaders();
+
+        $this->actingAs($user)->getJson('/api/v1/image-batches')->assertJsonPath('data.0.queued_count', 2);
+        $this->actingAs($user)->postJson("/api/v1/image-batches/{$batchId}/cancel")
+            ->assertOk()
+            ->assertJsonPath('meta.cancelled', 2)
+            ->assertJsonPath('data.queued_count', 0)
+            ->assertJsonPath('data.images.0.status', 'completed')
+            ->assertJsonPath('data.images.1.status', 'processing')
+            ->assertJsonPath('data.images.2.status', 'failed')
+            ->assertJsonPath('data.images.3.status', 'failed')
+            ->assertJsonPath('data.failed_count', 2);
+        $this->assertSame(8000, $this->balance($user));
+        $this->assertLedgerMatchesBalance($user);
+
+        // Worker không nhận được ảnh đã hủy; ảnh đang tạo vẫn trả kết quả bình thường
+        $this->claimJob($token)->assertNoContent();
+        $this->completeJob($token, $processing)->assertOk();
+        $this->flushHeaders();
+
+        // Bấm lại: không còn ảnh chờ, không hoàn thêm
+        $this->actingAs($user)->postJson("/api/v1/image-batches/{$batchId}/cancel")->assertOk()->assertJsonPath('meta.cancelled', 0);
+        $this->assertSame(8000, $this->balance($user));
+
+        $this->actingAs($this->buyer())->postJson("/api/v1/image-batches/{$batchId}/cancel")->assertNotFound();
+    }
+
     // ---- Tạo bài đăng từ lô ----
 
     private function postFromBatch(User $user, ImageBatch $batch, array $images): TestResponse

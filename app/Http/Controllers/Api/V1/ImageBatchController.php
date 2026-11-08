@@ -225,6 +225,15 @@ class ImageBatchController extends Controller
         return response()->noContent();
     }
 
+    /** "Hủy ảnh đang chờ": ảnh chưa worker nào nhận thành thất bại và được hoàn Credit. */
+    public function cancel(Request $request, int $batch): JsonResponse
+    {
+        $batch = $this->findBatch($request, $batch);
+        $cancelled = $this->batches->cancelQueued($request->user(), $batch);
+
+        return $this->resource($batch)->additional(['meta' => ['cancelled' => $cancelled]])->response();
+    }
+
     public function destroy(Request $request, int $batch): Response
     {
         $this->batches->delete($request->user(), $this->findBatch($request, $batch));

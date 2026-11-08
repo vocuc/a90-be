@@ -106,7 +106,7 @@ class SocialContentJobService
     {
         $ids = SocialContentJob::query()
             ->whereIn('status', [OutputStatus::Queued, OutputStatus::Processing])
-            ->where('updated_at', '<', now()->subMinutes(config('ai90.generation.stuck_queued_minutes')))
+            ->where('updated_at', '<', now()->subMinutes(config('ai90.social.ai_stuck_minutes')))
             ->pluck('id');
 
         foreach ($ids as $id) {

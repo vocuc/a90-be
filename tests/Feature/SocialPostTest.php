@@ -217,7 +217,7 @@ class SocialPostTest extends TestCase
         $this->artisan('social:sweep')->assertSuccessful();
         $this->getPost($user, $id)->assertJsonPath('data.status', 'generating');
 
-        $this->travel(config('ai90.generation.stuck_queued_minutes') + 1)->minutes();
+        $this->travel(config('ai90.social.ai_stuck_minutes') + 1)->minutes();
         $this->artisan('social:sweep')->assertSuccessful();
 
         $this->getPost($user, $id)->assertJsonPath('data.status', 'pending_review');

@@ -82,8 +82,9 @@ Các quyết định đã chốt:
   - Output processing đã quá lease_expires_at (worker chết / quá 15 phút):
       + attempts < 3  -> trả về queued (bỏ worker_id) để worker khác nhận.
       + attempts >= 3 -> failed, mã TIMEOUT, hoàn Credit.
-  - Output queued quá 30 phút kể từ lần vào hàng đợi gần nhất (lúc tạo hoặc lúc được giao lại),
-    không có worker nào nhận -> failed TIMEOUT, hoàn Credit.
+  - Output queued (chưa worker nào nhận): BỎ từ 2026-11-08, không tự thất bại dù chờ bao lâu.
+    Người dùng bấm "Hủy N ảnh đang chờ" ở trang lô (POST /image-batches/{id}/cancel): mọi output queued của lô
+    -> failed, mã CANCELLED, hoàn Credit. Output processing / đã xong giữ nguyên. Trả { data: ImageBatch, meta: { cancelled } }.
 
 2.5 Retry của người dùng: không đổi (tạo Generation mới, trừ tiền mới, outputs queued chờ worker).
 

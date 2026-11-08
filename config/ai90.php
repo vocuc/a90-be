@@ -22,8 +22,7 @@ return [
     ],
 
     'generation' => [
-        // Ảnh chờ quá lâu mà không worker nào nhận sẽ bị đánh dấu thất bại và hoàn Credit.
-        'stuck_queued_minutes' => 30,
+        // Ảnh chưa worker nào nhận thì chờ mãi (không tự thất bại); người dùng tự hủy ở trang lô để hoàn Credit.
         // Số request tạo ảnh tối đa mỗi phút cho mỗi user.
         'rate_limit_per_minute' => 10,
     ],
@@ -44,6 +43,8 @@ return [
         'ai_max_hashtags' => 5,
         // Số ảnh đầu của bài (ảnh bìa trước) gửi cho AI xem.
         'ai_max_images' => 4,
+        // Bài kẹt ở bước AI viết nội dung quá số phút này (social:sweep) thì dùng nội dung mặc định và hoàn phí.
+        'ai_stuck_minutes' => 30,
     ],
 
     'auth' => [

@@ -23,6 +23,9 @@ use Illuminate\Support\Str;
  */
 class GenerationFinalizer
 {
+    /** Mã lỗi khi người dùng hủy ảnh đang chờ (ImageBatchService::cancelQueued). */
+    public const CANCELLED = 'CANCELLED';
+
     public function __construct(
         private CreditService $credits,
         private RevenueService $revenues,
@@ -110,7 +113,8 @@ class GenerationFinalizer
         }
 
         $wallet = $this->credits->lockWallet($transaction->user_id);
-        $this->credits->apply($wallet, $transaction->amount, LedgerType::GenerationRefund, "refund:tx:{$transaction->id}", 'transaction', $transaction->id, 'Hoàn Credit do tạo ảnh thất bại');
+        $note = $reason === self::CANCELLED ? 'Hoàn Credit do hủy tạo ảnh' : 'Hoàn Credit do tạo ảnh thất bại';
+        $this->credits->apply($wallet, $transaction->amount, LedgerType::GenerationRefund, "refund:tx:{$transaction->id}", 'transaction', $transaction->id, $note);
 
         $transaction->update([
             'status' => TransactionStatus::Refunded,

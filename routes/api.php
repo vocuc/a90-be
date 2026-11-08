@@ -155,6 +155,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('auto', [ImageBatchController::class, 'autoStore'])->middleware('throttle:generations');
             Route::get('{batch}', [ImageBatchController::class, 'show'])->whereNumber('batch');
             Route::delete('{batch}', [ImageBatchController::class, 'destroy'])->whereNumber('batch');
+            Route::post('{batch}/cancel', [ImageBatchController::class, 'cancel'])->whereNumber('batch');
             Route::get('{batch}/images/{image}/inputs', [ImageBatchController::class, 'imageInputs'])->whereNumber(['batch', 'image']);
             Route::post('{batch}/images/{image}/regenerate', [ImageBatchController::class, 'regenerate'])
                 ->whereNumber(['batch', 'image'])->middleware('throttle:generations');

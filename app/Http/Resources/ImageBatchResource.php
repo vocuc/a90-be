@@ -26,6 +26,8 @@ class ImageBatchResource extends JsonResource
             $counts = [
                 'image_count' => $images->count(),
                 'generating_count' => $statuses->filter(fn ($s) => in_array($s, [OutputStatus::Queued, OutputStatus::Processing], true))->count(),
+                // Ảnh chưa worker nào nhận: hủy được (POST /image-batches/{id}/cancel)
+                'queued_count' => $statuses->filter(fn ($s) => $s === OutputStatus::Queued)->count(),
                 'failed_count' => $statuses->filter(fn ($s) => $s === OutputStatus::Failed)->count(),
             ];
             $cover = $images->firstWhere('thumb_url', '!==', null)['thumb_url'] ?? null;
@@ -33,6 +35,7 @@ class ImageBatchResource extends JsonResource
             $counts = [
                 'image_count' => (int) $this->images_count,
                 'generating_count' => (int) $this->generating_count,
+                'queued_count' => (int) $this->queued_count,
                 'failed_count' => (int) $this->failed_count,
             ];
             $output = $this->coverImage?->output;

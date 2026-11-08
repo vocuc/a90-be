@@ -62,6 +62,7 @@ class ImageBatch extends Model
             ->withCount([
                 'images',
                 'images as generating_count' => fn (Builder $q) => $q->whereHas('output', fn (Builder $o) => $o->whereIn('status', ImageBatchService::BUSY)),
+                'images as queued_count' => fn (Builder $q) => $q->whereHas('output', fn (Builder $o) => $o->where('status', OutputStatus::Queued)),
                 'images as failed_count' => fn (Builder $q) => $q->whereHas('output', fn (Builder $o) => $o->where('status', OutputStatus::Failed)),
                 'posts',
             ]);
