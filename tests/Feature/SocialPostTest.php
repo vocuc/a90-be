@@ -405,6 +405,8 @@ class SocialPostTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.hashtags', [])
             ->assertJsonPath('data.samples', [])
+            ->assertJsonPath('data.requirements', '')
+            ->assertJsonPath('data.limits.requirements', 1000)
             ->assertJsonPath('data.title_max', 90)
             ->assertJsonPath('data.content_max', 2000)
             ->assertJsonPath('data.product_hashtags', ['giay', 'ThoiTrang'])
@@ -413,10 +415,12 @@ class SocialPostTest extends TestCase
         $this->aiSettings($owner, [
             'hashtags' => ['#xuhuong', 'giay', 'GIAY'],
             'samples' => [['title' => ' Giày mới về ', 'content' => "Siêu êm 👟\nInbox ngay!"], ['content' => 'Mẫu không tiêu đề']],
+            'requirements' => "  Luôn xưng shop\nCuối bài mời theo dõi  ",
             'title_max' => 40,
             'content_max' => 300,
         ])->assertOk()
             ->assertJsonPath('data.hashtags', ['xuhuong', 'giay'])
+            ->assertJsonPath('data.requirements', "Luôn xưng shop\nCuối bài mời theo dõi")
             ->assertJsonPath('data.samples.0', ['title' => 'Giày mới về', 'content' => "Siêu êm 👟\nInbox ngay!"])
             ->assertJsonPath('data.samples.1.title', '')
             ->assertJsonPath('data.title_max', 40)
@@ -430,6 +434,10 @@ class SocialPostTest extends TestCase
         ])->assertStatus(422)->assertJsonValidationErrors(['hashtags.0', 'samples.0.content', 'title_max', 'content_max']);
         $this->aiSettings($owner, ['samples' => array_fill(0, 11, ['content' => 'x'])])
             ->assertStatus(422)->assertJsonValidationErrors('samples');
+        $this->aiSettings($owner, ['requirements' => str_repeat('a', 1001)])
+            ->assertStatus(422)->assertJsonValidationErrors('requirements');
+        // Gửi rỗng = xoá yêu cầu
+        $this->aiSettings($owner, ['requirements' => ''])->assertOk()->assertJsonPath('data.requirements', '');
 
         $this->actingAs($this->buyer())->getJson('/api/v1/creator/ai-content')->assertForbidden();
     }
@@ -439,6 +447,7 @@ class SocialPostTest extends TestCase
         $owner = $this->creator(credit: 5000);
         $this->aiSettings($owner, [
             'samples' => [['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']],
+            'requirements' => 'Luôn xưng shop',
             'title_max' => 20,
             'content_max' => 60,
         ])->assertOk();
@@ -448,6 +457,7 @@ class SocialPostTest extends TestCase
 
         $request = $this->aiCalls[0]['request'];
         $this->assertSame([['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']], $request['samples']);
+        $this->assertSame('Luôn xưng shop', $request['requirements']);
         $this->assertSame(20, $request['limits']['title_max']);
         $this->assertSame(60, $request['limits']['content_max']);
 

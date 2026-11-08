@@ -188,6 +188,7 @@ class SocialContentJobService
             'creatives' => $creatives->all(),
             'hashtags' => $pool,
             'samples' => $settings['samples'],
+            'requirements' => $settings['requirements'],
             'limits' => ['title_max' => $titleMax, 'content_max' => $contentMax, 'hashtags_max' => $maxHashtags],
         ], $images);
         if (! $result) {

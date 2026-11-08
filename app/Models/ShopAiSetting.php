@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * Cài đặt AI viết nội dung của shop (owner_id = chủ shop; nhân viên dùng của chủ shop): số ký tự tối đa của tiêu đề /
- * nội dung AI viết, bài viết mẫu [{ title, content }]. Shop chưa lưu lần nào: dùng defaults().
+ * nội dung AI viết, bài viết mẫu [{ title, content }], yêu cầu bắt buộc (văn bản tự do). Shop chưa lưu lần nào: dùng defaults().
  */
 class ShopAiSetting extends Model
 {
@@ -19,6 +19,9 @@ class ShopAiSetting extends Model
 
     public const CONTENT_MAX_MIN = 50;
 
+    // Số ký tự tối đa của "Yêu cầu bắt buộc"
+    public const REQUIREMENTS_MAX = 1000;
+
     protected $guarded = ['id'];
 
     protected function casts(): array
@@ -26,27 +29,33 @@ class ShopAiSetting extends Model
         return ['samples' => 'array'];
     }
 
-    /** @return array{title_max: int, content_max: int, samples: array<int, array{title: string, content: string}>} */
+    /** @return array{title_max: int, content_max: int, samples: array<int, array{title: string, content: string}>, requirements: string} */
     public static function defaults(): array
     {
         return [
             'title_max' => SocialPost::TITLE_MAX,
             'content_max' => SocialContentJobService::AI_CONTENT_MAX,
             'samples' => [],
+            'requirements' => '',
         ];
     }
 
     /**
      * Cài đặt của chủ shop, chưa lưu thì mặc định.
      *
-     * @return array{title_max: int, content_max: int, samples: array<int, array{title: string, content: string}>}
+     * @return array{title_max: int, content_max: int, samples: array<int, array{title: string, content: string}>, requirements: string}
      */
     public static function forOwner(int $ownerId): array
     {
         $setting = static::query()->where('owner_id', $ownerId)->first();
 
         return $setting
-            ? ['title_max' => $setting->title_max, 'content_max' => $setting->content_max, 'samples' => $setting->samples ?? []]
+            ? [
+                'title_max' => $setting->title_max,
+                'content_max' => $setting->content_max,
+                'samples' => $setting->samples ?? [],
+                'requirements' => (string) $setting->requirements,
+            ]
             : static::defaults();
     }
 

@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\DB;
  * - hashtags: kho hashtag, AI chọn tối đa ai90.social.ai_max_hashtags hashtag trong kho (rỗng: bài không có hashtag).
  * - samples: bài viết mẫu [{ title, content }], AI học giọng văn / cách trình bày, không chép nguyên.
  * - title_max, content_max: số ký tự tối đa của tiêu đề / nội dung AI viết.
+ * - requirements: yêu cầu bắt buộc (văn bản tự do), AI luôn làm theo, ưu tiên hơn bài mẫu.
  * Nhân viên dùng cài đặt của chủ shop. Kho không tự lấy hashtag sản phẩm: product_hashtags trả kèm cho nút
  * "Lấy hashtag từ sản phẩm".
  */
@@ -43,6 +44,7 @@ class AiContentSettingController extends Controller
             'samples' => ['nullable', 'array', 'max:'.ShopAiSetting::MAX_SAMPLES],
             'samples.*.title' => ['nullable', 'string', 'max:'.SocialPost::TITLE_MAX],
             'samples.*.content' => ['required', 'string', 'max:'.SocialPost::CONTENT_MAX],
+            'requirements' => ['nullable', 'string', 'max:'.ShopAiSetting::REQUIREMENTS_MAX],
             'title_max' => ['required', 'integer', 'min:'.ShopAiSetting::TITLE_MAX_MIN, 'max:'.SocialPost::TITLE_MAX],
             'content_max' => ['required', 'integer', 'min:'.ShopAiSetting::CONTENT_MAX_MIN, 'max:'.SocialContentJobService::AI_CONTENT_MAX],
         ], [
@@ -50,6 +52,7 @@ class AiContentSettingController extends Controller
             'hashtags.*.regex' => 'Hashtag chỉ gồm chữ, số và dấu gạch dưới.',
             'samples.max' => 'Tối đa '.ShopAiSetting::MAX_SAMPLES.' bài viết mẫu.',
             'samples.*.content.required' => 'Bài viết mẫu cần có nội dung.',
+            'requirements.max' => 'Yêu cầu bắt buộc tối đa '.ShopAiSetting::REQUIREMENTS_MAX.' ký tự.',
         ]);
 
         $user = $request->user();
@@ -62,6 +65,7 @@ class AiContentSettingController extends Controller
                     ->map(fn ($s) => ['title' => trim((string) ($s['title'] ?? '')), 'content' => trim($s['content'])])
                     ->values()
                     ->all(),
+                'requirements' => trim((string) ($data['requirements'] ?? '')) ?: null,
             ]);
         });
 
@@ -86,6 +90,7 @@ class AiContentSettingController extends Controller
                 'samples' => ShopAiSetting::MAX_SAMPLES,
                 'sample_title' => SocialPost::TITLE_MAX,
                 'sample_content' => SocialPost::CONTENT_MAX,
+                'requirements' => ShopAiSetting::REQUIREMENTS_MAX,
                 'title_max' => ['min' => ShopAiSetting::TITLE_MAX_MIN, 'max' => SocialPost::TITLE_MAX],
                 'content_max' => ['min' => ShopAiSetting::CONTENT_MAX_MIN, 'max' => SocialContentJobService::AI_CONTENT_MAX],
             ],
