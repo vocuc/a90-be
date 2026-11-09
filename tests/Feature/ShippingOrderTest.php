@@ -163,7 +163,7 @@ class ShippingOrderTest extends TestCase
             'to_ward_name' => 'Phường Bến Nghé',
             'item_name' => 'Hàng hóa dịch vụ',
             'cod_amount' => 350000,
-            'weight' => 2000,
+            'weight' => 1000,
             'required_note' => 'CHOXEMHANGKHONGTHU',
             'payment_type_id' => null,
             'low_confidence_fields' => ['cod_amount'],
@@ -328,7 +328,7 @@ class ShippingOrderTest extends TestCase
             && $r['to_ward_name'] === 'Phường Bến Nghé'
             && $r['required_note'] === 'CHOXEMHANGKHONGTHU'
             && $r['cod_amount'] === 350000
-            && $r['weight'] === 2000
+            && $r['weight'] === 1000
             && $r['content'] === 'Hàng hóa dịch vụ');
 
         $this->postJson("/api/v1/creator/shipping-orders/{$id}/submit", ['payment_type_id' => 2])

@@ -22,7 +22,7 @@ class ShippingOrder extends Model
     public const DEFAULT_ITEM_NAME = 'Hàng hóa dịch vụ';
 
     /** Gram. */
-    public const DEFAULT_WEIGHT = 2000;
+    public const DEFAULT_WEIGHT = 1000;
 
     /** Dưới 20kg: GHN dùng service_type_id = 2, chỉ cần khối lượng tổng. */
     public const MAX_WEIGHT = 19999;
