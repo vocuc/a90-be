@@ -93,4 +93,42 @@ class GenerationProductTest extends TestCase
 
         $this->assertSame($product->id, Generation::query()->findOrFail($retryId)->product_id);
     }
+
+    public function test_product_prompt_note_is_appended_to_prompt(): void
+    {
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer(credit: 5000);
+        $product = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Áo thun', 'prompt_note' => 'Nền trắng, không chữ.']);
+        $empty = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Chưa có yêu cầu']);
+
+        $base = $this->generate($buyer, $creative, extra: ['idempotency_key' => 'k-1'])->json('data.id');
+        $withNote = $this->generate($buyer, $creative, extra: ['idempotency_key' => 'k-2', 'product_id' => $product->id])->json('data.id');
+        $withoutNote = $this->generate($buyer, $creative, extra: ['idempotency_key' => 'k-3', 'product_id' => $empty->id])->json('data.id');
+
+        $prompt = fn ($id) => Generation::query()->findOrFail($id)->prompt_snapshot;
+        $this->assertSame($prompt($base)."\n\nNền trắng, không chữ.", $prompt($withNote));
+        $this->assertSame($prompt($base), $prompt($withoutNote));
+    }
+
+    public function test_product_api_saves_and_clears_prompt_note(): void
+    {
+        $user = $this->creator();
+        $image = fn () => ['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'product_image'];
+
+        $id = $this->actingAs($user)->post('/api/v1/creator/products', [
+            'prompt_note' => '  Giữ nguyên logo.  ',
+            'images' => [$image()],
+        ], ['Accept' => 'application/json'])->assertCreated()->assertJsonPath('data.prompt_note', 'Giữ nguyên logo.')->json('data.id');
+
+        $this->actingAs($user)->post("/api/v1/creator/products/{$id}", [
+            'prompt_note' => str_repeat('a', Product::PROMPT_NOTE_MAX + 1),
+            'images' => [$image()],
+        ], ['Accept' => 'application/json'])->assertStatus(422)->assertJsonValidationErrors('prompt_note');
+
+        // Không gửi / gửi rỗng -> bỏ yêu cầu
+        $this->actingAs($user)->post("/api/v1/creator/products/{$id}", [
+            'prompt_note' => '   ',
+            'images' => [$image()],
+        ], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.prompt_note', null);
+    }
 }

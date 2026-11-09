@@ -50,13 +50,13 @@ class ProductController extends Controller
         return $this->resource($request, Product::query()->ownedBy($request->user())->findOrFail($product)->id);
     }
 
-    /** multipart: name?, hashtags[]?, images[i][file], images[i][field_key] */
+    /** multipart: name?, prompt_note?, hashtags[]?, images[i][file], images[i][field_key] */
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate($this->rules(false), $this->messages());
 
         $product = DB::transaction(function () use ($request, $data) {
-            $product = Product::query()->create(['user_id' => $request->user()->id, 'name' => $data['name'] ?? null]);
+            $product = Product::query()->create(['user_id' => $request->user()->id, ...$this->attributes($data)]);
             $this->syncImages($request, $product, $data['images']);
             $product->hashtags()->sync(Hashtag::syncPivot($data['hashtags'] ?? []));
 
@@ -67,7 +67,7 @@ class ProductController extends Controller
     }
 
     /**
-     * multipart: name?, hashtags[]? (không gửi = bỏ hết), images[i][id] (giữ ảnh cũ) hoặc images[i][file] (ảnh mới),
+     * multipart: name?, prompt_note? (không gửi = bỏ), hashtags[]? (không gửi = bỏ hết), images[i][id] (giữ ảnh cũ) hoặc images[i][file] (ảnh mới),
      * images[i][field_key]; ảnh cũ không gửi lại thì bỏ.
      */
     public function update(Request $request, int $product): ProductResource
@@ -87,7 +87,7 @@ class ProductController extends Controller
         }
 
         DB::transaction(function () use ($request, $product, $data) {
-            $product->update(['name' => $data['name'] ?? null]);
+            $product->update($this->attributes($data));
             $this->syncImages($request, $product, $data['images']);
             $product->hashtags()->sync(Hashtag::syncPivot($data['hashtags'] ?? []));
         });
@@ -171,6 +171,7 @@ class ProductController extends Controller
 
         return [
             'name' => ['nullable', 'string', 'max:255'],
+            'prompt_note' => ['nullable', 'string', 'max:'.Product::PROMPT_NOTE_MAX],
             // Như hashtag của Creative (CreativeRequest)
             'hashtags' => ['nullable', 'array', 'max:'.CreativeRequest::MAX_HASHTAGS],
             'hashtags.*' => ['required', 'string', 'max:50', 'regex:'.Hashtag::PATTERN, function (string $attribute, mixed $value, Closure $fail) {
@@ -188,6 +189,7 @@ class ProductController extends Controller
     private function messages(): array
     {
         return [
+            'prompt_note.max' => 'Yêu cầu tối đa '.number_format(Product::PROMPT_NOTE_MAX, 0, ',', '.').' ký tự.',
             'hashtags.max' => 'Tối đa '.CreativeRequest::MAX_HASHTAGS.' hashtag.',
             'hashtags.*.regex' => 'Hashtag chỉ gồm chữ, số và dấu gạch dưới.',
             'images.required' => 'Vui lòng thêm ít nhất 1 ảnh.',
@@ -198,6 +200,15 @@ class ProductController extends Controller
             'images.*.field_key.required' => 'Vui lòng nhập key trường nguyên liệu.',
             'images.*.field_key.regex' => 'Key chỉ gồm chữ không dấu, số và dấu gạch dưới.',
             'images.*.field_key.distinct' => 'Mỗi key chỉ dùng cho một ảnh.',
+        ];
+    }
+
+    /** Cột lưu thẳng từ form; yêu cầu chỉ có khoảng trắng -> null. */
+    private function attributes(array $data): array
+    {
+        return [
+            'name' => $data['name'] ?? null,
+            'prompt_note' => trim((string) ($data['prompt_note'] ?? '')) ?: null,
         ];
     }
 

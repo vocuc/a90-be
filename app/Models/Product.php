@@ -15,7 +15,21 @@ class Product extends Model
 {
     protected $guarded = ['id'];
 
+    /** Độ dài tối đa của "Yêu cầu" (prompt_note), nối vào cuối prompt nên giữ ngắn so với prompt Creative. */
+    public const PROMPT_NOTE_MAX = 2000;
+
     protected $casts = ['is_active' => 'boolean'];
+
+    /**
+     * Nối "Yêu cầu" của sản phẩm vào cuối prompt đã render. Ảnh không gắn sản phẩm (0 / null), sản phẩm đã xoá
+     * hoặc chưa có yêu cầu -> giữ nguyên prompt.
+     */
+    public static function appendPromptNote(string $prompt, ?int $productId): string
+    {
+        $note = $productId ? trim((string) static::query()->whereKey($productId)->value('prompt_note')) : '';
+
+        return $note === '' ? $prompt : trim($prompt."\n\n".$note);
+    }
 
     public function user(): BelongsTo
     {

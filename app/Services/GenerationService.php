@@ -11,6 +11,7 @@ use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\Product;
 use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -160,7 +161,11 @@ class GenerationService
                     'aspect_ratio' => $aspectRatio,
                     'quantity' => $quantity,
                     'price_per_image' => $paid ? $price : 0,
-                    'prompt_snapshot' => CreativeTemplate::render($config->prompt_template, $config->input_schema, $input['input_values'] ?? []),
+                    // "Yêu cầu" của sản phẩm (nếu có) nối vào cuối prompt của mọi Creative
+                    'prompt_snapshot' => Product::appendPromptNote(
+                        CreativeTemplate::render($config->prompt_template, $config->input_schema, $input['input_values'] ?? []),
+                        $input['product_id'] ?? null,
+                    ),
                     'status' => GenerationStatus::Queued,
                     'idempotency_key' => $idempotencyKey,
                 ]);

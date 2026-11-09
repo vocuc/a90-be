@@ -21,6 +21,8 @@ class ProductResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            // "Yêu cầu" nối vào cuối prompt của mọi Creative khi tạo ảnh cho sản phẩm
+            'prompt_note' => $this->prompt_note,
             // Tắt thì không được tạo lô tự động
             'is_active' => (bool) ($this->is_active ?? true),
             'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),
