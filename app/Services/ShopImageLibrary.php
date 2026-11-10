@@ -15,7 +15,8 @@ use Illuminate\Support\Facades\DB;
 class ShopImageLibrary
 {
     /**
-     * Số ảnh dùng được của từng sản phẩm.
+     * Số ảnh dùng được của từng sản phẩm ĐANG HOẠT ĐỘNG (dùng để chọn sản phẩm ngẫu nhiên: tạo bài video tự động,
+     * API ảnh cho worker). Sản phẩm đã tắt hoặc đã xoá không được chọn.
      *
      * @return Collection<int, int> product_id => số ảnh
      */
@@ -23,6 +24,8 @@ class ShopImageLibrary
     {
         return DB::table('generation_outputs')
             ->join('generations', 'generations.id', '=', 'generation_outputs.generation_id')
+            ->join('products', 'products.id', '=', 'generations.product_id')
+            ->where('products.is_active', true)
             ->where('generations.user_id', $userId)
             ->where('generations.product_id', '>', 0)
             ->where('generation_outputs.status', OutputStatus::Completed->value)

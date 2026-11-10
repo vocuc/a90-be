@@ -150,6 +150,26 @@ class VideoPostTest extends TestCase
             ->assertJsonPath('data.0.video.product.id', $product->id);
     }
 
+    public function test_auto_skips_inactive_products(): void
+    {
+        $shop = $this->creator(credit: 100000);
+        $this->template($shop, 1);
+        $off = $this->productWithImages($shop, 3, 'Đã tắt');
+        $off->update(['is_active' => false]);
+        [$worker, $token] = $this->worker($shop);
+
+        // Chỉ có sản phẩm đang tắt: không có sản phẩm nào để tạo
+        $this->auto($shop, $worker)->assertStatus(422)->assertJsonPath('code', 'VIDEO_NOT_ENOUGH_IMAGES');
+        $this->withToken($token)->getJson('/api/v1/video-images?count=1')->assertStatus(422)->assertJsonPath('code', 'NOT_ENOUGH_IMAGES');
+
+        // Có thêm sản phẩm đang hoạt động: mọi bài đều dùng sản phẩm đó
+        $on = $this->productWithImages($shop, 1, 'Đang bật');
+        $data = $this->auto($shop, $worker)->assertCreated()->json('data');
+        $this->assertSame(3, $data['created']);
+        $this->assertSame([$on->id], SocialPost::query()->whereIn('id', $data['post_ids'])->distinct()->pluck('product_id')->all());
+        $this->withToken($token)->getJson('/api/v1/video-images?count=1')->assertOk()->assertJsonPath('data.product.id', $on->id);
+    }
+
     public function test_stops_when_credit_runs_out_and_reports_reasons(): void
     {
         $shop = $this->creator(credit: 100000);
