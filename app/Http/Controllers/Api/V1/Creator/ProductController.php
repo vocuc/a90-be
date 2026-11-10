@@ -9,6 +9,7 @@ use App\Http\Resources\ProductResource;
 use App\Models\Hashtag;
 use App\Models\Product;
 use App\Models\ProductImage;
+use App\Models\User;
 use App\Services\MediaStorage;
 use App\Services\SettingService;
 use Closure;
@@ -22,10 +23,17 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Sản phẩm cho tạo lô tự động (note/auto-tao-lo.txt ở repo frontend). Sản phẩm của người khác -> 404.
+ * Chủ sản phẩm chia sẻ được cho tài khoản khác theo email: người được chia sẻ thấy và dùng sản phẩm để tạo ảnh,
+ * nhưng sửa / xoá / bật tắt / chia sẻ chỉ chủ sản phẩm làm được (người khác -> 404).
  * Mỗi ảnh liên kết tới key một trường ảnh trong creative. Hashtag chỉ lưu, tạo lô tự động không xét. File ảnh cũ không xoá vì lượt tạo ảnh cũ dùng thẳng đường dẫn.
  */
 class ProductController extends Controller
 {
+    /** Số tài khoản tối đa được chia sẻ một sản phẩm. */
+    public const MAX_SHARES = 50;
+
+    private const RELATIONS = ['images', 'hashtags', 'user.creatorProfile'];
+
     public function __construct(
         private MediaStorage $media,
         private SettingService $settings,
@@ -36,9 +44,9 @@ class ProductController extends Controller
         $data = $request->validate(['per_page' => ['nullable', 'integer', 'min:1', 'max:50']]);
 
         $products = Product::query()
-            ->ownedBy($request->user())
-            ->withAutoBatchCount($request->user())->withGeneratedImageCount()
-            ->with(['images', 'hashtags'])
+            ->accessibleBy($request->user())
+            ->withAutoBatchCount($request->user())->withGeneratedImageCount($request->user())
+            ->with(self::RELATIONS)->withCount('sharedWith')
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);
 
@@ -47,7 +55,55 @@ class ProductController extends Controller
 
     public function show(Request $request, int $product): ProductResource
     {
-        return $this->resource($request, Product::query()->ownedBy($request->user())->findOrFail($product)->id);
+        return $this->resource($request, Product::query()->accessibleBy($request->user())->findOrFail($product)->id);
+    }
+
+    /** Danh sách người được chia sẻ (chỉ chủ sản phẩm). { data: [{ id, email, name, shared_at }] } */
+    public function shares(Request $request, int $product): JsonResponse
+    {
+        $product = $this->findProduct($request, $product);
+
+        return response()->json(['data' => $this->presentShares($product)]);
+    }
+
+    /**
+     * { emails: string[] } Ghi đè toàn bộ danh sách chia sẻ (gửi [] = bỏ chia sẻ hết). Email phải là tài khoản A51,
+     * không phải chính mình. Lỗi -> 422 errors["emails.i"].
+     */
+    public function updateShares(Request $request, int $product): JsonResponse
+    {
+        $product = $this->findProduct($request, $product);
+        $data = $request->validate([
+            'emails' => ['present', 'array', 'max:'.self::MAX_SHARES],
+            'emails.*' => ['required', 'string', 'email', 'max:255'],
+        ], [
+            'emails.max' => 'Chia sẻ tối đa '.self::MAX_SHARES.' tài khoản.',
+            'emails.*.required' => 'Vui lòng nhập email.',
+            'emails.*.email' => 'Email không hợp lệ.',
+        ]);
+
+        $emails = array_map(fn ($e) => mb_strtolower(trim($e)), $data['emails']);
+        $users = User::query()->whereIn(DB::raw('LOWER(email)'), $emails)->get(['id', 'email'])
+            ->keyBy(fn (User $u) => mb_strtolower($u->email));
+        $errors = [];
+        $ids = [];
+        foreach ($emails as $i => $email) {
+            $user = $users[$email] ?? null;
+            if (! $user) {
+                $errors["emails.{$i}"] = "Không tìm thấy tài khoản A51 có email {$email}.";
+            } elseif ($user->id === $request->user()->id) {
+                $errors["emails.{$i}"] = 'Không thể chia sẻ cho chính mình.';
+            } else {
+                $ids[] = $user->id;
+            }
+        }
+        if ($errors) {
+            throw ValidationException::withMessages($errors);
+        }
+
+        $product->sharedWith()->sync(array_values(array_unique($ids)));
+
+        return response()->json(['data' => $this->presentShares($product)]);
     }
 
     /** multipart: name?, prompt_note?, hashtags[]?, images[i][file], images[i][field_key] */
@@ -101,7 +157,7 @@ class ProductController extends Controller
      */
     public function imageFile(Request $request, int $product, int $image): Response
     {
-        $path = $this->findProduct($request, $product)->images()->findOrFail($image)->path;
+        $path = Product::query()->accessibleBy($request->user())->findOrFail($product)->images()->findOrFail($image)->path;
 
         return response($this->media->get($path), 200, [
             'Content-Type' => $this->media->mimeType($path),
@@ -214,9 +270,21 @@ class ProductController extends Controller
 
     private function resource(Request $request, int $id): ProductResource
     {
-        return new ProductResource(Product::query()->withAutoBatchCount($request->user())->withGeneratedImageCount()->with(['images', 'hashtags'])->findOrFail($id));
+        return new ProductResource(Product::query()
+            ->withAutoBatchCount($request->user())->withGeneratedImageCount($request->user())
+            ->with(self::RELATIONS)->withCount('sharedWith')
+            ->findOrFail($id));
     }
 
+    /** @return array<int, array{id: int, email: string, name: ?string, shared_at: mixed}> */
+    private function presentShares(Product $product): array
+    {
+        return $product->sharedWith()->orderBy('product_shares.id')->get(['users.id', 'users.email', 'users.name'])
+            ->map(fn (User $u) => ['id' => $u->id, 'email' => $u->email, 'name' => $u->name, 'shared_at' => $u->pivot->created_at])
+            ->all();
+    }
+
+    /** Chỉ chủ sản phẩm: sửa, xoá, bật tắt, chia sẻ. */
     private function findProduct(Request $request, int $id): Product
     {
         return Product::query()->ownedBy($request->user())->findOrFail($id);

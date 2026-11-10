@@ -102,6 +102,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('products/{product}', [ProductController::class, 'update'])->whereNumber('product');
             Route::delete('products/{product}', [ProductController::class, 'destroy'])->whereNumber('product');
             Route::put('products/{product}/active', [ProductController::class, 'setActive'])->whereNumber('product');
+            Route::get('products/{product}/shares', [ProductController::class, 'shares'])->whereNumber('product');
+            Route::put('products/{product}/shares', [ProductController::class, 'updateShares'])->whereNumber('product');
             Route::get('products/{product}/images/{image}/file', [ProductController::class, 'imageFile'])->whereNumber(['product', 'image']);
             Route::get('creative-groups', [CreativeGroupController::class, 'index']);
             Route::post('creative-groups', [CreativeGroupController::class, 'store']);

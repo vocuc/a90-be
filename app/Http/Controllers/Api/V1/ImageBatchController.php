@@ -71,7 +71,7 @@ class ImageBatchController extends Controller
 
         $insertLogo = $this->insertLogo($request, $data);
         $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
-        $productId = Product::resolveOwnedId($request->user(), $data['product_id'] ?? null);
+        $productId = Product::resolveAccessibleId($request->user(), $data['product_id'] ?? null);
 
         $items = array_values($data['items']);
         $creatives = AiCreative::query()

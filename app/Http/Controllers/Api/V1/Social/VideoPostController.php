@@ -123,7 +123,7 @@ class VideoPostController extends Controller
         ]);
         $userId = $request->user()->id;
         if ($productId = $data['product_id'] ?? null) {
-            Product::query()->where('user_id', $userId)->findOrFail($productId);
+            Product::query()->accessibleBy($request->user())->findOrFail($productId);
         }
 
         $page = ($productId ? $library->productImages($userId, (int) $productId) : $library->allImages($userId))

@@ -46,7 +46,7 @@ class GenerationController extends Controller
         $creative = AiCreative::query()->find($data['creative_id'])
             ?? throw BusinessException::creativeNotAvailable();
         $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
-        $productId = Product::resolveOwnedId($request->user(), $data['product_id'] ?? null);
+        $productId = Product::resolveAccessibleId($request->user(), $data['product_id'] ?? null);
         $input = GenerationInput::fromRequest($request, $creative, $this->settings->int('generation.input_max_size_kb'));
 
         $generation = $this->generations->create(
@@ -118,7 +118,7 @@ class GenerationController extends Controller
                     'cover_url' => $media->url($c->images->first()?->thumbPathOrOriginal()),
                 ]),
             'products' => Product::query()
-                ->ownedBy($user)
+                ->accessibleBy($user)
                 ->active()
                 ->with('coverImage')
                 ->latest('id')

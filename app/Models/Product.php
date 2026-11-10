@@ -61,19 +61,40 @@ class Product extends Model
         return $query->where('is_active', true);
     }
 
+    /** Người được chủ sản phẩm chia sẻ (bảng product_shares). */
+    public function sharedWith(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'product_shares')->withTimestamps();
+    }
+
     public function scopeOwnedBy(Builder $query, User $user): Builder
     {
-        return $query->where('user_id', $user->id);
+        return $query->where('products.user_id', $user->id);
+    }
+
+    /** Sản phẩm $user dùng được để tạo ảnh: của mình hoặc được chia sẻ. */
+    public function scopeAccessibleBy(Builder $query, User $user): Builder
+    {
+        return $query->where(fn (Builder $q) => $q
+            ->where('products.user_id', $user->id)
+            ->orWhereExists(fn ($sub) => $sub->from('product_shares')
+                ->whereColumn('product_shares.product_id', 'products.id')
+                ->where('product_shares.user_id', $user->id)));
+    }
+
+    public function isOwnedBy(User $user): bool
+    {
+        return $this->user_id === $user->id;
     }
 
     /**
      * product_id người dùng gửi khi tạo ảnh (lưu vào generations.product_id): rỗng -> null,
-     * không phải sản phẩm của người dùng -> 422 errors[$field].
+     * không phải sản phẩm của mình hoặc được chia sẻ -> 422 errors[$field].
      */
-    public static function resolveOwnedId(User $user, mixed $productId, string $field = 'product_id'): ?int
+    public static function resolveAccessibleId(User $user, mixed $productId, string $field = 'product_id'): ?int
     {
         $productId = $productId ? (int) $productId : null;
-        if ($productId && ! static::query()->ownedBy($user)->whereKey($productId)->exists()) {
+        if ($productId && ! static::query()->accessibleBy($user)->whereKey($productId)->exists()) {
             throw \Illuminate\Validation\ValidationException::withMessages([$field => 'Sản phẩm không tồn tại.']);
         }
 
@@ -81,14 +102,16 @@ class Product extends Model
     }
 
     /**
-     * Cột generated_image_count = số ảnh đã tạo xong cho sản phẩm (generations.product_id), không tính ảnh lỗi /
-     * đang tạo / người dùng đã tắt. Gọi sau withAutoBatchCount (scope đó đặt lại select).
+     * Cột generated_image_count = số ảnh $user đã tạo xong cho sản phẩm (generations.product_id), không tính ảnh lỗi /
+     * đang tạo / người dùng đã tắt. Sản phẩm được chia sẻ: mỗi người chỉ đếm ảnh của mình.
+     * Gọi sau withAutoBatchCount (scope đó đặt lại select).
      */
-    public function scopeWithGeneratedImageCount(Builder $query): Builder
+    public function scopeWithGeneratedImageCount(Builder $query, User $user): Builder
     {
         return $query->addSelect(['generated_image_count' => DB::table('generation_outputs')
             ->join('generations', 'generations.id', '=', 'generation_outputs.generation_id')
             ->whereColumn('generations.product_id', 'products.id')
+            ->where('generations.user_id', $user->id)
             ->where('generation_outputs.status', 'completed')
             ->whereNotNull('generation_outputs.image_path')
             ->whereNull('generation_outputs.disabled_at')

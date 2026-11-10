@@ -33,6 +33,14 @@ class ProductResource extends JsonResource
                 'field_key' => $image->field_key,
             ])->values(),
             'hashtags' => HashtagResource::collection($this->whenLoaded('hashtags')),
+            // false: sản phẩm người khác chia sẻ cho mình (chỉ dùng tạo ảnh, không sửa / xoá / bật tắt / chia sẻ)
+            'is_owner' => $request->user()?->id === $this->user_id,
+            'owner' => $this->whenLoaded('user', fn () => [
+                'id' => $this->user->id,
+                'name' => $this->user->creatorProfile?->shop_name ?: $this->user->name,
+            ]),
+            // Số tài khoản được chia sẻ (chỉ chủ sản phẩm thấy)
+            'share_count' => $request->user()?->id === $this->user_id ? (int) ($this->shared_with_count ?? 0) : null,
             // Số lần chạy tự động của người đang xem (mỗi nhân viên đếm riêng)
             'auto_batch_count' => (int) $this->auto_batch_count,
             // Số ảnh đã tạo xong cho sản phẩm (generations.product_id), không tính ảnh lỗi / đang tạo / đã tắt

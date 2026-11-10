@@ -175,7 +175,7 @@ class VideoPostService
     public function resolveProductId(User $user, mixed $productId): ?int
     {
         $productId = $productId ? (int) $productId : null;
-        if ($productId && ! Product::query()->where('user_id', $user->id)->whereKey($productId)->exists()) {
+        if ($productId && ! Product::query()->accessibleBy($user)->whereKey($productId)->exists()) {
             throw ValidationException::withMessages(['product_id' => 'Sản phẩm không tồn tại.']);
         }
 
