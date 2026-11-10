@@ -29,7 +29,7 @@ use Illuminate\Validation\ValidationException;
  */
 class ProductController extends Controller
 {
-    /** Số tài khoản tối đa được chia sẻ một sản phẩm. */
+    /** Số email tối đa mỗi lần chia sẻ. */
     public const MAX_SHARES = 50;
 
     private const RELATIONS = ['images', 'hashtags', 'user.creatorProfile'];
@@ -73,16 +73,77 @@ class ProductController extends Controller
     public function updateShares(Request $request, int $product): JsonResponse
     {
         $product = $this->findProduct($request, $product);
+        $data = $request->validate(['emails' => ['present', 'array']]);
+
+        $product->sharedWith()->sync($this->recipientIds($request, $data['emails']));
+
+        return response()->json(['data' => $this->presentShares($product)]);
+    }
+
+    /**
+     * Chia sẻ / bỏ chia sẻ hàng loạt (nút "Chia sẻ" cạnh "Thêm sản phẩm"):
+     * { action: share|unshare, emails: string[] (>= 1), all?: bool, product_ids?: int[] }.
+     * all = true: mọi sản phẩm hiện có của mình (sản phẩm thêm sau không tự chia sẻ). Chỉ thêm / bớt các email gửi lên,
+     * người đang được chia sẻ khác giữ nguyên. Sản phẩm không phải của mình -> 422 errors.product_ids.
+     * -> { data: { action, product_count, emails } }
+     */
+    public function bulkShare(Request $request): JsonResponse
+    {
         $data = $request->validate([
-            'emails' => ['present', 'array', 'max:'.self::MAX_SHARES],
+            'action' => ['required', 'in:share,unshare'],
+            'emails' => ['required', 'array', 'min:1'],
+            'all' => ['nullable', 'boolean'],
+            'product_ids' => ['required_unless:all,true', 'array'],
+            'product_ids.*' => ['integer', 'distinct'],
+        ], [
+            'emails.required' => 'Vui lòng nhập ít nhất 1 email.',
+            'emails.min' => 'Vui lòng nhập ít nhất 1 email.',
+            'product_ids.required_unless' => 'Vui lòng chọn sản phẩm.',
+        ]);
+
+        $query = Product::query()->ownedBy($request->user());
+        if (! ($data['all'] ?? false)) {
+            $ids = array_map('intval', $data['product_ids']);
+            $query->whereKey($ids);
+            if (! $ids || $query->clone()->count() !== count($ids)) {
+                throw ValidationException::withMessages(['product_ids' => $ids ? 'Có sản phẩm không tồn tại.' : 'Vui lòng chọn sản phẩm.']);
+            }
+        }
+        $userIds = $this->recipientIds($request, $data['emails']);
+
+        $products = $query->get(['id']);
+        DB::transaction(function () use ($products, $userIds, $data) {
+            foreach ($products as $product) {
+                $data['action'] === 'share'
+                    ? $product->sharedWith()->syncWithoutDetaching($userIds)
+                    : $product->sharedWith()->detach($userIds);
+            }
+        });
+
+        return response()->json(['data' => [
+            'action' => $data['action'],
+            'product_count' => $products->count(),
+            'emails' => array_map(fn ($e) => mb_strtolower(trim($e)), $data['emails']),
+        ]]);
+    }
+
+    /**
+     * Email -> id tài khoản A51 nhận chia sẻ. Lỗi theo từng dòng -> 422 errors["emails.i"].
+     *
+     * @return int[]
+     */
+    private function recipientIds(Request $request, array $emails): array
+    {
+        $request->validate([
+            'emails' => ['max:'.self::MAX_SHARES],
             'emails.*' => ['required', 'string', 'email', 'max:255'],
         ], [
-            'emails.max' => 'Chia sẻ tối đa '.self::MAX_SHARES.' tài khoản.',
+            'emails.max' => 'Tối đa '.self::MAX_SHARES.' email mỗi lần.',
             'emails.*.required' => 'Vui lòng nhập email.',
             'emails.*.email' => 'Email không hợp lệ.',
         ]);
 
-        $emails = array_map(fn ($e) => mb_strtolower(trim($e)), $data['emails']);
+        $emails = array_map(fn ($e) => mb_strtolower(trim($e)), $emails);
         $users = User::query()->whereIn(DB::raw('LOWER(email)'), $emails)->get(['id', 'email'])
             ->keyBy(fn (User $u) => mb_strtolower($u->email));
         $errors = [];
@@ -101,9 +162,7 @@ class ProductController extends Controller
             throw ValidationException::withMessages($errors);
         }
 
-        $product->sharedWith()->sync(array_values(array_unique($ids)));
-
-        return response()->json(['data' => $this->presentShares($product)]);
+        return array_values(array_unique($ids));
     }
 
     /** multipart: name?, prompt_note?, hashtags[]?, images[i][file], images[i][field_key] */

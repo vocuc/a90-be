@@ -98,4 +98,52 @@ class ProductShareTest extends TestCase
         $this->actingAs($friend)->getJson("/api/v1/creator/products/{$product->id}")->assertJsonPath('data.generated_image_count', 2);
         $this->actingAs($owner)->getJson("/api/v1/creator/products/{$product->id}")->assertJsonPath('data.generated_image_count', 0);
     }
+
+    public function test_bulk_share_selected_or_all_and_unshare(): void
+    {
+        $owner = $this->creator();
+        [$a, $b] = [$this->creator(), $this->creator()];
+        $p1 = $this->product($owner);
+        $p2 = $this->product($owner);
+        $p3 = $this->product($owner);
+        $foreign = $this->product($this->creator());
+        $p1->sharedWith()->attach($b->id); // đang chia sẻ sẵn, chia sẻ hàng loạt không được xoá
+
+        // Chọn sản phẩm
+        $this->actingAs($owner)->postJson('/api/v1/creator/products/shares', [
+            'action' => 'share', 'emails' => [$a->email], 'product_ids' => [$p1->id, $p2->id],
+        ])->assertOk()->assertJsonPath('data.product_count', 2);
+        $this->assertEqualsCanonicalizing([$a->id, $b->id], $p1->sharedWith()->pluck('users.id')->all());
+        $this->assertSame([$a->id], $p2->sharedWith()->pluck('users.id')->all());
+        $this->assertSame(0, $p3->sharedWith()->count());
+
+        // Sản phẩm của người khác / chưa chọn gì -> lỗi, không đổi gì
+        $this->actingAs($owner)->postJson('/api/v1/creator/products/shares', [
+            'action' => 'share', 'emails' => [$a->email], 'product_ids' => [$p3->id, $foreign->id],
+        ])->assertStatus(422)->assertJsonValidationErrors(['product_ids' => 'Có sản phẩm không tồn tại.']);
+        $this->actingAs($owner)->postJson('/api/v1/creator/products/shares', [
+            'action' => 'share', 'emails' => [$a->email], 'product_ids' => [],
+        ])->assertStatus(422)->assertJsonValidationErrors(['product_ids']);
+        $this->assertSame(0, $p3->sharedWith()->count());
+        $this->assertSame(0, $foreign->sharedWith()->count());
+
+        // Tất cả sản phẩm của mình
+        $this->actingAs($owner)->postJson('/api/v1/creator/products/shares', [
+            'action' => 'share', 'emails' => [$a->email, $b->email], 'all' => true,
+        ])->assertOk()->assertJsonPath('data.product_count', 3);
+        $this->actingAs($a)->getJson('/api/v1/creator/products')->assertJsonCount(3, 'data');
+        $this->assertSame(0, $foreign->sharedWith()->count());
+
+        // Bỏ chia sẻ 1 người ở mọi sản phẩm, người còn lại giữ nguyên
+        $this->actingAs($owner)->postJson('/api/v1/creator/products/shares', [
+            'action' => 'unshare', 'emails' => [$a->email], 'all' => true,
+        ])->assertOk();
+        $this->actingAs($a)->getJson('/api/v1/creator/products')->assertJsonCount(0, 'data');
+        $this->actingAs($b)->getJson('/api/v1/creator/products')->assertJsonCount(3, 'data');
+
+        // Email sai -> lỗi theo dòng
+        $this->actingAs($owner)->postJson('/api/v1/creator/products/shares', [
+            'action' => 'share', 'emails' => ['khong-co@example.com'], 'all' => true,
+        ])->assertStatus(422)->assertJsonValidationErrors(['emails.0' => 'Không tìm thấy tài khoản A51 có email khong-co@example.com.']);
+    }
 }
