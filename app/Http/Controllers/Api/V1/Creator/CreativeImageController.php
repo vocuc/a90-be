@@ -53,10 +53,7 @@ class CreativeImageController extends Controller
         $this->authorizeOwner($request, $creative);
         abort_unless($image->creative_id === $creative->id, 404);
 
-        if ($creative->status === CreativeStatus::Published && $creative->images()->count() <= 1) {
-            throw BusinessException::invalidState('Creative đang xuất bản phải có ít nhất 1 ảnh mẫu.');
-        }
-
+        // Creative đang bán được xoá hết ảnh: không có ảnh thì hiện ảnh mặc định
         $image->delete();
         $this->media->delete($image->path);
         $this->media->delete($image->thumb_path);

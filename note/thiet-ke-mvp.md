@@ -349,7 +349,7 @@ Với mỗi `creator_revenue` có `status = pending` và `available_at ≤ now`,
 ```
 draft ──publish──> published ──pause──> paused ──publish──> published
 ```
-- Điều kiện **publish**: có title, model đang hoạt động, config gồm `creative_prompt` và `max_outputs`, có ít nhất 1 ảnh mẫu.
+- Điều kiện **publish**: có title, model đang hoạt động, config gồm `creative_prompt` và `max_outputs`. Không bắt buộc ảnh mẫu (chưa có ảnh thì frontend hiện ảnh mặc định).
 - **Xóa:** chỉ xóa được Creative `draft` chưa có Generation nào. Creative đã bán thì tạm dừng (không còn trạng thái lưu trữ).
 - Sửa Creative đang `published` vẫn được và có hiệu lực ngay. Các Transaction cũ không đổi vì đã lưu snapshot.
 

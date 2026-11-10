@@ -43,16 +43,24 @@ class CreatorStudioTest extends TestCase
             'title' => 'Thiếu template', 'model_id' => AiModel::query()->firstOrFail()->id, 'price_per_image' => 0,
         ])->assertStatus(422)->assertJsonValidationErrors(['input_schema', 'prompt_template']);
 
-        // Chưa có ảnh mẫu: chưa đăng được.
+        // Không bắt buộc ảnh mẫu: chưa có ảnh vẫn đăng được, cover_url = null (frontend hiện ảnh mặc định)
         $this->postJson("/api/v1/creator/creatives/{$creativeId}/publish")
-            ->assertStatus(422)->assertJsonPath('code', 'CREATIVE_NOT_PUBLISHABLE');
+            ->assertOk()->assertJsonPath('data.status', 'published');
+        $this->getJson('/api/v1/creator/creatives')->assertOk()->assertJsonPath('data.0.cover_url', null);
+        $this->postJson("/api/v1/creator/creatives/{$creativeId}/pause")->assertOk();
 
-        $this->post("/api/v1/creator/creatives/{$creativeId}/images", [
+        $imageId = $this->post("/api/v1/creator/creatives/{$creativeId}/images", [
             'image' => UploadedFile::fake()->image('sample.jpg'),
-        ], ['Accept' => 'application/json'])->assertCreated();
+        ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
 
         $slug = $this->postJson("/api/v1/creator/creatives/{$creativeId}/publish")
             ->assertOk()->assertJsonPath('data.status', 'published')->json('data.slug');
+
+        // Đang bán vẫn xoá được ảnh cuối cùng; tải lại ảnh để các bước sau có ảnh bìa
+        $this->deleteJson("/api/v1/creator/creatives/{$creativeId}/images/{$imageId}")->assertSuccessful();
+        $this->post("/api/v1/creator/creatives/{$creativeId}/images", [
+            'image' => UploadedFile::fake()->image('sample.jpg'),
+        ], ['Accept' => 'application/json'])->assertCreated();
 
         // Marketplace công khai: không cần đăng nhập, không lộ prompt.
         $this->app['auth']->forgetGuards();

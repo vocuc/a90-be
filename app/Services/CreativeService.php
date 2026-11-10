@@ -96,9 +96,7 @@ class CreativeService
         if (! collect($creative->config?->input_schema ?? [])->contains('type', 'image')) {
             $reasons[] = 'Template cần ít nhất 1 trường ảnh.';
         }
-        if (! $creative->images()->exists()) {
-            $reasons[] = 'Cần ít nhất 1 ảnh mẫu.';
-        }
+        // Không bắt buộc ảnh đại diện: chưa có ảnh thì frontend hiện ảnh mặc định
 
         return $reasons;
     }
