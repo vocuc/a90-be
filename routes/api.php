@@ -137,6 +137,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('shipping/ghn-settings', [GhnController::class, 'saveSettings']);
             Route::get('shipping-orders', [ShippingOrderController::class, 'index']);
             Route::post('shipping-orders/parse', [ShippingOrderController::class, 'parse'])->middleware('throttle:generations');
+            Route::post('shipping-orders/sync-statuses', [ShippingOrderController::class, 'syncStatuses'])->middleware('throttle:10,1');
             Route::get('shipping-orders/{order}', [ShippingOrderController::class, 'show'])->whereNumber('order');
             Route::put('shipping-orders/{order}', [ShippingOrderController::class, 'update'])->whereNumber('order');
             Route::delete('shipping-orders/{order}', [ShippingOrderController::class, 'destroy'])->whereNumber('order');

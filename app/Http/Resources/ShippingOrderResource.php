@@ -46,6 +46,7 @@ class ShippingOrderResource extends JsonResource
                 'url' => $media->url($image->path),
             ])->values(),
             'ghn_order_code' => $this->ghn_order_code,
+            'ghn_status' => $this->ghn_status,
             'shipping_fee' => $this->shipping_fee,
             'expected_delivery_time' => $this->expected_delivery_time,
             'error_message' => $this->error_message,

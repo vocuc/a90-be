@@ -61,6 +61,9 @@ class ShippingOrderTest extends TestCase
             self::GHN.'v3/master-data/ward/all-by-province-id*' => Http::response(['code' => 200, 'data' => [
                 ['_id' => 1003001, 'name' => 'Phường Sài Gòn', 'extension_names' => []],
             ]]),
+            self::GHN.'v2/shipping-order/detail*' => fn (Request $r) => str_contains($r->url(), 'BAD')
+                ? Http::response(['code' => 400, 'message' => 'Không tìm thấy đơn'], 400)
+                : Http::response(['code' => 200, 'data' => ['status' => 'delivering']]),
             self::GHN.'v2/shipping-order/create' => fn (Request $r) => $r['to_phone'] === '0999999999'
                 ? Http::response(['code' => 400, 'message' => 'Số điện thoại không hợp lệ', 'code_message' => 'PHONE_INVALID'], 400)
                 : Http::response(['code' => 200, 'data' => [
@@ -374,6 +377,74 @@ class ShippingOrderTest extends TestCase
 
         $this->assertDatabaseMissing('shipping_orders', ['id' => $id]);
         $this->assertFalse(\Storage::disk('media')->exists($path));
+    }
+
+    // ---- Cập nhật trạng thái từ GHN ----
+
+    private function submittedOrder(User $user, string $ghnCode, int $daysAgo = 1, array $extra = []): ShippingOrder
+    {
+        return ShippingOrder::query()->create([
+            'user_id' => $user->id,
+            'status' => 'submitted',
+            'address_type' => 'old',
+            'item_name' => 'Hàng',
+            'weight' => 1000,
+            'required_note' => 'CHOXEMHANGKHONGTHU',
+            'ghn_order_code' => $ghnCode,
+            'submitted_at' => now()->subDays($daysAgo),
+            ...$extra,
+        ]);
+    }
+
+    public function test_sync_statuses_only_touches_own_submitted_orders_within_5_days(): void
+    {
+        $user = $this->connectedCreator();
+        $recent = $this->submittedOrder($user, 'RECENT');
+        $unchanged = $this->submittedOrder($user, 'SAME', extra: ['ghn_status' => 'delivering']);
+        $old = $this->submittedOrder($user, 'OLD', daysAgo: 6);
+        $draft = $this->submittedOrder($user, 'DRAFT', extra: ['status' => 'draft']);
+        $others = $this->submittedOrder($this->connectedCreator(), 'OTHER');
+
+        $this->actingAs($user)->postJson('/api/v1/creator/shipping-orders/sync-statuses')
+            ->assertOk()->assertExactJson(['data' => ['total' => 2, 'updated' => 1, 'failed' => 0]]);
+
+        $this->assertSame('delivering', $recent->fresh()->ghn_status);
+        $this->assertSame('delivering', $unchanged->fresh()->ghn_status);
+        foreach ([$old, $draft, $others] as $skipped) {
+            $this->assertNull($skipped->fresh()->ghn_status);
+        }
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), 'order_code=OLD')
+            || str_contains($r->url(), 'order_code=DRAFT') || str_contains($r->url(), 'order_code=OTHER'));
+
+        $this->getJson("/api/v1/creator/shipping-orders/{$recent->id}")->assertJsonPath('data.ghn_status', 'delivering');
+    }
+
+    public function test_sync_statuses_keeps_going_when_one_order_fails(): void
+    {
+        $user = $this->connectedCreator();
+        $good = $this->submittedOrder($user, 'GOOD');
+        $bad = $this->submittedOrder($user, 'BAD', extra: ['ghn_status' => 'picking']);
+
+        $this->actingAs($user)->postJson('/api/v1/creator/shipping-orders/sync-statuses')
+            ->assertOk()->assertExactJson(['data' => ['total' => 2, 'updated' => 1, 'failed' => 1]]);
+
+        $this->assertSame('delivering', $good->fresh()->ghn_status);
+        $this->assertSame('picking', $bad->fresh()->ghn_status);
+    }
+
+    public function test_sync_statuses_reports_ghn_error_when_every_order_fails(): void
+    {
+        $user = $this->connectedCreator();
+        $this->submittedOrder($user, 'BAD');
+
+        $this->actingAs($user)->postJson('/api/v1/creator/shipping-orders/sync-statuses')
+            ->assertStatus(422)->assertJson(['code' => 'GHN_ERROR', 'message' => 'Không tìm thấy đơn']);
+    }
+
+    public function test_sync_statuses_requires_ghn_settings(): void
+    {
+        $this->actingAs($this->creator())->postJson('/api/v1/creator/shipping-orders/sync-statuses')
+            ->assertStatus(400)->assertJsonPath('code', 'GHN_SETTINGS_REQUIRED');
     }
 
     // ---- Danh mục ----

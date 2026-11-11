@@ -4,6 +4,8 @@ namespace App\Services\Shipping;
 
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
 /**
@@ -12,6 +14,10 @@ use Illuminate\Support\Facades\Http;
  */
 class GhnClient
 {
+    private const DETAIL_CONCURRENCY = 10;
+
+    private const CONNECTION_ERROR = 'Không kết nối được GHN, vui lòng thử lại sau.';
+
     public function __construct(private string $token, private int $shopId) {}
 
     /**
@@ -89,14 +95,56 @@ class GhnClient
         ];
     }
 
+    /**
+     * Trạng thái hiện tại của nhiều đơn (GET v2/shipping-order/detail): GHN chỉ nhận 1 mã mỗi lần nên gọi song song theo nhóm.
+     *
+     * @param  string[]  $orderCodes
+     * @return array<string, string|GhnException> mã đơn -> trạng thái, hoặc lỗi riêng của đơn đó
+     */
+    public function orderStatuses(array $orderCodes): array
+    {
+        $results = [];
+        foreach (array_chunk($orderCodes, self::DETAIL_CONCURRENCY) as $chunk) {
+            $responses = Http::pool(fn (Pool $pool) => array_map(
+                fn (string $code) => $this->request(true, $pool->as($code))->get('v2/shipping-order/detail', ['order_code' => $code]),
+                $chunk,
+            ));
+
+            foreach ($responses as $code => $response) {
+                try {
+                    $results[$code] = $this->orderStatus($response);
+                } catch (GhnException $e) {
+                    $results[$code] = $e;
+                }
+            }
+        }
+
+        return $results;
+    }
+
+    /** @param  Response|\Throwable  $response  Http::pool trả về exception khi không kết nối được */
+    private function orderStatus(mixed $response): string
+    {
+        if (! $response instanceof Response) {
+            throw new GhnException(self::CONNECTION_ERROR);
+        }
+
+        return (string) ($this->data($response)['status'] ?? throw new GhnException('GHN không trả về trạng thái đơn.'));
+    }
+
     private function call(string $method, string $path, array $params = [], bool $withShop = true): mixed
     {
         try {
             $response = $this->request($withShop)->{$method}($path, $params);
         } catch (ConnectionException) {
-            throw new GhnException('Không kết nối được GHN, vui lòng thử lại sau.');
+            throw new GhnException(self::CONNECTION_ERROR);
         }
 
+        return $this->data($response);
+    }
+
+    private function data(Response $response): mixed
+    {
         $body = $response->json();
         if (! $response->successful() || ($body['code'] ?? null) !== 200) {
             throw new GhnException(
@@ -109,9 +157,10 @@ class GhnClient
         return $body['data'] ?? null;
     }
 
-    private function request(bool $withShop): PendingRequest
+    private function request(bool $withShop, ?PendingRequest $request = null): PendingRequest
     {
-        return Http::baseUrl(config('services.ghn.base_url'))
+        return ($request ?? Http::createPendingRequest())
+            ->baseUrl(config('services.ghn.base_url'))
             ->timeout(config('services.ghn.timeout'))
             ->acceptJson()
             ->withHeaders(array_filter([

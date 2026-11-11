@@ -101,6 +101,12 @@ class ShippingOrderController extends Controller
         return $this->resource($this->orders->submit($request->user(), $order, (int) $data['payment_type_id']));
     }
 
+    /** Lấy lại trạng thái từ GHN cho các đơn đã gửi trong 5 ngày gần đây. */
+    public function syncStatuses(Request $request): JsonResponse
+    {
+        return response()->json(['data' => $this->orders->syncStatuses($request->user())]);
+    }
+
     public function destroy(Request $request, int $order): Response
     {
         $this->orders->delete($this->findOrder($request, $order));

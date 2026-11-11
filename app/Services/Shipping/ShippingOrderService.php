@@ -24,6 +24,9 @@ class ShippingOrderService
     /** Cạnh dài tối đa khi lưu ảnh chat: đủ rõ chữ cho AI đọc ảnh chụp màn hình điện thoại. */
     private const IMAGE_MAX_SIDE = 2400;
 
+    /** Nút "Cập nhật trạng thái": chỉ lấy lại trạng thái các đơn gửi GHN trong số ngày này. */
+    private const STATUS_SYNC_DAYS = 5;
+
     private const MIME_TYPES = ['webp' => 'image/webp', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png'];
 
     public function __construct(private MediaStorage $media, private ShippingOrderReader $reader) {}
@@ -167,6 +170,47 @@ class ShippingOrderService
         ]);
 
         return $order;
+    }
+
+    /**
+     * Lấy lại trạng thái từ GHN cho các đơn đã gửi trong STATUS_SYNC_DAYS ngày gần đây và lưu vào ghn_status.
+     * Một vài đơn lỗi thì vẫn lưu các đơn còn lại; GHN lỗi toàn bộ (vd token hết hạn) -> 422 lời báo của GHN.
+     *
+     * @return array{total: int, updated: int, failed: int}
+     */
+    public function syncStatuses(User $user): array
+    {
+        $ghn = $this->ghn($user);
+        $orders = ShippingOrder::query()
+            ->where('user_id', $user->id)
+            ->where('status', ShippingOrderStatus::Submitted)
+            ->whereNotNull('ghn_order_code')
+            ->where('submitted_at', '>=', now()->subDays(self::STATUS_SYNC_DAYS))
+            ->get();
+
+        $results = $ghn->orderStatuses($orders->pluck('ghn_order_code')->all());
+
+        $updated = 0;
+        $errors = [];
+        foreach ($orders as $order) {
+            $result = $results[$order->ghn_order_code];
+            if ($result instanceof GhnException) {
+                $errors[] = $result;
+
+                continue;
+            }
+            $order->ghn_status = $result;
+            if ($order->isDirty('ghn_status')) {
+                $order->save();
+                $updated++;
+            }
+        }
+
+        if ($errors && count($errors) === $orders->count()) {
+            throw BusinessException::ghnError($errors[0]->getMessage());
+        }
+
+        return ['total' => $orders->count(), 'updated' => $updated, 'failed' => count($errors)];
     }
 
     /** Xoá được cả đơn đang đọc ảnh (job gặp đơn đã xoá thì bỏ qua). */
