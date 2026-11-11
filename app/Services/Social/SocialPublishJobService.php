@@ -189,8 +189,8 @@ class SocialPublishJobService
             'description' => SocialPost::description($post->content, $hashtags),
             // Theo thứ tự, ảnh đầu là ảnh bìa. Ảnh người dùng đã tắt thì bỏ qua.
             'images' => $post->images
-                ->filter(fn ($image) => $image->output?->isUsable())
-                ->map(fn ($image) => $this->media->url($image->output->image_path))
+                ->filter(fn ($image) => $image->isUsable())
+                ->map(fn ($image) => $this->media->url($image->imagePath()))
                 ->values()
                 ->all(),
             // Bài video: template để dựng video (khớp theo tên với template Remotion). Bài ảnh: null
@@ -312,8 +312,9 @@ class SocialPublishJobService
 
     /**
      * Thứ tự cuối cùng: { image_id } (ảnh đang có trong bài) hoặc { generation_id, output_id } (ảnh có sẵn vừa thêm).
+     * Ảnh upload thẳng (lookbook) chỉ có thể là { image_id }, output = null.
      *
-     * @return array<int, array{image_id: ?int, output: GenerationOutput}> theo thứ tự (image_id null: ảnh mới thêm)
+     * @return array<int, array{image_id: ?int, output: ?GenerationOutput}> theo thứ tự (image_id null: ảnh mới thêm)
      */
     private function resolveImages(User $user, SocialPost $post, array $items): array
     {
@@ -351,18 +352,18 @@ class SocialPublishJobService
             throw ValidationException::withMessages(['images' => 'Các ảnh trong bài đã bị tắt, hãy chọn ảnh khác.']);
         }
 
-        $outputIds = array_map(fn ($r) => $r['output']->id, $resolved);
-        if (count($outputIds) !== count(array_unique($outputIds))) {
+        $keys = array_map(fn ($r) => $r['output'] ? 'output:'.$r['output']->id : 'image:'.$r['image_id'], $resolved);
+        if (count($keys) !== count(array_unique($keys))) {
             throw ValidationException::withMessages(['images' => 'Có ảnh bị trùng trong bài đăng.']);
         }
-        if (collect($resolved)->contains(fn ($r) => $r['output']->status !== OutputStatus::Completed)) {
+        if (collect($resolved)->contains(fn ($r) => $r['output'] && $r['output']->status !== OutputStatus::Completed)) {
             throw new BusinessException('IMAGES_NOT_READY', 'Còn ảnh đang tạo hoặc bị lỗi. Hãy bỏ ảnh đó khỏi bài trước khi đăng.', 409);
         }
 
         return array_values($resolved);
     }
 
-    /** @param  array<int, array{image_id: ?int, output: GenerationOutput}>  $images */
+    /** @param  array<int, array{image_id: ?int, output: ?GenerationOutput}>  $images */
     private function syncImages(SocialPost $post, array $images): void
     {
         $keep = array_filter(array_column($images, 'image_id'));

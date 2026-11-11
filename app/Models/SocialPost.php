@@ -28,6 +28,9 @@ class SocialPost extends Model
 
     public const SOURCE_EXISTING = 'existing';
 
+    /** Lookbook do skill FlowKit tạo (LookbookTask): ảnh upload thẳng, không qua lượt tạo ảnh của A51. */
+    public const SOURCE_LOOKBOOK = 'lookbook';
+
     /** Bài video tạo bằng nút "Tạo video" ở trang Bài đăng. */
     public const SOURCE_VIDEO = 'video';
 

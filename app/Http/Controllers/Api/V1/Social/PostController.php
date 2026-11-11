@@ -34,6 +34,8 @@ class PostController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             // Lọc theo worker đã giao bài (trang /posts ở repo frontend)
             'worker_id' => ['nullable', 'integer'],
+            // Lọc theo nguồn tạo bài, vd lookbook (bài do skill FlowKit tạo lookbook)
+            'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_LOOKBOOK])],
         ]);
 
         $posts = SocialPost::query()
@@ -41,6 +43,7 @@ class PostController extends Controller
             ->when($data['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($data['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
             ->when($data['worker_id'] ?? null, fn ($q, $workerId) => $q->where('worker_id', $workerId))
+            ->when($data['source'] ?? null, fn ($q, $source) => $q->where('source', $source))
             ->with(SocialPostResource::RELATIONS)
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);

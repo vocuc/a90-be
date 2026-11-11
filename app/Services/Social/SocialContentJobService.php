@@ -174,10 +174,10 @@ class SocialContentJobService
             ]);
 
         $images = $post->images
-            ->filter(fn ($image) => $image->output?->isUsable())
+            ->filter(fn ($image) => $image->isUsable())
             ->take(config('ai90.social.ai_max_images'))
             ->map(function ($image) {
-                $path = $image->output->thumbPathOrOriginal();
+                $path = $image->thumbPath();
 
                 return ['contents' => $this->media->get($path), 'mime' => $this->media->mimeType($path)];
             })

@@ -88,6 +88,10 @@ class SocialPostResource extends JsonResource
     /** Một ảnh của bài / lô: liên kết + dữ liệu lấy từ output và generation.creative. */
     public static function image(SocialPostImage|ImageBatchImage $image): array
     {
+        if ($image instanceof SocialPostImage && $image->isUploaded()) {
+            return self::uploadedImage($image);
+        }
+
         $output = $image->output;
         $creative = $image->generation?->creative;
         $completed = $output?->status === OutputStatus::Completed;
@@ -105,6 +109,25 @@ class SocialPostResource extends JsonResource
             'thumb_url' => $completed ? $media->url($output->thumbPathOrOriginal()) : null,
             'error_message' => $output?->status === OutputStatus::Failed ? GenerationResource::errorMessage($output->error_code) : null,
             'creative' => $creative ? ImageBatchService::creativeSummary($creative) : null,
+        ];
+    }
+
+    /** Ảnh upload thẳng (lookbook): cùng dạng với ảnh output, luôn completed, không có generation / creative. */
+    private static function uploadedImage(SocialPostImage $image): array
+    {
+        $media = app(MediaStorage::class);
+
+        return [
+            'id' => $image->id,
+            'position' => $image->position,
+            'generation_id' => null,
+            'output_id' => null,
+            'status' => OutputStatus::Completed,
+            'disabled' => false,
+            'image_url' => $media->url($image->imagePath()),
+            'thumb_url' => $media->url($image->thumbPath()),
+            'error_message' => null,
+            'creative' => null,
         ];
     }
 }
