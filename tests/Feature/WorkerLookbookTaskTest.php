@@ -267,4 +267,96 @@ class WorkerLookbookTaskTest extends TestCase
 
         $this->withToken($multi)->getJson('/api/v1/lookbook-tasks/next')->assertUnprocessable()->assertJsonValidationErrors('image_field');
     }
+    // ---- Sản phẩm được chia sẻ (product_shares) ----
+
+    public function test_shared_product_is_given_to_receiving_shop(): void
+    {
+        $owner = $this->buyer();
+        $receiver = $this->buyer();
+        $shared = $this->product($owner, 'Giày chia sẻ');
+        $this->product($owner, 'Giày không chia sẻ');
+        $shared->sharedWith()->attach($receiver->id);
+        [, $token] = $this->worker($receiver);
+
+        $taskId = $this->next($token)->assertOk()
+            ->assertJsonPath('data.account.id', $receiver->id)
+            ->assertJsonPath('data.product.id', $shared->id)
+            ->assertJsonPath('data.product.shared', true)
+            ->json('data.task_id');
+        $this->next($token)->assertNoContent(); // sản phẩm không chia sẻ của shop A không được giao
+
+        // Bài lookbook thuộc shop nhận chia sẻ, gắn sản phẩm của shop A
+        $postId = $this->complete($token, $taskId)->assertOk()->json('data.post.id');
+        $post = SocialPost::query()->findOrFail($postId);
+        $this->assertSame($receiver->id, $post->user_id);
+        $this->assertSame($shared->id, $post->product_id);
+        $this->actingAs($receiver)->getJson('/api/v1/social/posts?source=lookbook')->assertJsonCount(1, 'data');
+        $this->actingAs($owner)->getJson('/api/v1/social/posts?source=lookbook')->assertJsonCount(0, 'data');
+    }
+
+    public function test_own_product_is_not_marked_shared(): void
+    {
+        $shop = $this->buyer();
+        $this->product($shop);
+        [, $token] = $this->worker($shop);
+
+        $this->next($token)->assertJsonPath('data.product.shared', false);
+    }
+
+    public function test_history_is_per_shop_for_shared_product(): void
+    {
+        $owner = $this->buyer();
+        $receiver = $this->buyer();
+        $shared = $this->product($owner, 'X');
+        $shared->sharedWith()->attach($receiver->id);
+        $receiverOwn = $this->product($receiver, 'Của B, có lookbook cũ');
+        LookbookTask::query()->create([
+            'user_id' => $receiver->id, 'product_id' => $receiverOwn->id, 'status' => LookbookTask::STATUS_COMPLETED,
+            'image_field' => self::FIELD, 'outfit_ids' => [7], 'finished_at' => now()->subDays(5),
+        ]);
+        [, $ownerToken] = $this->worker($owner);
+        [, $receiverToken] = $this->worker($receiver);
+
+        // Shop A làm xong X với outfit của OOTD shop A
+        $aTask = $this->next($ownerToken)->assertJsonPath('data.product.id', $shared->id)->json('data.task_id');
+        $this->complete($ownerToken, $aTask, ['outfit_ids' => [1, 2]])->assertOk();
+
+        // Shop B: X vẫn là "chưa có lookbook" (với B) nên đứng trước sản phẩm của B có lookbook cũ; outfit của A không tính
+        $bTask = $this->next($receiverToken)
+            ->assertJsonPath('data.product.id', $shared->id)
+            ->assertJsonPath('data.used_outfit_ids', [])
+            ->json('data.task_id');
+
+        // B đang làm X không chặn A nhận X (A vẫn thấy outfit A đã dùng)
+        $aTask2 = $this->next($ownerToken)
+            ->assertJsonPath('data.product.id', $shared->id)
+            ->assertJsonPath('data.used_outfit_ids', [1, 2])
+            ->json('data.task_id');
+
+        // B lỗi X hôm nay: B không nhận lại X trong ngày (chuyển sang sản phẩm của B), A đang làm X không ảnh hưởng
+        $this->failTask($receiverToken, $bTask)->assertOk();
+        $this->next($receiverToken)->assertJsonPath('data.product.id', $receiverOwn->id);
+
+        // A lỗi X không chặn B ngày hôm sau
+        $this->failTask($ownerToken, $aTask2)->assertOk();
+        $this->travel(1)->days();
+        $this->next($receiverToken)->assertJsonPath('data.product.id', $shared->id);
+    }
+
+    public function test_unshared_product_is_no_longer_given_but_running_task_can_finish(): void
+    {
+        $owner = $this->buyer();
+        $receiver = $this->buyer();
+        $shared = $this->product($owner);
+        $shared->sharedWith()->attach($receiver->id);
+        [, $token] = $this->worker($receiver);
+
+        $taskId = $this->next($token)->assertJsonPath('data.product.id', $shared->id)->json('data.task_id');
+        $shared->sharedWith()->detach($receiver->id);
+
+        // Task đã giao trước khi bỏ chia sẻ vẫn gửi kết quả được (ảnh đã tạo xong)
+        $this->complete($token, $taskId)->assertOk();
+        $this->travel(1)->days();
+        $this->next($token)->assertNoContent();
+    }
 }

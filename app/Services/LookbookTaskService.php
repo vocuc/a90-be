@@ -25,9 +25,11 @@ class LookbookTaskService
     public function __construct(private MediaStorage $media, private AuditLogger $audit) {}
 
     /**
-     * Chọn sản phẩm tiếp theo của $user: đang bán, có ảnh field_key = $imageField; bỏ sản phẩm đang có task
-     * processing (chưa quá hạn) hoặc đã lỗi hôm nay. Sản phẩm chưa có lookbook trước, sau đó tới sản phẩm có lookbook
-     * gần nhất cũ nhất. Không có -> null.
+     * Chọn sản phẩm tiếp theo của $user: sản phẩm của mình HOẶC được shop khác chia sẻ (product_shares), đang bán, có
+     * ảnh field_key = $imageField; bỏ sản phẩm $user đang có task processing (chưa quá hạn) hoặc đã lỗi hôm nay. Sản phẩm
+     * $user chưa làm lookbook trước, sau đó tới sản phẩm có lookbook gần nhất (của $user) cũ nhất. Không có -> null.
+     * Lịch sử tính theo cặp (shop, sản phẩm): shop A làm lookbook sản phẩm X không ảnh hưởng thứ tự / khoá / outfit đã
+     * dùng của shop B với cùng sản phẩm X (mỗi shop có tài khoản OOTD riêng, id outfit không dùng chung được).
      */
     public function next(Worker $worker, User $user, string $imageField): ?LookbookTask
     {
@@ -37,17 +39,19 @@ class LookbookTaskService
 
             $staleBefore = now()->subMinutes(LookbookTask::STALE_MINUTES);
             $product = Product::query()
-                ->where('user_id', $user->id)
+                ->accessibleBy($user)
                 ->active()
                 ->whereHas('images', fn (Builder $q) => $q->where('field_key', $imageField))
                 ->whereNotExists(fn ($q) => $q->from('lookbook_tasks')
                     ->whereColumn('lookbook_tasks.product_id', 'products.id')
+                    ->where('lookbook_tasks.user_id', $user->id)
                     ->where(fn ($w) => $w
                         ->where(fn ($p) => $p->where('status', LookbookTask::STATUS_PROCESSING)->where('updated_at', '>', $staleBefore))
                         ->orWhere(fn ($f) => $f->where('status', LookbookTask::STATUS_FAILED)->where('created_at', '>=', now()->startOfDay()))))
                 ->addSelect(['products.*', 'last_lookbook_at' => LookbookTask::query()
                     ->select('finished_at')
                     ->whereColumn('product_id', 'products.id')
+                    ->where('user_id', $user->id)
                     ->where('status', LookbookTask::STATUS_COMPLETED)
                     ->latest('finished_at')
                     ->limit(1)])
@@ -59,9 +63,10 @@ class LookbookTaskService
                 return null;
             }
 
-            // Task cũ của sản phẩm bị bỏ dở quá hạn -> lỗi, để lịch sử không còn task processing treo
+            // Task cũ của shop với sản phẩm này bị bỏ dở quá hạn -> lỗi, để lịch sử không còn task processing treo
             LookbookTask::query()
                 ->where('product_id', $product->id)
+                ->where('user_id', $user->id)
                 ->where('status', LookbookTask::STATUS_PROCESSING)
                 ->update([
                     'status' => LookbookTask::STATUS_FAILED,
@@ -83,11 +88,12 @@ class LookbookTaskService
         });
     }
 
-    /** Outfit (id bên OOTD) đã dùng trong các lookbook xong của sản phẩm, để skill không dùng lại. */
-    public function usedOutfitIds(int $productId): array
+    /** Outfit (id bên OOTD của shop $userId) đã dùng trong các lookbook xong của shop với sản phẩm, để không dùng lại. */
+    public function usedOutfitIds(int $productId, int $userId): array
     {
         return LookbookTask::query()
             ->where('product_id', $productId)
+            ->where('user_id', $userId)
             ->where('status', LookbookTask::STATUS_COMPLETED)
             ->pluck('outfit_ids')
             ->flatten()

@@ -20,7 +20,8 @@ use Illuminate\Validation\ValidationException;
 /**
  * API cho skill tạo lookbook (FlowKit a51-skills/tao-anh-look-book/thiet-ke.txt mục 3). Worker loại đăng bài, gắn tài
  * khoản shop (gắn nhiều shop thì gửi user_id ở next).
- * - GET  next?image_field=anh_san_pham[&user_id=]: sản phẩm tiếp theo + outfit đã dùng; không còn sản phẩm -> 204.
+ * - GET  next?image_field=anh_san_pham[&user_id=]: sản phẩm tiếp theo (của shop hoặc được chia sẻ cho shop) + outfit
+ *   shop đã dùng với sản phẩm đó; không còn sản phẩm -> 204. product.shared = true: sản phẩm của shop khác chia sẻ.
  * - POST {id}/complete (multipart): images[], title, content?, hashtags[]?, outfit_ids[]? -> bài chờ duyệt (source lookbook).
  * - POST {id}/fail: code, message? -> task lỗi (không tính gì thêm, lần next sau A51 giao sản phẩm khác).
  * Task của worker khác -> 404. Task đã kết thúc -> 409 LOOKBOOK_TASK_FINISHED (gửi lặp complete / fail thì trả kết quả cũ).
@@ -59,9 +60,10 @@ class WorkerLookbookTaskController extends Controller
                 'id' => $product->id,
                 'name' => $product->name,
                 'prompt_note' => $product->prompt_note,
+                'shared' => ! $product->isOwnedBy($user),
                 'image' => ['field_key' => $image->field_key, 'url' => $this->media->url($image->path)],
             ],
-            'used_outfit_ids' => $this->tasks->usedOutfitIds($product->id),
+            'used_outfit_ids' => $this->tasks->usedOutfitIds($product->id, $user->id),
         ]]);
     }
 
