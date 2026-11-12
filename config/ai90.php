@@ -45,6 +45,8 @@ return [
         'ai_max_images' => 4,
         // Bài kẹt ở bước AI viết nội dung quá số phút này (social:sweep) thì dùng nội dung mặc định và hoàn phí.
         'ai_stuck_minutes' => 30,
+        // Múi giờ tính "ngày" của kế hoạch nội dung + lọc bài theo ngày (app chạy UTC, chủ shop ở Việt Nam)
+        'planner_timezone' => env('SOCIAL_PLANNER_TIMEZONE', 'Asia/Ho_Chi_Minh'),
     ],
 
     'auth' => [

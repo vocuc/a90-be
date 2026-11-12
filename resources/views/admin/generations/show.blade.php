@@ -15,7 +15,7 @@
                     <p><x-admin.status :value="$generation->status" /> <x-admin.status :value="$generation->type" /></p>
                     <dl class="mb-0">
                         <dt>Người dùng</dt><dd><a href="{{ route('admin.users.show', $generation->user_id) }}">{{ $generation->user->email }}</a></dd>
-                        <dt>Creative</dt><dd><a href="{{ route('admin.creatives.show', $generation->creative_id) }}">{{ $generation->creative->title }}</a></dd>
+                        <dt>Creative</dt><dd>@if ($generation->creative)<a href="{{ route('admin.creatives.show', $generation->creative_id) }}">{{ $generation->creative->title }}</a>@else<span class="text-muted">Kế hoạch nội dung (không dùng creative)</span>@endif</dd>
                         <dt>Creator</dt><dd>{{ '@'.($generation->creator->creatorProfile?->username ?? '—') }}</dd>
                         <dt>Model</dt><dd>{{ $generation->model->name }} <code>{{ $generation->model->code }}</code></dd>
                         <dt>Số lượng / tỉ lệ</dt><dd>{{ $generation->quantity }} ảnh · {{ $generation->aspect_ratio }}</dd>

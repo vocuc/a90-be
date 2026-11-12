@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\SocialPostResource;
 use App\Models\Hashtag;
 use App\Models\SocialPost;
+use App\Services\Social\PlannerService;
 use App\Services\Social\SocialContentJobService;
 use App\Services\Social\SocialPostService;
 use App\Services\Social\SocialPublishJobService;
@@ -35,7 +36,10 @@ class PostController extends Controller
             // Lọc theo worker đã giao bài (trang /posts ở repo frontend)
             'worker_id' => ['nullable', 'integer'],
             // Lọc theo nguồn tạo bài, vd lookbook (bài do skill FlowKit tạo lookbook)
-            'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_LOOKBOOK])],
+            'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_LOOKBOOK, SocialPost::SOURCE_PLAN])],
+            // Lọc theo ngày đăng (scheduled_at), ngày theo giờ Việt Nam (ai90.social.planner_timezone)
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d'],
         ]);
 
         $posts = SocialPost::query()
@@ -44,6 +48,8 @@ class PostController extends Controller
             ->when($data['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
             ->when($data['worker_id'] ?? null, fn ($q, $workerId) => $q->where('worker_id', $workerId))
             ->when($data['source'] ?? null, fn ($q, $source) => $q->where('source', $source))
+            ->when($data['date_from'] ?? null, fn ($q, $d) => $q->where('scheduled_at', '>=', Carbon::createFromFormat('Y-m-d', $d, config('ai90.social.planner_timezone'))->startOfDay()->utc()))
+            ->when($data['date_to'] ?? null, fn ($q, $d) => $q->where('scheduled_at', '<=', Carbon::createFromFormat('Y-m-d', $d, config('ai90.social.planner_timezone'))->endOfDay()->utc()))
             ->with(SocialPostResource::RELATIONS)
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);
@@ -122,6 +128,12 @@ class PostController extends Controller
     }
 
     /** "Đăng lại" (bài lỗi) / "Tạo lại" (worker nhận rồi im lặng, có thể đăng trùng): bài về chờ tới giờ. */
+    /** "Làm lại" bài kế hoạch đang chờ duyệt: tạo lại ảnh theo đúng kịch bản, miễn phí (PlannerService::redo). */
+    public function redo(Request $request, int $post, PlannerService $planner): SocialPostResource
+    {
+        return $this->resource($planner->redo($request->user(), $this->findPost($request, $post)));
+    }
+
     public function retry(Request $request, int $post, SocialPublishJobService $publisher): SocialPostResource
     {
         return $this->resource($publisher->retry($request->user(), $this->findPost($request, $post)));

@@ -4,6 +4,7 @@ use App\Http\Middleware\AuthenticateWorker;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureAdminSession;
 use App\Http\Middleware\EnsureCreatorProfile;
+use App\Http\Middleware\EnsureFullAccessToken;
 use App\Http\Middleware\EnsureUserIsActive;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -24,6 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin.session' => EnsureAdminSession::class,
             'creator' => EnsureCreatorProfile::class,
             'worker' => AuthenticateWorker::class,
+            'full_token' => EnsureFullAccessToken::class,
+            'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
         ]);
 
         // API không chuyển hướng; trang quản trị chuyển về form đăng nhập admin.

@@ -33,7 +33,8 @@
                         </small>
                     @else
                         <div class="alert alert-warning mb-0">
-                            Worker này được tạo trước khi hệ thống lưu token nên không xem lại được.
+                            Token của worker này không xem lại được (worker tạo trước khi hệ thống lưu token, hoặc token được
+                            mã hoá bằng APP_KEY khác do database chép từ môi trường khác).
                             Bấm <b>Tạo token mới</b> để lấy token (máy đang dùng token cũ phải dán token mới).
                         </div>
                     @endif

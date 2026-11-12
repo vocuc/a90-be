@@ -33,11 +33,12 @@ class GenerationResource extends JsonResource
             'id' => $this->id,
             'type' => $this->type,
             'status' => $this->status,
-            'creative' => $this->whenLoaded('creative', fn () => [
+            // Ảnh kế hoạch (type plan) không có creative -> null
+            'creative' => $this->whenLoaded('creative', fn () => $this->creative ? [
                 'id' => $this->creative->id,
                 'slug' => $this->creative->slug,
                 'title' => $this->creative->title,
-            ]),
+            ] : null),
             'parent_generation_id' => $this->parent_generation_id,
             'quantity' => $this->quantity,
             'aspect_ratio' => $this->aspect_ratio,

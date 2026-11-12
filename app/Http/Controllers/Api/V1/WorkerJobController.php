@@ -58,7 +58,8 @@ class WorkerJobController extends Controller
     {
         $paths = [...($generation->asset_paths ?? []), ...($generation->input_paths ?? [])];
         // Cột JSON của MySQL không giữ thứ tự khoá -> xếp lại theo thứ tự trường trong form
-        $order = array_flip(array_column($generation->creative->config?->input_schema ?? [], 'key'));
+        // Ảnh kế hoạch (type plan) không có creative: giữ thứ tự ảnh sản phẩm
+        $order = array_flip(array_column($generation->creative?->config?->input_schema ?? [], 'key'));
         uksort($paths, fn ($a, $b) => ($order[$a] ?? PHP_INT_MAX) <=> ($order[$b] ?? PHP_INT_MAX));
 
         $images = [];

@@ -112,6 +112,17 @@ class SocialPostService
      */
     private function imagesReady(SocialPost $post): void
     {
+        // Bài kế hoạch có ảnh lỗi: không viết nội dung, chờ chủ shop bấm "Làm lại" (PlannerService::redo)
+        if ($post->isPlan() && $post->images()->whereHas('output', fn ($q) => $q->where('status', OutputStatus::Failed))->exists()) {
+            $post->update([
+                ...$post->defaultContent(),
+                'status' => SocialPostStatus::PendingReview,
+                'last_error' => ['code' => SocialPost::PLAN_IMAGES_FAILED, 'message' => 'Có ảnh tạo lỗi, bấm "Làm lại" để tạo lại bài theo kịch bản.', 'platforms' => []],
+            ]);
+
+            return;
+        }
+
         if ($post->ai_content) {
             $this->contentJobs->queue($post);
 

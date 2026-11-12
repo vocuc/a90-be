@@ -34,6 +34,9 @@ class SocialPost extends Model
     /** Bài video tạo bằng nút "Tạo video" ở trang Bài đăng. */
     public const SOURCE_VIDEO = 'video';
 
+    /** Bài do skill kế hoạch nội dung tạo (PlannerService): có kịch bản (script), ảnh tạo theo bối cảnh, miễn phí. */
+    public const SOURCE_PLAN = 'plan';
+
     public const TYPE_PHOTO = 'photo';
 
     public const TYPE_VIDEO = 'video';
@@ -51,6 +54,9 @@ class SocialPost extends Model
 
     /** Mã lỗi chung người dùng thấy khi có nền tảng đăng lỗi (last_error.code). */
     public const PUBLISH_FAILED = 'PUBLISH_FAILED';
+
+    /** Bài kế hoạch có ảnh tạo lỗi (last_error.code): chờ "Làm lại". */
+    public const PLAN_IMAGES_FAILED = 'PLAN_IMAGES_FAILED';
 
     protected $table = 'social_posts';
 
@@ -71,6 +77,7 @@ class SocialPost extends Model
             'ai_content' => 'boolean',
             'hashtags' => 'array',
             'platforms' => 'array',
+            'script' => 'array',
             'last_error' => 'array',
             'published_at' => 'datetime',
             'scheduled_at' => 'datetime',
@@ -247,6 +254,16 @@ class SocialPost extends Model
     }
 
     /** Ảnh theo thứ tự, ảnh đầu là ảnh bìa. */
+    public function isPlan(): bool
+    {
+        return $this->source === self::SOURCE_PLAN;
+    }
+
+    public function planContext(): BelongsTo
+    {
+        return $this->belongsTo(PlanContext::class);
+    }
+
     public function images(): HasMany
     {
         return $this->hasMany(SocialPostImage::class, 'social_post_id')->orderBy('position')->orderBy('id');

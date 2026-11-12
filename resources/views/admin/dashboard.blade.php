@@ -96,7 +96,7 @@
                             <tr>
                                 <td><a href="{{ route('admin.generations.show', $generation) }}">{{ $generation->id }}</a></td>
                                 <td>{{ $generation->user->email }}</td>
-                                <td>{{ \Illuminate\Support\Str::limit($generation->creative->title, 30) }}</td>
+                                <td>{{ \Illuminate\Support\Str::limit($generation->creative?->title ?? 'Kế hoạch nội dung', 30) }}</td>
                                 <td><x-admin.status :value="$generation->type" /></td>
                                 <td>{{ $generation->success_count }}/{{ $generation->quantity }}</td>
                                 <td><x-admin.status :value="$generation->status" /></td>

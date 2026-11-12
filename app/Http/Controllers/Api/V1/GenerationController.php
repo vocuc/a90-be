@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\CreativeStatus;
+use App\Enums\GenerationType;
 use App\Enums\OutputStatus;
 use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
@@ -83,6 +84,8 @@ class GenerationController extends Controller
         };
         $generations = Generation::query()
             ->where('user_id', $userId)
+            // Ảnh của bài kế hoạch xem ở trang Bài đăng, không hiện trong lịch sử tạo ảnh
+            ->where('type', '!=', GenerationType::Plan)
             ->when($data['creative_id'] ?? null, fn ($q, $id) => $q->where('creative_id', $id))
             ->when($productId, fn ($q, $id) => $q->where('product_id', $id))
             ->when($tab || $productId, fn ($q) => $q->whereHas('outputs', $tabFilter))

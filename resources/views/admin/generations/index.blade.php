@@ -32,7 +32,8 @@
                             @if ($generation->parent_generation_id)<span class="badge badge-light" title="Retry của #{{ $generation->parent_generation_id }}"><i class="fas fa-redo"></i></span>@endif
                         </td>
                         <td><a href="{{ route('admin.users.show', $generation->user_id) }}">{{ $generation->user->email }}</a></td>
-                        <td><a href="{{ route('admin.creatives.show', $generation->creative_id) }}">{{ \Illuminate\Support\Str::limit($generation->creative->title, 30) }}</a></td>
+                        {{-- Ảnh của bài kế hoạch nội dung (type plan) không có creative --}}
+                        <td>@if ($generation->creative)<a href="{{ route('admin.creatives.show', $generation->creative_id) }}">{{ \Illuminate\Support\Str::limit($generation->creative->title, 30) }}</a>@else<span class="text-muted">Kế hoạch nội dung</span>@endif</td>
                         <td><x-admin.status :value="$generation->type" /></td>
                         <td>{{ $generation->aspect_ratio }}</td>
                         <td class="text-center"><span class="text-success">{{ $generation->success_count }}</span> / <span class="text-danger">{{ $generation->failed_count }}</span> / {{ $generation->quantity }}</td>

@@ -11,6 +11,7 @@ use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\PlanContext;
 use App\Models\Product;
 use App\Models\Transaction;
 use App\Models\User;
@@ -56,6 +57,35 @@ class GenerationService
                 'worker_id' => $workerId ?? $parent?->worker_id,
                 'product_id' => $productId ?? $parent?->product_id ?? 0,
             ], $parent);
+    }
+
+    /**
+     * 1 ảnh cho bài kế hoạch nội dung (PlannerService): không creative, không trừ Credit, không Transaction.
+     * Đầu vào = mọi ảnh của sản phẩm (theo field_key), prompt = bối cảnh + câu lệnh planner (+ "yêu cầu" của sản phẩm),
+     * model + tỉ lệ khung theo bối cảnh. Gọi trong transaction tạo bài.
+     */
+    public function createForPlan(User $user, PlanContext $context, Product $product, string $itemPrompt, string $idempotencyKey): Generation
+    {
+        $generation = Generation::query()->create([
+            'user_id' => $user->id,
+            'creative_id' => null,
+            'creator_id' => $user->id,
+            'model_id' => $context->model_id,
+            'type' => GenerationType::Plan,
+            'input_paths' => $product->images->pluck('path', 'field_key')->all(),
+            'asset_paths' => null,
+            'input_values' => ['aspectRatio' => $context->aspect_ratio],
+            'aspect_ratio' => $context->aspect_ratio,
+            'quantity' => 1,
+            'price_per_image' => 0,
+            'prompt_snapshot' => Product::appendPromptNote($context->prompt($itemPrompt), $product->id),
+            'status' => GenerationStatus::Queued,
+            'idempotency_key' => $idempotencyKey,
+            'product_id' => $product->id,
+        ]);
+        $generation->outputs()->create(['position' => 1, 'status' => OutputStatus::Queued]);
+
+        return $generation->load('outputs');
     }
 
     /** Creator tạo thử (kể cả bản nháp): không trừ Credit. */

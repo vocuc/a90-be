@@ -55,11 +55,14 @@ class SocialContentJobService
      */
     public function queue(SocialPost $post): void
     {
-        $price = $this->price();
-        $this->credits->apply(
-            $this->credits->lockWallet($post->user_id), -$price, LedgerType::SocialContentCharge,
-            "social_content:charge:post:{$post->id}", 'social_post', $post->id, 'AI viết nội dung bài đăng',
-        );
+        // Bài kế hoạch nội dung miễn phí (FlowKit ke-hoach-noi-dung/thiet-ke.txt mục 5.2)
+        $price = $post->isPlan() ? 0 : $this->price();
+        if ($price > 0) {
+            $this->credits->apply(
+                $this->credits->lockWallet($post->user_id), -$price, LedgerType::SocialContentCharge,
+                "social_content:charge:post:{$post->id}", 'social_post', $post->id, 'AI viết nội dung bài đăng',
+            );
+        }
 
         $job = SocialContentJob::query()->firstOrCreate(
             ['social_post_id' => $post->id],
@@ -186,6 +189,8 @@ class SocialContentJobService
 
         $result = $this->writer->write([
             'creatives' => $creatives->all(),
+            // Ý chính trong kịch bản của bài kế hoạch (null với bài khác)
+            'idea' => $post->isPlan() ? (trim((string) ($post->script['y_chinh'] ?? '')) ?: null) : null,
             'hashtags' => $pool,
             'samples' => $settings['samples'],
             'requirements' => $settings['requirements'],

@@ -52,6 +52,21 @@ class BusinessException extends RuntimeException
         return new self('INVALID_STATE', $message, 409);
     }
 
+    public static function planProductUnavailable(): self
+    {
+        return new self('PLAN_PRODUCT_UNAVAILABLE', 'Sản phẩm không tồn tại, đã ngừng bán hoặc chưa có ảnh.', 422);
+    }
+
+    public static function planContextUnavailable(): self
+    {
+        return new self('PLAN_CONTEXT_UNAVAILABLE', 'Bối cảnh không tồn tại hoặc đã tắt.', 422);
+    }
+
+    public static function planPostNotRedoable(): self
+    {
+        return new self('PLAN_POST_NOT_REDOABLE', 'Chỉ làm lại được bài kế hoạch đang chờ duyệt, chưa đăng nền tảng nào.', 409);
+    }
+
     public static function postNotEditable(): self
     {
         return new self('POST_NOT_EDITABLE', 'Bài đăng không còn ở trạng thái chờ gửi.', 409);

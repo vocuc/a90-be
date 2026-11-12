@@ -19,7 +19,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class SocialPostResource extends JsonResource
 {
-    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs', 'worker', 'product'];
+    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs', 'worker', 'product', 'planContext'];
 
     /** Thông báo người dùng thấy ở nền tảng đăng lỗi; mã lỗi chi tiết chỉ admin xem (social_publish_jobs). */
     public const PLATFORM_FAILED_MESSAGE = 'Đăng thất bại, vui lòng thử lại.';
@@ -49,6 +49,12 @@ class SocialPostResource extends JsonResource
                 ],
                 'product' => $this->product ? ['id' => $this->product->id, 'name' => $this->product->name] : null,
                 'scheduled_at' => $this->scheduled_at,
+            ] : null,
+            // Bài kế hoạch (source plan): kịch bản { y_chinh, items: [câu lệnh từng ảnh] } + bối cảnh + sản phẩm. Bài khác: null
+            'plan' => $this->isPlan() ? [
+                'script' => $this->script,
+                'context' => $this->planContext ? ['id' => $this->planContext->id, 'name' => $this->planContext->name] : null,
+                'product' => $this->product ? ['id' => $this->product->id, 'name' => $this->product->name] : null,
             ] : null,
             'image_batch_id' => $this->image_batch_id,
             // Tạo bài có bật AI viết nội dung (generating = AI đang viết)

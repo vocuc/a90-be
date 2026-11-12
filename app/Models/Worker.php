@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\OutputStatus;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -109,15 +110,25 @@ class Worker extends Model
     public function regenerateToken(): string
     {
         $token = Str::random(64);
+        // Bỏ giá trị gốc của token_encrypted: save() so cột mã hoá bằng cách giải mã giá trị gốc, token cũ mã hoá bằng
+        // APP_KEY khác (database chép từ môi trường khác) sẽ lỗi "The MAC is invalid"
+        $this->setRawAttributes(array_merge($this->getAttributes(), ['token_encrypted' => null]), true);
         $this->forceFill(['token_hash' => self::hashToken($token), 'token_encrypted' => $token])->save();
 
         return $token;
     }
 
-    /** Token để admin xem lại; null với worker tạo trước khi lưu token mã hoá. */
+    /**
+     * Token để admin xem lại; null với worker tạo trước khi lưu token mã hoá, hoặc token mã hoá bằng APP_KEY khác
+     * (database chép từ môi trường khác): không giải mã được thì coi như không xem lại được, admin tạo lại token.
+     */
     public function plainToken(): ?string
     {
-        return $this->token_encrypted;
+        try {
+            return $this->token_encrypted;
+        } catch (DecryptException) {
+            return null;
+        }
     }
 
     public static function findActiveByToken(?string $token): ?self
