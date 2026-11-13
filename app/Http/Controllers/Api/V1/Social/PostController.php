@@ -37,8 +37,8 @@ class PostController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             // Lọc theo worker đã giao bài (trang /posts ở repo frontend)
             'worker_id' => ['nullable', 'integer'],
-            // Lọc theo nguồn tạo bài, vd lookbook (bài do skill FlowKit tạo lookbook)
-            'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_LOOKBOOK, SocialPost::SOURCE_PLAN])],
+            // Lọc theo nguồn tạo bài, vd plan (bài do skill kế hoạch nội dung tạo)
+            'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_PLAN])],
             // Lọc theo ngày đăng (scheduled_at), ngày theo giờ Việt Nam (ai90.social.planner_timezone)
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d'],

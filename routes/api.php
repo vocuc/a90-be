@@ -26,7 +26,6 @@ use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\Social\VideoPostController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
-use App\Http\Controllers\Api\V1\WorkerLookbookTaskController;
 use App\Http\Controllers\Api\V1\WorkerPostJobController;
 use App\Http\Controllers\Api\V1\WorkerVideoImageController;
 use App\Http\Controllers\Api\V1\WorkerVideoTemplateController;
@@ -245,10 +244,3 @@ Route::get('v1/video-images', [WorkerVideoImageController::class, 'index'])->mid
 // Máy làm template (D:ideo-tmp, npm run sync-templates) đồng bộ danh sách template vào shop worker được gắn (tài khoản tạo video)
 Route::put('v1/video-templates/sync', [WorkerVideoTemplateController::class, 'sync'])->middleware('worker');
 
-// Skill tạo lookbook (FlowKit a51-skills/tao-anh-look-book): xin sản phẩm tiếp theo, báo xong (upload ảnh -> bài chờ duyệt)
-// hoặc lỗi. Worker loại đăng bài, gắn tài khoản shop.
-Route::prefix('v1/lookbook-tasks')->middleware('worker')->group(function () {
-    Route::get('next', [WorkerLookbookTaskController::class, 'next']);
-    Route::post('{id}/complete', [WorkerLookbookTaskController::class, 'complete'])->whereNumber('id');
-    Route::post('{id}/fail', [WorkerLookbookTaskController::class, 'fail'])->whereNumber('id');
-});

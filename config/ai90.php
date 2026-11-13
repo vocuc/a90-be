@@ -54,8 +54,8 @@ return [
     ],
 
     'worker' => [
-        // Worker phải trả kết quả trong thời gian này, quá hạn thì job được giao lại cho worker khác.
-        'lease_minutes' => 15,
+        // Worker phải trả kết quả trong thời gian này, quá hạn thì ảnh về hàng đợi cho worker khác nhận.
+        'lease_minutes' => 5,
         // Số lần giao job tối đa; quá số lần này thì ảnh thất bại và hoàn Credit.
         'max_attempts' => 3,
         // Dung lượng ảnh kết quả tối đa worker được gửi lên (KB).

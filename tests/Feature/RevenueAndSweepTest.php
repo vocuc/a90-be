@@ -81,8 +81,8 @@ class RevenueAndSweepTest extends TestCase
 
         $jobId = $this->claimJob($dead)->json('data.id');
 
-        // Còn trong 15 phút: chưa giao lại.
-        $this->travel(14)->minutes();
+        // Còn trong 5 phút: chưa giao lại.
+        $this->travel(4)->minutes();
         $this->artisan('generations:sweep-stuck')->assertSuccessful();
         $this->claimJob($alive)->assertNoContent();
 
