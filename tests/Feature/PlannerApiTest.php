@@ -135,6 +135,7 @@ class PlannerApiTest extends TestCase
         $data = $this->withToken($token)->getJson('/api/v1/planner/context?from=2026-11-14&to=2026-11-14')->assertOk()->json('data');
 
         $this->assertSame([$product->id], array_column($data['products'], 'id'));
+        $this->assertArrayHasKey('prompt_note', $data['products'][0]);
         $this->assertNotNull($data['products'][0]['last_planned_at']);
         $this->assertSame([$context->id], array_column($data['contexts'], 'id'));
         $this->assertSame([$postId], array_column($data['posts'], 'id'));
@@ -169,8 +170,8 @@ class PlannerApiTest extends TestCase
             $this->assertSame('9:16', $g->aspect_ratio);
         }
         $this->assertSame(
-            // Mô tả bối cảnh không ghép vào prompt: chỉ câu lệnh của planner + ghi chú sản phẩm
-            "cận cảnh tay cầm giày nghiêng 45 độ\n\nGiữ đúng logo trên lưỡi gà.",
+            // Mô tả bối cảnh và "Yêu cầu" sản phẩm không ghép vào prompt: planner đã viết câu lệnh theo chúng
+            'cận cảnh tay cầm giày nghiêng 45 độ',
             $generations[0]->prompt_snapshot,
         );
 
@@ -481,7 +482,7 @@ class PlannerApiTest extends TestCase
         $prompt = $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertOk()->json('data.images.0.prompt');
         $this->assertStringStartsWith('cận cảnh tay cầm giày nghiêng 45 độ', $prompt);
         $this->assertStringNotContainsString(trim($context->description), $prompt);
-        $this->assertStringContainsString('Ghi chú sản phẩm', $prompt);
+        $this->assertStringNotContainsString('Ghi chú sản phẩm', $prompt);
     }
 
     public function test_cancel_rejects_posts_past_generating(): void

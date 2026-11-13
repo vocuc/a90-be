@@ -73,6 +73,8 @@ class PlannerService
             'products' => $products->map(fn (Product $p) => [
                 'id' => $p->id,
                 'name' => $p->name,
+                // "Yêu cầu" của sản phẩm: quy tắc để planner viết câu lệnh (A51 không nối vào prompt ảnh kế hoạch)
+                'prompt_note' => $p->prompt_note,
                 'thumb_url' => $p->images->first() ? $this->media->url($p->images->first()->path) : null,
                 'image_fields' => $p->images->pluck('field_key')->values(),
                 'last_planned_at' => $lastPlanned[$p->id] ?? null,

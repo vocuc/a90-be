@@ -78,7 +78,8 @@ class GenerationService
             'aspect_ratio' => $context->aspect_ratio,
             'quantity' => 1,
             'price_per_image' => 0,
-            'prompt_snapshot' => Product::appendPromptNote($context->prompt($itemPrompt), $product->id),
+            // Câu lệnh của planner là toàn bộ prompt: planner đã viết theo mô tả bối cảnh + "Yêu cầu" của sản phẩm
+            'prompt_snapshot' => $context->prompt($itemPrompt),
             'status' => GenerationStatus::Queued,
             'idempotency_key' => $idempotencyKey,
             'product_id' => $product->id,
