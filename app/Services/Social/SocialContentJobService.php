@@ -68,6 +68,11 @@ class SocialContentJobService
             ['social_post_id' => $post->id],
             ['status' => OutputStatus::Queued, 'charge_amount' => $price],
         );
+        // Bài đã có job AI xong từ trước (vd bài kế hoạch bị xoá trắng nội dung rồi tạo lại ảnh): chạy lại job đó,
+        // không thì job bị bỏ qua (không còn queued) và bài kẹt ở generating
+        if (! $job->wasRecentlyCreated && $job->status !== OutputStatus::Queued) {
+            $job->update(['status' => OutputStatus::Queued, 'finished_at' => null, 'error_code' => null, 'error_message' => null]);
+        }
         WriteSocialPostContent::dispatch($job->id)->afterCommit();
     }
 

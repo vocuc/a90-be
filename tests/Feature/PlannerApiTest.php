@@ -14,6 +14,7 @@ use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\SocialPost;
 use App\Models\User;
+use App\Models\Worker;
 use App\Services\Social\SocialContentWriter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -387,18 +388,40 @@ class PlannerApiTest extends TestCase
         $this->runWorker([null, null]);
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/approve")->assertOk();
         $post = SocialPost::query()->findOrFail($id);
-        // Đăng (chờ tới giờ): giả lập như publish() để test không phụ thuộc worker đăng bài
-        $post->forceFill(['worker_id' => null, 'platforms' => ['tiktok', 'facebook']]);
-        $post->queuePlatforms();
-        $post->syncStatus();
-        $post->save();
-        $this->assertSame(SocialPostStatus::Queued, $post->fresh()->status);
+        $productId = $post->product_id;
+
+        // Đăng hẹn giờ ngày mai: chờ đăng, vẫn giữ sản phẩm của kế hoạch
+        [$worker] = Worker::register('post-worker-'.Str::random(4), Worker::TYPE_PUBLISH);
+        $worker->users()->attach($user->id);
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/publish", [
+            'worker_id' => $worker->id,
+            'platforms' => ['tiktok', 'facebook'],
+            'scheduled_at' => now()->addDay()->toIso8601String(),
+            'images' => $post->images()->orderBy('position')->get()->map(fn ($i) => ['image_id' => $i->id])->all(),
+        ])->assertOk()->assertJsonPath('data.status', 'queued');
+        $this->assertSame($productId, $post->fresh()->product_id, 'Đăng không được xoá sản phẩm của bài kế hoạch.');
 
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/unapprove")->assertOk()
             ->assertJsonPath('data.status', 'awaiting_approval');
         $post->refresh();
         $this->assertSame([], $post->platformStatuses());
         $this->assertSame(['tiktok', 'facebook'], $post->platforms, 'Giữ nền tảng đã chọn để điền sẵn.');
+
+        // Hủy đăng xong tạo lại ảnh được
+        $image = $post->images()->orderBy('position')->firstOrFail();
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$image->id}/redo")->assertOk();
+        $this->runWorker([null]);
+
+        // Bài đăng trước bản sửa bị mất product_id: tạo lại ảnh vẫn được, lấy lại sản phẩm từ lượt tạo ảnh
+        $post->refresh();
+        // Đăng không gửi nội dung (xoá trắng) rồi tạo lại ảnh: AI viết lại, bài không kẹt ở generating
+        $this->assertSame(SocialPostStatus::AwaitingApproval, $post->status);
+        $this->assertSame('Giày trắng đi cafe', $post->title);
+        $post->forceFill(['product_id' => null])->save();
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$image->id}/redo")->assertOk();
+        $this->assertSame($productId, $post->fresh()->product_id);
+        $this->runWorker([null]);
+        $post->refresh();
 
         // Worker đã nhận một nền tảng (publishing): không huỷ được
         $post->forceFill(['status' => SocialPostStatus::Publishing, 'tiktok_status' => 'publishing'])->save();

@@ -6,6 +6,7 @@ use App\Enums\PlatformPublishStatus;
 use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
+use App\Models\Generation;
 use App\Models\PlanContext;
 use App\Models\Product;
 use App\Models\SocialContentJob;
@@ -210,7 +211,7 @@ class PlannerService
             if (! $context?->is_active) {
                 throw BusinessException::planContextUnavailable();
             }
-            $product = $this->product($user, (int) $post->product_id);
+            $product = $this->product($user, $this->planProductId($post));
 
             $post->images()->delete();
             SocialContentJob::query()->where('social_post_id', $post->id)->delete();
@@ -256,7 +257,7 @@ class PlannerService
             if (! $context?->is_active) {
                 throw BusinessException::planContextUnavailable();
             }
-            $product = $this->product($user, (int) $post->product_id);
+            $product = $this->product($user, $this->planProductId($post));
 
             $generation = $this->generations->createForPlan(
                 $user, $context, $product, $prompt, "plan:{$post->id}:".Str::uuid()->toString().":{$item}",
@@ -291,6 +292,25 @@ class PlannerService
                 'position' => $i + 1,
             ]);
         }
+    }
+
+    /**
+     * Sản phẩm của bài kế hoạch. Bài đã bấm đăng trước bản sửa 2026-11-13 bị xoá product_id: lấy lại từ lượt tạo ảnh
+     * của bài (generations.product_id) và ghi lại vào bài.
+     */
+    private function planProductId(SocialPost $post): int
+    {
+        if (! $post->product_id) {
+            $fromImages = Generation::query()
+                ->whereIn('id', $post->images()->whereNotNull('generation_id')->select('generation_id'))
+                ->whereNotNull('product_id')
+                ->value('product_id');
+            if ($fromImages) {
+                $post->update(['product_id' => $fromImages]);
+            }
+        }
+
+        return (int) $post->product_id;
     }
 
     private function product(User $user, int $productId): Product
