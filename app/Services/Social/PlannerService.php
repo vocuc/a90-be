@@ -28,7 +28,7 @@ class PlannerService
 
     public const MAX_ITEMS = 6;
 
-    public const ITEM_MAX = 1000;
+    public const ITEM_MAX = 1500;
 
     public const IDEA_MAX = 1000;
 

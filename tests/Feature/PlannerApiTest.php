@@ -168,7 +168,8 @@ class PlannerApiTest extends TestCase
             $this->assertSame('9:16', $g->aspect_ratio);
         }
         $this->assertSame(
-            "Bối cảnh quán cafe gỗ, nắng sớm, tông be.\n\ncận cảnh tay cầm giày nghiêng 45 độ\n\nGiữ đúng logo trên lưỡi gà.",
+            // Mô tả bối cảnh không ghép vào prompt: chỉ câu lệnh của planner + ghi chú sản phẩm
+            "cận cảnh tay cầm giày nghiêng 45 độ\n\nGiữ đúng logo trên lưỡi gà.",
             $generations[0]->prompt_snapshot,
         );
 
@@ -302,7 +303,8 @@ class PlannerApiTest extends TestCase
 
         $this->app['auth']->forgetGuards();
         $prompt = $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertOk()->json('data.images.0.prompt');
-        $this->assertStringContainsString(trim($context->description), $prompt);
+        $this->assertStringStartsWith('cận cảnh tay cầm giày nghiêng 45 độ', $prompt);
+        $this->assertStringNotContainsString(trim($context->description), $prompt);
         $this->assertStringContainsString('Ghi chú sản phẩm', $prompt);
     }
 

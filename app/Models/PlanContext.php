@@ -7,8 +7,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Bối cảnh cố định của bài kế hoạch: chủ shop quy ước (nền, ánh sáng, người mẫu, phong cách...), planner chỉ đọc.
- * Ảnh kế hoạch = ảnh sản phẩm + prompt "mô tả bối cảnh + câu lệnh của planner", tạo bằng model + tỉ lệ khung ở đây.
+ * Bối cảnh mẫu của bài kế hoạch: chủ shop ghi yêu cầu (nền, ánh sáng, bộ ảnh bắt buộc, câu phải thêm vào prompt...),
+ * planner đọc mô tả làm quy tắc rồi tự viết prompt đầy đủ cho từng ảnh. Mô tả KHÔNG được ghép vào prompt gửi worker.
+ * Ảnh kế hoạch = ảnh sản phẩm + prompt của planner, tạo bằng model + tỉ lệ khung ở đây.
  */
 class PlanContext extends Model
 {
@@ -40,9 +41,12 @@ class PlanContext extends Model
         return $query->where('is_active', true);
     }
 
-    /** Prompt gửi worker cho 1 ảnh: bối cảnh trước, câu lệnh của planner sau. */
+    /**
+     * Prompt gửi worker cho 1 ảnh: đúng câu lệnh planner viết. Mô tả bối cảnh là yêu cầu cho planner, không ghép vào
+     * (trong đó có cả các dòng chỉ dành cho planner như "bộ ảnh bắt buộc", "câu phải thêm vào cuối").
+     */
     public function prompt(string $itemPrompt): string
     {
-        return trim($this->description)."\n\n".trim($itemPrompt);
+        return trim($itemPrompt);
     }
 }
