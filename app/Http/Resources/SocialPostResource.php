@@ -2,7 +2,6 @@
 
 namespace App\Http\Resources;
 
-use App\Enums\GenerationType;
 use App\Enums\OutputStatus;
 use App\Enums\PlatformPublishStatus;
 use App\Models\ImageBatchImage;
@@ -20,7 +19,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class SocialPostResource extends JsonResource
 {
-    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs', 'worker', 'product', 'planContext'];
+    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs', 'worker', 'product'];
 
     /** Thông báo người dùng thấy ở nền tảng đăng lỗi; mã lỗi chi tiết chỉ admin xem (social_publish_jobs). */
     public const PLATFORM_FAILED_MESSAGE = 'Đăng thất bại, vui lòng thử lại.';
@@ -50,12 +49,6 @@ class SocialPostResource extends JsonResource
                 ],
                 'product' => $this->product ? ['id' => $this->product->id, 'name' => $this->product->name] : null,
                 'scheduled_at' => $this->scheduled_at,
-            ] : null,
-            // Bài kế hoạch (source plan): kịch bản { y_chinh, items: [câu lệnh từng ảnh] } + bối cảnh + sản phẩm. Bài khác: null
-            'plan' => $this->isPlan() ? [
-                'script' => $this->script,
-                'context' => $this->planContext ? ['id' => $this->planContext->id, 'name' => $this->planContext->name] : null,
-                'product' => $this->product ? ['id' => $this->product->id, 'name' => $this->product->name] : null,
             ] : null,
             'image_batch_id' => $this->image_batch_id,
             // Tạo bài có bật AI viết nội dung (generating = AI đang viết)
@@ -116,9 +109,6 @@ class SocialPostResource extends JsonResource
             'thumb_url' => $completed ? $media->url($output->thumbPathOrOriginal()) : null,
             'error_message' => $output?->status === OutputStatus::Failed ? GenerationResource::errorMessage($output->error_code) : null,
             'creative' => $creative ? ImageBatchService::creativeSummary($creative) : null,
-            // Prompt đã gửi tạo ảnh (mô tả bối cảnh + câu lệnh + ghi chú sản phẩm): chỉ ảnh kế hoạch nội dung, vì prompt
-            // là của chính chủ shop. Ảnh từ mẫu của creator không trả prompt (bí mật của creator).
-            'prompt' => $image->generation?->type === GenerationType::Plan ? $image->generation->prompt_snapshot : null,
         ];
     }
 
@@ -138,7 +128,6 @@ class SocialPostResource extends JsonResource
             'thumb_url' => $media->url($image->thumbPath()),
             'error_message' => null,
             'creative' => null,
-            'prompt' => null,
         ];
     }
 }

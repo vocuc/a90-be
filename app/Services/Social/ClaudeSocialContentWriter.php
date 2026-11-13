@@ -120,11 +120,9 @@ class ClaudeSocialContentWriter implements SocialContentWriter
             ->map(fn ($s, $i) => '<bai_mau so="'.($i + 1).'">'."\nTiêu đề: ".($s['title'] ?: '(không có)')."\nNội dung:\n{$s['content']}\n</bai_mau>")
             ->implode("\n");
         $requirements = trim((string) ($request['requirements'] ?? ''));
-        $idea = trim((string) ($request['idea'] ?? ''));
         $limits = $request['limits'];
 
         return "Mẫu ảnh đã dùng:\n".($creatives ?: '(không có)')."\n\n"
-            .($idea ? "Ý chính của bài (viết xoay quanh ý này):\n<y_chinh>\n{$idea}\n</y_chinh>\n\n" : '')
             .($samples ? "Bài viết mẫu của shop (học giọng văn, không chép nguyên):\n{$samples}\n\n" : '')
             .($requirements ? "Yêu cầu bắt buộc của shop (phải làm đúng):\n<yeu_cau_bat_buoc>\n{$requirements}\n</yeu_cau_bat_buoc>\n\n" : '')
             ."Danh sách hashtag được chọn: {$hashtags}\n\n"

@@ -14,7 +14,7 @@ class SweepStuckGenerations extends Command
 {
     protected $signature = 'generations:sweep-stuck';
 
-    protected $description = 'Giao lại job worker giữ quá hạn, thất bại và hoàn Credit khi hết lượt';
+    protected $description = 'Giao lại job worker giữ quá hạn, thất bại khi hết lượt';
 
     public function handle(WorkerJobService $jobs): int
     {

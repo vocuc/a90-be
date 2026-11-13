@@ -3,22 +3,17 @@
 namespace Tests;
 
 use App\Enums\CreativeStatus;
-use App\Enums\LedgerType;
 use App\Models\AiCreative;
 use App\Models\AiModel;
-use App\Models\CreditLedger;
-use App\Models\CreditWallet;
 use App\Models\Generation;
 use App\Models\User;
 use App\Models\Worker;
-use App\Services\CreditService;
 use Database\Seeders\AiModelSeeder;
 use Database\Seeders\CategorySeeder;
 use Database\Seeders\SettingSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -39,37 +34,26 @@ abstract class TestCase extends BaseTestCase
         Http::preventStrayRequests();
     }
 
-    protected function buyer(int $credit = 0): User
+    protected function buyer(): User
     {
-        $user = User::factory()->create();
-        CreditWallet::query()->create(['user_id' => $user->id]);
-
-        if ($credit > 0) {
-            DB::transaction(function () use ($user, $credit) {
-                $credits = app(CreditService::class);
-                $credits->apply($credits->lockWallet($user->id), $credit, LedgerType::AdminTopup, 'test:'.Str::uuid());
-            });
-        }
-
-        return $user;
+        return User::factory()->create();
     }
 
-    protected function creator(int $credit = 0): User
+    protected function creator(): User
     {
-        $user = $this->buyer($credit);
+        $user = $this->buyer();
         $user->creatorProfile()->create(['shop_name' => 'Shop '.$user->id, 'username' => 'creator'.$user->id]);
 
         return $user;
     }
 
-    protected function publishedCreative(User $creator, int $price = 1000, array $config = []): AiCreative
+    protected function publishedCreative(User $creator, array $config = []): AiCreative
     {
         $creative = AiCreative::query()->create([
             'creator_id' => $creator->id,
             'model_id' => AiModel::query()->firstOrFail()->id,
             'title' => 'Ảnh sản phẩm studio',
             'slug' => 'creative-'.Str::random(8),
-            'price_per_image' => $price,
             'status' => CreativeStatus::Published,
             'is_public' => true,
             'published_at' => now(),
@@ -113,20 +97,6 @@ abstract class TestCase extends BaseTestCase
             'status' => $generation->status->value,
             'outputs' => $generation->outputs->map(fn ($o) => ['status' => $o->status->value, 'error_code' => $o->error_code])->all(),
         ];
-    }
-
-    protected function balance(User $user): int
-    {
-        return (int) CreditWallet::query()->where('user_id', $user->id)->value('balance');
-    }
-
-    protected function assertLedgerMatchesBalance(User $user): void
-    {
-        $this->assertSame(
-            $this->balance($user),
-            (int) CreditLedger::query()->where('user_id', $user->id)->sum('amount'),
-            'Tổng credit_ledger phải bằng số dư ví.'
-        );
     }
 
     // ---- Worker ----

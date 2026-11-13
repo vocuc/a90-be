@@ -24,7 +24,7 @@ class ProductShareTest extends TestCase
     public function test_owner_shares_by_email_and_recipient_can_use_but_not_edit(): void
     {
         $owner = $this->creator();
-        $friend = $this->creator(credit: 5000);
+        $friend = $this->creator();
         $product = $this->product($owner);
 
         // Chưa chia sẻ: người khác không thấy, không dùng được
@@ -86,8 +86,8 @@ class ProductShareTest extends TestCase
 
     public function test_generated_image_count_is_per_user(): void
     {
-        $owner = $this->creator(credit: 5000);
-        $friend = $this->creator(credit: 5000);
+        $owner = $this->creator();
+        $friend = $this->creator();
         $product = $this->product($owner);
         $product->sharedWith()->attach($friend->id);
         $creative = $this->publishedCreative($this->creator());

@@ -5,23 +5,16 @@
         // Creative
         'draft' => ['secondary', 'Nháp'],
         'pending_review' => ['info', 'Chờ duyệt'],
-        // Bài đăng kế hoạch
-        'awaiting_approval' => ['info', 'Chờ duyệt'],
         'published' => ['success', 'Đã xuất bản'],
         'rejected' => ['danger', 'Từ chối'],
         'paused' => ['warning', 'Tạm dừng'],
-        // Generation / Output / Transaction
+        // Generation / Output
         'queued' => ['secondary', 'Chờ xử lý'],
         'processing' => ['info', 'Đang xử lý'],
         'completed' => ['success', 'Hoàn tất'],
         'failed' => ['danger', 'Thất bại'],
         'cancelled' => ['dark', 'Đã hủy'],
         'pending' => ['warning', 'Chờ'],
-        'refunded' => ['primary', 'Đã hoàn'],
-        // Revenue
-        'available' => ['success', 'Khả dụng'],
-        'withdrawn' => ['info', 'Đã rút'],
-        'reversed' => ['danger', 'Thu hồi'],
         // User / API key
         'active' => ['success', 'Hoạt động'],
         'banned' => ['danger', 'Bị khóa'],
@@ -29,7 +22,7 @@
         'quota_exceeded' => ['warning', 'Hết quota'],
         'disabled' => ['secondary', 'Tắt'],
         // Generation type
-        'paid' => ['primary', 'Trả phí'],
+        'paid' => ['primary', 'Tạo thật'],
         'owner' => ['info', 'Creator tự dùng'],
         'test' => ['secondary', 'Tạo thử'],
     ];

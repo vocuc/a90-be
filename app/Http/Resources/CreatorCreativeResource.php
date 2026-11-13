@@ -28,7 +28,6 @@ class CreatorCreativeResource extends JsonResource
             'description' => $this->description,
             'category_id' => $this->category_id,
             'model_id' => $this->model_id,
-            'price_per_image' => $this->price_per_image,
             'hashtags' => HashtagResource::collection($this->whenLoaded('hashtags')),
             'status' => $this->status,
             'is_public' => $this->is_public,

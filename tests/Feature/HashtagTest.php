@@ -14,7 +14,6 @@ class HashtagTest extends TestCase
         return [
             'title' => 'Ảnh chân dung',
             'model_id' => AiModel::query()->firstOrFail()->id,
-            'price_per_image' => 1000,
             'input_schema' => [
                 ['key' => 'photo', 'label' => 'Ảnh', 'type' => 'image', 'required' => true],
                 ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '1:1'],

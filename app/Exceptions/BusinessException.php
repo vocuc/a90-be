@@ -19,14 +19,6 @@ class BusinessException extends RuntimeException
         parent::__construct($message);
     }
 
-    public static function insufficientCredit(int $required, int $balance): self
-    {
-        return new self('INSUFFICIENT_CREDIT', 'Số dư Credit không đủ.', 402, [
-            'required' => $required,
-            'balance' => $balance,
-        ]);
-    }
-
     public static function creativeNotAvailable(): self
     {
         return new self('CREATIVE_NOT_AVAILABLE', 'AI Creative không tồn tại hoặc không còn hoạt động.', 404);
@@ -50,31 +42,6 @@ class BusinessException extends RuntimeException
     public static function invalidState(string $message): self
     {
         return new self('INVALID_STATE', $message, 409);
-    }
-
-    public static function planProductUnavailable(): self
-    {
-        return new self('PLAN_PRODUCT_UNAVAILABLE', 'Sản phẩm không tồn tại, đã ngừng bán hoặc chưa có ảnh.', 422);
-    }
-
-    public static function planContextUnavailable(): self
-    {
-        return new self('PLAN_CONTEXT_UNAVAILABLE', 'Bối cảnh không tồn tại hoặc đã tắt.', 422);
-    }
-
-    public static function planPostNotRedoable(): self
-    {
-        return new self('PLAN_POST_NOT_REDOABLE', 'Chỉ làm lại được bài kế hoạch đang chờ duyệt. Bài đã duyệt thì bấm "Bỏ duyệt" trước.', 409);
-    }
-
-    public static function planPostNotApproved(): self
-    {
-        return new self('PLAN_POST_NOT_APPROVED', 'Bài kế hoạch chưa được duyệt, hãy bấm "Duyệt" trước khi đăng.', 409);
-    }
-
-    public static function planPostNotApprovable(string $message): self
-    {
-        return new self('PLAN_POST_NOT_APPROVABLE', $message, 409);
     }
 
     public static function postNotEditable(): self

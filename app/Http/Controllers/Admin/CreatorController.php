@@ -14,7 +14,7 @@ class CreatorController extends Controller
 {
     public function __construct(private AuditLogger $audit) {}
 
-    public function index(Request $request, SettingService $settings): View
+    public function index(Request $request): View
     {
         $filters = $request->validate([
             'q' => ['nullable', 'string', 'max:100'],
@@ -22,7 +22,7 @@ class CreatorController extends Controller
         ]);
 
         $creators = CreatorProfile::query()
-            ->with(['user', 'user.creatorWallet'])
+            ->with(['user'])
             ->when($filters['q'] ?? null, fn ($q, $term) => $q->where(fn ($q) => $q
                 ->where('username', 'like', "%{$term}%")
                 ->orWhere('shop_name', 'like', "%{$term}%")
@@ -32,20 +32,17 @@ class CreatorController extends Controller
             ->paginate(20)
             ->withQueryString();
 
-        $defaultShare = (float) $settings->get('creator_share_percent');
-
-        return view('admin.creators.index', compact('creators', 'filters', 'defaultShare'));
+        return view('admin.creators.index', compact('creators', 'filters'));
     }
 
-    /** Cấp/thu hồi tick verified và đặt % Creator nhận riêng (để trống = dùng mức mặc định). */
+    /** Cấp/thu hồi tick verified. */
     public function update(Request $request, CreatorProfile $creator): RedirectResponse
     {
         $data = $request->validate([
             'verified' => ['required', 'boolean'],
-            'creator_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
-        $before = $creator->only(['verified', 'creator_share_percent']);
+        $before = $creator->only(['verified']);
         $creator->update($data);
         $this->audit->log('admin.creator.update', $creator, ['before' => $before, 'after' => $data]);
 

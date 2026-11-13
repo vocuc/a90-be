@@ -44,11 +44,6 @@ class GenerationOutput extends Model
         return $this->belongsTo(Generation::class);
     }
 
-    public function transaction(): BelongsTo
-    {
-        return $this->belongsTo(Transaction::class);
-    }
-
     public function worker(): BelongsTo
     {
         return $this->belongsTo(Worker::class);

@@ -35,8 +35,6 @@ class VideoPostService
     /** Khoảng cách tối đa giữa 2 bài (phút): 1 ngày. */
     public const MAX_GAP_MINUTES = 1440;
 
-    public const STOP_INSUFFICIENT_CREDIT = 'insufficient_credit';
-
     public const STOP_NO_TEMPLATE = 'no_template';
 
     public const STOP_NOT_ENOUGH_IMAGES = 'not_enough_images';
@@ -89,15 +87,7 @@ class VideoPostService
                 $at = $at->copy()->addMinutes(random_int($gapMin, $gapMax));
             }
 
-            try {
-                $ids[] = $this->createPost($user, $worker, $platforms, $template, $productId, $outputs, $at, self::keyPrefix($idempotencyKey).$i)->id;
-            } catch (BusinessException $e) {
-                if ($e->errorCode !== 'INSUFFICIENT_CREDIT') {
-                    throw $e;
-                }
-                $stopped = self::STOP_INSUFFICIENT_CREDIT;
-                break;
-            }
+            $ids[] = $this->createPost($user, $worker, $platforms, $template, $productId, $outputs, $at, self::keyPrefix($idempotencyKey).$i)->id;
         }
 
         $this->audit->log('video_post.auto_create', null, [

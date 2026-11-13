@@ -116,7 +116,7 @@ class WorkerJobService
     }
 
     /**
-     * Ảnh worker giữ quá hạn: còn lượt thì trả về hàng đợi, hết lượt thì thất bại và hoàn Credit.
+     * Ảnh worker giữ quá hạn: còn lượt thì trả về hàng đợi, hết lượt thì thất bại.
      *
      * @return array{requeued: int, failed: int}
      */

@@ -27,7 +27,6 @@ class CreativeGroupResource extends JsonResource
                 'slug' => $creative->slug,
                 'title' => $creative->title,
                 'cover_url' => $media->url($creative->images->first()?->thumbPathOrOriginal()),
-                'price_per_image' => $creative->price_per_image,
                 'status' => $creative->status,
                 'is_hidden' => $creative->hidden_at !== null,
             ])->values(),

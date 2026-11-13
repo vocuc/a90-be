@@ -4,38 +4,31 @@ namespace App\Services;
 
 use App\Enums\GenerationStatus;
 use App\Enums\GenerationType;
-use App\Enums\LedgerType;
 use App\Enums\OutputStatus;
-use App\Enums\TransactionStatus;
 use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
-use App\Models\PlanContext;
 use App\Models\Product;
-use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Tạo Generation: kiểm tra Creative, trừ Credit, tạo Transaction cho từng ảnh.
+ * Tạo Generation: kiểm tra Creative, lưu nguyên liệu, tạo output cho từng ảnh.
  * Các ảnh ở trạng thái queued chờ worker nhận qua GET /api/v1/jobs (xem WorkerJobService).
- * Giá, model, prompt, phí luôn đọc từ database, không bao giờ lấy từ request.
+ * Model, prompt luôn đọc từ database, không bao giờ lấy từ request.
  */
 class GenerationService
 {
     public function __construct(
-        private CreditService $credits,
-        private RevenueShareService $shares,
         private MediaStorage $media,
         private AuditLogger $audit,
     ) {}
 
     /**
-     * Người mua (kể cả chính Creator) tạo ảnh từ Creative đang xuất bản: luôn trừ Credit.
+     * Người dùng (kể cả chính Creator) tạo ảnh từ Creative đang xuất bản.
      *
      * @param  array<string, string>  $keptPaths  ảnh đầu vào dùng lại từ lần tạo trước theo tên trường (khi không tải ảnh mới)
      * @param  ?int  $workerId  worker tạo ảnh người dùng chọn (đã kiểm tra bằng Worker::imageWorkerIdFor), null = worker nào cũng nhận
@@ -48,7 +41,6 @@ class GenerationService
 
         $this->assertAvailable($creative, $user);
 
-        // Creator tự dùng mẫu của mình cũng bị trừ Credit như người mua (tạo thử miễn phí dùng createTest)
         // Sửa nguyên liệu một ảnh của lô ($parent): giữ bật / tắt logo và worker của ảnh cũ
         return $this->start($user, $creative, GenerationType::Paid, $quantity, $input->aspectRatio, $idempotencyKey,
             fn () => [
@@ -59,39 +51,7 @@ class GenerationService
             ], $parent);
     }
 
-    /**
-     * 1 ảnh cho bài kế hoạch nội dung (PlannerService): không creative, không trừ Credit, không Transaction.
-     * Đầu vào = mọi ảnh của sản phẩm (theo field_key), prompt = bối cảnh + câu lệnh planner (+ "yêu cầu" của sản phẩm),
-     * model + tỉ lệ khung theo bối cảnh. Gọi trong transaction tạo bài.
-     */
-    public function createForPlan(User $user, PlanContext $context, Product $product, string $itemPrompt, string $idempotencyKey): Generation
-    {
-        $generation = Generation::query()->create([
-            'user_id' => $user->id,
-            'creative_id' => null,
-            'creator_id' => $user->id,
-            'model_id' => $context->model_id,
-            'type' => GenerationType::Plan,
-            'input_paths' => $product->images->pluck('path', 'field_key')->all(),
-            'asset_paths' => null,
-            'input_values' => ['aspectRatio' => $context->aspect_ratio],
-            'aspect_ratio' => $context->aspect_ratio,
-            'quantity' => 1,
-            'price_per_image' => 0,
-            // Câu lệnh của planner là toàn bộ prompt: planner đã viết theo mô tả bối cảnh + "Yêu cầu" của sản phẩm
-            'prompt_snapshot' => $context->prompt($itemPrompt),
-            'status' => GenerationStatus::Queued,
-            'idempotency_key' => $idempotencyKey,
-            'product_id' => $product->id,
-            // Ảnh kế hoạch luôn chèn logo shop (ảnh đại diện); shop chưa có logo thì không chèn
-            'insert_logo' => $user->logoPath() !== null,
-        ]);
-        $generation->outputs()->create(['position' => 1, 'status' => OutputStatus::Queued]);
-
-        return $generation->load('outputs');
-    }
-
-    /** Creator tạo thử (kể cả bản nháp): không trừ Credit. */
+    /** Creator tạo thử (kể cả bản nháp). */
     public function createTest(User $creator, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey): Generation
     {
         if ($existing = $this->findExisting($creator, $idempotencyKey, $creative->id)) {
@@ -103,7 +63,7 @@ class GenerationService
     }
 
     /**
-     * Tạo lại các ảnh được chọn: Generation mới, trừ Credit mới, Transaction mới.
+     * Tạo lại các ảnh được chọn: Generation mới.
      *
      * @param  int[]  $outputIds
      */
@@ -171,17 +131,6 @@ class GenerationService
 
         try {
             $generation = DB::transaction(function () use ($user, $creative, $type, $quantity, $aspectRatio, $idempotencyKey, $input, $parent, $retryOfOutputIds) {
-                $paid = $type === GenerationType::Paid;
-                $price = $creative->price_per_image;
-                $wallet = null;
-
-                if ($paid) {
-                    $wallet = $this->credits->lockWallet($user->id);
-                    $this->credits->assertSufficient($wallet, $price * $quantity);
-                    $sharePercent = $this->shares->percentFor($creative->creator_id);
-                    $split = $this->shares->split($price, $sharePercent);
-                }
-
                 $config = $creative->config;
                 $generation = Generation::query()->create([
                     'user_id' => $user->id,
@@ -193,7 +142,6 @@ class GenerationService
                     ...$input,
                     'aspect_ratio' => $aspectRatio,
                     'quantity' => $quantity,
-                    'price_per_image' => $paid ? $price : 0,
                     // "Yêu cầu" của sản phẩm (nếu có) nối vào cuối prompt của mọi Creative
                     'prompt_snapshot' => Product::appendPromptNote(
                         CreativeTemplate::render($config->prompt_template, $config->input_schema, $input['input_values'] ?? []),
@@ -204,38 +152,16 @@ class GenerationService
                 ]);
 
                 for ($i = 0; $i < $quantity; $i++) {
-                    $output = $generation->outputs()->create([
+                    $generation->outputs()->create([
                         'position' => $i + 1,
                         'retry_of_output_id' => $retryOfOutputIds[$i] ?? null,
                         'status' => OutputStatus::Queued,
                     ]);
-
-                    if (! $paid) {
-                        continue;
-                    }
-
-                    $transaction = Transaction::query()->create([
-                        'code' => $this->transactionCode(),
-                        'user_id' => $user->id,
-                        'creator_id' => $creative->creator_id,
-                        'creative_id' => $creative->id,
-                        'generation_id' => $generation->id,
-                        'generation_output_id' => $output->id,
-                        'model_code' => $creative->model->code,
-                        'amount' => $price,
-                        'creator_share_percent' => $sharePercent,
-                        ...$split,
-                        'status' => TransactionStatus::Processing,
-                    ]);
-                    $output->update(['transaction_id' => $transaction->id]);
-
-                    $this->credits->apply($wallet, -$price, LedgerType::GenerationCharge, "charge:tx:{$transaction->id}", 'transaction', $transaction->id);
                 }
 
                 $this->audit->log('generation.create', $generation, [
                     'type' => $type->value,
                     'quantity' => $quantity,
-                    'total' => $paid ? $price * $quantity : 0,
                 ], $user->id);
 
                 return $generation;
@@ -325,10 +251,5 @@ class GenerationService
     public static function allowedAspectRatios(AiCreative $creative): array
     {
         return array_values($creative->model->supported_aspect_ratios ?? []);
-    }
-
-    private function transactionCode(): string
-    {
-        return 'TX'.now()->format('ymd').Str::upper(Str::random(10));
     }
 }

@@ -40,11 +40,6 @@ class VideoPostTest extends TestCase
 
     // ---- Helpers ----
 
-    private function price(): int
-    {
-        return config('ai90.defaults')['social.ai_content_price'];
-    }
-
     private function template(User $shop, int $imageCount, string $name = 'Mẫu'): VideoTemplate
     {
         return VideoTemplate::query()->create([
@@ -108,18 +103,16 @@ class VideoPostTest extends TestCase
 
     public function test_auto_creates_scheduled_video_posts_with_ai_content(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $template = $this->template($shop, 2, 'Mở hộp');
         $this->template($shop, 5, 'Quá nhiều ảnh'); // không sản phẩm nào đủ 5 ảnh -> không được chọn
         $product = $this->productWithImages($shop, 3);
         [$worker] = $this->worker($shop);
-        $balance = $this->balance($shop);
         $firstAt = now()->addHour()->startOfMinute();
 
         $data = $this->auto($shop, $worker, ['first_at' => $firstAt->toIso8601String()])->assertCreated()->json('data');
         $this->assertSame(3, $data['created']);
         $this->assertNull($data['stopped']);
-        $this->assertSame($balance - 3 * $this->price(), $this->balance($shop));
 
         $posts = SocialPost::query()->whereIn('id', $data['post_ids'])->orderBy('id')->get();
         $this->assertTrue($posts[0]->scheduled_at->equalTo($firstAt));
@@ -152,7 +145,7 @@ class VideoPostTest extends TestCase
 
     public function test_auto_skips_inactive_products(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $this->template($shop, 1);
         $off = $this->productWithImages($shop, 3, 'Đã tắt');
         $off->update(['is_active' => false]);
@@ -170,32 +163,26 @@ class VideoPostTest extends TestCase
         $this->withToken($token)->getJson('/api/v1/video-images?count=1')->assertOk()->assertJsonPath('data.product.id', $on->id);
     }
 
-    public function test_stops_when_credit_runs_out_and_reports_reasons(): void
+    public function test_reports_reasons_when_nothing_can_be_created(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         [$worker] = $this->worker($shop);
 
         $this->auto($shop, $worker)->assertStatus(422)->assertJsonPath('code', 'VIDEO_NO_TEMPLATE');
         $this->template($shop, 2);
         $this->auto($shop, $worker)->assertStatus(422)->assertJsonPath('code', 'VIDEO_NOT_ENOUGH_IMAGES');
         $this->productWithImages($shop, 2);
-        $shop->creditWallet()->update(['balance' => 0]);
-        $this->auto($shop, $worker)->assertStatus(402);
-
-        // Đủ tiền cho 2 bài: tạo 2 rồi dừng
-        $shop->creditWallet()->update(['balance' => 2 * $this->price()]);
         $key = (string) Str::uuid();
-        $this->auto($shop, $worker, ['idempotency_key' => $key])->assertCreated()
-            ->assertJsonPath('data.created', 2)
-            ->assertJsonPath('data.stopped', 'insufficient_credit');
+        $created = $this->auto($shop, $worker, ['idempotency_key' => $key])->assertCreated()->json('data.created');
+        $this->assertGreaterThan(0, $created);
         // Gửi lại cùng key: không tạo thêm
-        $this->auto($shop, $worker, ['idempotency_key' => $key])->assertCreated()->assertJsonPath('data.created', 2);
-        $this->assertSame(2, SocialPost::query()->where('type', 'video')->count());
+        $this->auto($shop, $worker, ['idempotency_key' => $key])->assertCreated()->assertJsonPath('data.created', $created);
+        $this->assertSame($created, SocialPost::query()->where('type', 'video')->count());
     }
 
     public function test_time_with_offset_is_stored_correctly(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $this->template($shop, 1);
         $this->productWithImages($shop, 1);
         [$worker] = $this->worker($shop);
@@ -208,7 +195,7 @@ class VideoPostTest extends TestCase
 
     public function test_worker_claims_only_due_posts_then_publishes(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $this->template($shop, 2);
         $this->productWithImages($shop, 2);
         [$worker, $token] = $this->worker($shop);
@@ -242,7 +229,7 @@ class VideoPostTest extends TestCase
 
     public function test_auto_posts_to_chosen_platforms_in_one_job(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $this->template($shop, 1);
         $this->productWithImages($shop, 1);
         [$worker, $token] = $this->worker($shop);
@@ -264,7 +251,7 @@ class VideoPostTest extends TestCase
 
     public function test_manual_create_one_post_with_chosen_template_product_images(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $template = $this->template($shop, 2, 'Thủ công');
         $off = $this->template($shop, 2, 'Đã tắt');
         $off->update(['is_enabled' => false]);
@@ -290,7 +277,6 @@ class VideoPostTest extends TestCase
         $this->postJson('/api/v1/social/video-posts', ['worker_id' => null] + $body)->assertStatus(422)->assertJsonValidationErrors('worker_id');
         $this->postJson('/api/v1/social/video-posts', ['platforms' => []] + $body)->assertStatus(422)->assertJsonValidationErrors('platforms');
 
-        $balance = $this->balance($shop);
         $id = $this->postJson('/api/v1/social/video-posts', $body)->assertCreated()
             ->assertJsonPath('data.type', 'video')
             ->assertJsonPath('data.status', 'queued')
@@ -299,22 +285,16 @@ class VideoPostTest extends TestCase
             ->assertJsonPath('data.video.product.id', $product->id)
             ->assertJsonPath('data.image_count', 2)
             ->json('data.id');
-        $this->assertSame($balance - $this->price(), $this->balance($shop));
-        // Gửi lại cùng key: không tạo thêm, không trừ thêm
+        // Gửi lại cùng key: không tạo thêm
         $this->postJson('/api/v1/social/video-posts', $body)->assertCreated()->assertJsonPath('data.id', $id);
-        $this->assertSame($balance - $this->price(), $this->balance($shop));
 
         $this->nextJob($token)->assertOk()->assertJsonPath('data.request.post_id', $id)->assertJsonCount(2, 'data.request.images');
-
-        // Hết tiền: không tạo
-        $shop->creditWallet()->update(['balance' => 0]);
-        $this->actingAs($shop)->postJson('/api/v1/social/video-posts', ['idempotency_key' => (string) Str::uuid()] + $body)->assertStatus(402);
         $this->assertSame(1, SocialPost::query()->where('type', 'video')->count());
     }
 
     public function test_failed_post_can_be_edited_and_retried(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $first = $this->template($shop, 2, 'A');
         $second = $this->template($shop, 1, 'B');
         $product = $this->productWithImages($shop, 3);
@@ -363,7 +343,7 @@ class VideoPostTest extends TestCase
 
     public function test_recreate_while_worker_silent_and_old_result_rejected(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $this->template($shop, 1);
         $this->productWithImages($shop, 1);
         [$worker, $token] = $this->worker($shop);
@@ -383,7 +363,7 @@ class VideoPostTest extends TestCase
 
     public function test_queued_post_editable_and_deletable_and_rules(): void
     {
-        $shop = $this->creator(credit: 100000);
+        $shop = $this->creator();
         $this->template($shop, 1);
         $this->productWithImages($shop, 1);
         [$worker] = $this->worker($shop);

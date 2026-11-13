@@ -12,7 +12,7 @@ class WriteSocialPostContent implements ShouldQueue
 {
     use Queueable;
 
-    // Không thử lại: lỗi API đã được SDK thử lại, lỗi khác thì dùng nội dung mặc định và hoàn Credit
+    // Không thử lại: lỗi API đã được SDK thử lại, lỗi khác thì dùng nội dung mặc định
     public int $tries = 1;
 
     public int $timeout = 120;

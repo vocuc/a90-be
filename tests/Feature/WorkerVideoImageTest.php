@@ -63,7 +63,7 @@ class WorkerVideoImageTest extends TestCase
 
     public function test_returns_exact_count_of_shop_images(): void
     {
-        $shop = $this->buyer(credit: 100000);
+        $shop = $this->buyer();
         $product = $this->product($shop);
         $this->completedBatch($shop, 2, $product);
         $this->completedBatch($shop, 1, $product);
@@ -85,7 +85,7 @@ class WorkerVideoImageTest extends TestCase
 
     public function test_disabled_images_are_not_sent_to_worker(): void
     {
-        $shop = $this->buyer(credit: 100000);
+        $shop = $this->buyer();
         $batch = $this->completedBatch($shop, 3, $this->product($shop));
         $image = $batch->images()->firstOrFail();
         $this->actingAs($shop)->postJson("/api/v1/generations/{$image->generation_id}/outputs/{$image->output_id}/disable")
@@ -104,7 +104,7 @@ class WorkerVideoImageTest extends TestCase
 
     public function test_not_enough_images_reports_available(): void
     {
-        $shop = $this->buyer(credit: 100000);
+        $shop = $this->buyer();
         $this->completedBatch($shop, 2, $this->product($shop, 'A'));
         $this->completedBatch($shop, 1, $this->product($shop, 'B'));
         [, $token] = $this->videoWorker($shop);
@@ -116,8 +116,8 @@ class WorkerVideoImageTest extends TestCase
 
     public function test_only_images_of_assigned_shop(): void
     {
-        $owner = $this->buyer(credit: 100000);
-        $other = $this->buyer(credit: 100000);
+        $owner = $this->buyer();
+        $other = $this->buyer();
 
         $product = $this->product($owner);
         $batches = [$this->completedBatch($owner, 1, $product), $this->completedBatch($owner, 1, $product)];
@@ -133,7 +133,7 @@ class WorkerVideoImageTest extends TestCase
 
     public function test_images_come_from_a_single_product(): void
     {
-        $shop = $this->buyer(credit: 100000);
+        $shop = $this->buyer();
         $a = $this->product($shop, 'A');
         $b = $this->product($shop, 'B');
         $idsOf = fn (Product $p) => GenerationOutput::query()
@@ -159,7 +159,7 @@ class WorkerVideoImageTest extends TestCase
 
     public function test_batches_without_product_are_ignored(): void
     {
-        $shop = $this->buyer(credit: 100000);
+        $shop = $this->buyer();
         $this->completedBatch($shop, 3); // lô tạo tay
         [, $token] = $this->videoWorker($shop);
 

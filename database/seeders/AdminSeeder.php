@@ -28,7 +28,6 @@ class AdminSeeder extends Seeder
             ['name' => config('ai90.admin.name'), 'password' => $password ?: 'password'],
         );
         $admin->forceFill(['role' => UserRole::Admin, 'status' => 'active'])->save();
-        $admin->creditWallet()->firstOrCreate([]);
 
         $this->command?->info("Admin: {$email}");
     }

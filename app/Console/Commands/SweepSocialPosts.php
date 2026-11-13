@@ -10,7 +10,7 @@ use Illuminate\Console\Command;
 
 /**
  * Lưới an toàn cho bài đăng đang tạo nội dung: ảnh đã xong mà bài chưa sang bước nội dung thì chuyển tiếp,
- * job AI viết nội dung chờ / chạy quá lâu thì dùng nội dung mặc định và hoàn Credit.
+ * job AI viết nội dung chờ / chạy quá lâu thì dùng nội dung mặc định.
  * Job đăng bài không có hạn (note/gop-luong-dang-bai.txt ở repo frontend): worker im lặng thì chủ shop bấm "Tạo lại".
  */
 class SweepSocialPosts extends Command

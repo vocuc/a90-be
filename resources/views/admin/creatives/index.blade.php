@@ -25,7 +25,7 @@
         </div>
         <div class="card-body p-0 table-responsive">
             <table class="table table-hover table-sm mb-0">
-                <thead><tr><th></th><th>Creative</th><th>Creator</th><th>Danh mục</th><th>Model</th><th class="text-right">Giá / ảnh</th><th class="text-right">Lượt dùng</th><th>Trạng thái</th><th></th></tr></thead>
+                <thead><tr><th></th><th>Creative</th><th>Creator</th><th>Danh mục</th><th>Model</th><th class="text-right">Lượt dùng</th><th>Trạng thái</th><th></th></tr></thead>
                 <tbody>
                 @forelse ($creatives as $creative)
                     <tr>
@@ -37,8 +37,7 @@
                         <td>{{ '@'.($creative->creator->creatorProfile?->username ?? $creative->creator->email) }}</td>
                         <td>{{ $creative->category?->name ?? '—' }}</td>
                         <td class="small">{{ $creative->model->name }}</td>
-                        <td class="text-right">@credit($creative->price_per_image)</td>
-                        <td class="text-right">@credit($creative->usage_count)</td>
+                        <td class="text-right">@number($creative->usage_count)</td>
                         <td>
                             <x-admin.status :value="$creative->status" />
                             @if ($creative->hidden_at)<span class="badge badge-danger"><i class="fas fa-eye-slash"></i> Bị ẩn</span>@endif
@@ -46,7 +45,7 @@
                         <td class="text-right"><a href="{{ route('admin.creatives.show', $creative) }}" class="btn btn-xs btn-outline-primary">Chi tiết</a></td>
                     </tr>
                 @empty
-                    <tr><td colspan="9" class="text-center text-muted py-3">Không có AI Creative.</td></tr>
+                    <tr><td colspan="8" class="text-center text-muted py-3">Không có AI Creative.</td></tr>
                 @endforelse
                 </tbody>
             </table>

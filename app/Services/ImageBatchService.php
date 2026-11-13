@@ -17,7 +17,7 @@ use Illuminate\Validation\ValidationException;
 /**
  * Tạo ảnh theo lô (note/tach-lo-anh-dang-tiktok.txt): mỗi mẫu một lần trong lô, nhập nguyên liệu một lần, tạo N ảnh.
  * Lô tạo xong là cố định: chỉ tạo lại / sửa nguyên liệu / xoá từng ảnh, hoặc xoá cả lô.
- * Ảnh của lô là output của generation; tạo ảnh và tính phí đi qua GenerationService như POST /generations.
+ * Ảnh của lô là output của generation; tạo ảnh đi qua GenerationService như POST /generations.
  */
 class ImageBatchService
 {
@@ -25,15 +25,13 @@ class ImageBatchService
 
     public function __construct(
         private GenerationService $generations,
-        private CreditService $credits,
         private MediaStorage $media,
         private AuditLogger $audit,
         private GenerationFinalizer $finalizer,
-        private CroppedImageStore $croppedImages,
     ) {}
 
     /**
-     * Trừ tổng phí ngay, đủ hoặc không tạo gì. Số ảnh một mẫu vượt max_outputs của mẫu thì chia thành nhiều
+     * Tạo cả lô trong một transaction. Số ảnh một mẫu vượt max_outputs của mẫu thì chia thành nhiều
      * generation dùng chung ảnh đầu vào (chỉ tải lên một lần).
      *
      * @param  array<int, array{creative: AiCreative, input: GenerationInput, quantity: int, kept?: array<string, string>}>  $items
@@ -49,13 +47,8 @@ class ImageBatchService
             return $existing;
         }
 
-        $total = array_sum(array_map(fn (array $item) => $item['creative']->price_per_image * $item['quantity'], $items));
-
         try {
-            return DB::transaction(function () use ($user, $items, $idempotencyKey, $total, $insertLogo, $attributes, $workerId, $productId) {
-                // Kiểm tra tổng phí trước để báo đúng số tiền cần (không dừng giữa chừng ở mẫu thứ n)
-                $this->credits->assertSufficient($this->credits->lockWallet($user->id), $total);
-
+            return DB::transaction(function () use ($user, $items, $idempotencyKey, $insertLogo, $attributes, $workerId, $productId) {
                 $batch = ImageBatch::query()->create([...$attributes, 'user_id' => $user->id, 'idempotency_key' => $idempotencyKey]);
                 $position = 0;
 
@@ -87,7 +80,7 @@ class ImageBatchService
                     }
                 }
 
-                $this->audit->log('image_batch.create', $batch, ['creatives' => count($items), 'images' => $position, 'total' => $total], $user->id);
+                $this->audit->log('image_batch.create', $batch, ['creatives' => count($items), 'images' => $position], $user->id);
 
                 return $batch;
             });
@@ -97,7 +90,7 @@ class ImageBatchService
     }
 
     /**
-     * "Tạo lại" (inputs null: dùng lại nguyên liệu cũ) hoặc "Sửa nguyên liệu". Tính phí như lần đầu,
+     * "Tạo lại" (inputs null: dùng lại nguyên liệu cũ) hoặc "Sửa nguyên liệu":
      * ảnh mới thay đúng vị trí ảnh cũ (ảnh cũ vẫn còn trong lịch sử tạo ảnh, bài đăng đã tạo không đổi).
      *
      * @param  array<string, string>  $keptPaths  ảnh đầu vào giữ lại theo tên trường (chỉ khi sửa nguyên liệu)
@@ -128,18 +121,50 @@ class ImageBatchService
     }
 
     /**
-     * "Cắt ảnh": ảnh đã cắt trên trình duyệt ghi đè lên ảnh gốc của output (không tính phí). Ảnh trong lịch sử tạo
+     * "Cắt ảnh": ảnh đã cắt trên trình duyệt ghi đè lên ảnh gốc của output . Ảnh trong lịch sử tạo
      * ảnh và bài đăng dùng cùng output cũng đổi theo. File mới có đường dẫn mới, file cũ bị xoá sau khi lưu xong.
      */
     public function crop(User $user, ImageBatch $batch, ImageBatchImage $image, UploadedFile $file): ImageBatchImage
     {
-        $this->croppedImages->replace($file, 'generations/outputs', function (array $stored) use ($user, $batch, $image) {
-            $image = $batch->images()->lockForUpdate()->findOrFail($image->id);
-            $old = $this->croppedImages->overwriteOutput($image->output_id, $stored);
-            $this->audit->log('image_batch.crop', $batch, ['image_id' => $image->id, 'output_id' => $image->output_id], $user->id);
+        // Lưu ảnh trước, ngoài transaction, để không giữ khóa trong lúc upload lên S3 (như WorkerJobService::complete)
+        $directory = MediaStorage::datedDirectory('generations/outputs');
+        $path = $this->media->storeUpload($file, $directory);
+        try {
+            $thumbPath = $this->media->storeOptimizedImage($file, $directory, [WorkerJobService::THUMB_MAX_SIDE])[0];
+        } catch (BusinessException) {
+            $thumbPath = null;
+        }
 
-            return $old;
-        });
+        try {
+            $old = DB::transaction(function () use ($user, $batch, $image, $file, $path, $thumbPath) {
+                $image = $batch->images()->lockForUpdate()->findOrFail($image->id);
+                $output = GenerationOutput::query()->lockForUpdate()->findOrFail($image->output_id);
+                if ($output->status !== OutputStatus::Completed) {
+                    throw new BusinessException('IMAGE_NOT_READY', 'Chỉ cắt được ảnh đã tạo xong.', 409);
+                }
+
+                $old = [$output->image_path, $output->thumb_path];
+                $output->update([
+                    'image_path' => $path,
+                    'thumb_path' => $thumbPath,
+                    'mime' => $file->getMimeType() ?: 'application/octet-stream',
+                    'size_bytes' => $file->getSize(),
+                    // Ảnh đã tắt mà người dùng tải / cắt ảnh mới thay vào thì bật lại để dùng được ngay
+                    'disabled_at' => null,
+                ]);
+                $this->audit->log('image_batch.crop', $batch, ['image_id' => $image->id, 'output_id' => $output->id], $user->id);
+
+                return $old;
+            });
+        } catch (\Throwable $e) {
+            $this->media->delete($path);
+            $this->media->delete($thumbPath);
+            throw $e;
+        }
+
+        foreach ($old as $oldPath) {
+            $this->media->delete($oldPath);
+        }
 
         return $image;
     }
@@ -162,8 +187,8 @@ class ImageBatchService
     }
 
     /**
-     * "Hủy ảnh đang chờ": mọi ảnh của lô còn trong hàng đợi (chưa worker nào nhận) thành thất bại CANCELLED và hoàn
-     * Credit. Ảnh worker đang tạo (processing) không hủy. Khoá FOR UPDATE nên worker (claim dùng SKIP LOCKED) không
+     * "Hủy ảnh đang chờ": mọi ảnh của lô còn trong hàng đợi (chưa worker nào nhận) thành thất bại CANCELLED.
+     * Ảnh worker đang tạo (processing) không hủy. Khoá FOR UPDATE nên worker (claim dùng SKIP LOCKED) không
      * nhận được ảnh đang hủy. Bấm lại khi không còn ảnh chờ: trả 0, không lỗi.
      *
      * @return int số ảnh đã hủy
@@ -179,7 +204,7 @@ class ImageBatchService
                 ->pluck('id');
 
             foreach ($ids as $id) {
-                $this->finalizer->fail($id, GenerationFinalizer::CANCELLED, 'Đã hủy theo yêu cầu, Credit đã được hoàn.');
+                $this->finalizer->fail($id, GenerationFinalizer::CANCELLED, 'Đã hủy theo yêu cầu.');
             }
 
             if ($ids->isNotEmpty()) {
@@ -288,7 +313,6 @@ class ImageBatchService
             'id' => $creative->id,
             'slug' => $creative->slug,
             'title' => $creative->title,
-            'price_per_image' => $creative->price_per_image,
         ];
     }
 

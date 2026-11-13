@@ -8,7 +8,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\SocialPostResource;
 use App\Models\Hashtag;
 use App\Models\SocialPost;
-use App\Services\Social\PlannerService;
 use App\Services\Social\SocialContentJobService;
 use App\Services\Social\SocialPostService;
 use App\Services\Social\SocialPublishJobService;
@@ -25,8 +24,6 @@ use Illuminate\Validation\Rule;
  */
 class PostController extends Controller
 {
-    private const CROP_MAX_KB = 20480;
-
     public function __construct(private SocialPostService $posts) {}
 
     public function index(Request $request): AnonymousResourceCollection
@@ -37,11 +34,8 @@ class PostController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             // Lọc theo worker đã giao bài (trang /posts ở repo frontend)
             'worker_id' => ['nullable', 'integer'],
-            // Lọc theo nguồn tạo bài, vd plan (bài do skill kế hoạch nội dung tạo)
-            'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_PLAN])],
-            // Lọc theo ngày đăng (scheduled_at), ngày theo giờ Việt Nam (ai90.social.planner_timezone)
-            'date_from' => ['nullable', 'date_format:Y-m-d'],
-            'date_to' => ['nullable', 'date_format:Y-m-d'],
+            // Lọc theo nguồn tạo bài, vd lookbook (bài do skill FlowKit tạo lookbook)
+            'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_LOOKBOOK])],
         ]);
 
         $posts = SocialPost::query()
@@ -50,8 +44,6 @@ class PostController extends Controller
             ->when($data['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
             ->when($data['worker_id'] ?? null, fn ($q, $workerId) => $q->where('worker_id', $workerId))
             ->when($data['source'] ?? null, fn ($q, $source) => $q->where('source', $source))
-            ->when($data['date_from'] ?? null, fn ($q, $d) => $q->where('scheduled_at', '>=', Carbon::createFromFormat('Y-m-d', $d, config('ai90.social.planner_timezone'))->startOfDay()->utc()))
-            ->when($data['date_to'] ?? null, fn ($q, $d) => $q->where('scheduled_at', '<=', Carbon::createFromFormat('Y-m-d', $d, config('ai90.social.planner_timezone'))->endOfDay()->utc()))
             ->with(SocialPostResource::RELATIONS)
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);
@@ -66,7 +58,7 @@ class PostController extends Controller
 
     /**
      * Tạo bài từ ảnh của một lô (image_batch_id) hoặc ảnh đã có trong lịch sử tạo ảnh. Không tính phí, trừ khi bật
-     * ai_content (AI viết nội dung, note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trừ giá social.ai_content_price.
+     * ai_content (AI viết nội dung, note/ai-viet-noi-dung-bai-dang.txt ở repo frontend).
      */
     public function storeFromImages(Request $request): JsonResponse
     {
@@ -130,41 +122,14 @@ class PostController extends Controller
     }
 
     /** "Đăng lại" (bài lỗi) / "Tạo lại" (worker nhận rồi im lặng, có thể đăng trùng): bài về chờ tới giờ. */
-    /** "Làm lại" bài kế hoạch đang chờ duyệt: tạo lại ảnh theo đúng kịch bản, miễn phí (PlannerService::redo). */
-    public function redo(Request $request, int $post, PlannerService $planner): SocialPostResource
-    {
-        return $this->resource($planner->redo($request->user(), $this->findPost($request, $post)));
-    }
-
-    /** "Duyệt" bài kế hoạch: lưu nội dung đang sửa (nếu gửi) rồi sang chờ gửi (PlannerService::approve). */
-    public function approve(Request $request, int $post, PlannerService $planner): SocialPostResource
-    {
-        $post = $this->findPost($request, $post);
-        $data = $request->validate(self::contentRules(), self::contentMessages());
-
-        return $this->resource($planner->approve($request->user(), $post, $data));
-    }
-
-    /** "Bỏ duyệt" / "Hủy đăng": bài kế hoạch đã duyệt (chờ gửi, hoặc chờ đăng mà worker chưa nhận) -> về chờ duyệt. */
-    public function unapprove(Request $request, int $post, PlannerService $planner): SocialPostResource
-    {
-        return $this->resource($planner->unapprove($request->user(), $this->findPost($request, $post)));
-    }
-
-    /** "Tạo lại ảnh này" của bài kế hoạch đang chờ duyệt: chỉ tạo lại 1 ảnh theo câu lệnh của nó, miễn phí (PlannerService::redoImage). */
-    public function redoImage(Request $request, int $post, int $image, PlannerService $planner): SocialPostResource
-    {
-        return $this->resource($planner->redoImage($request->user(), $this->findPost($request, $post), $image));
-    }
-
     public function retry(Request $request, int $post, SocialPublishJobService $publisher): SocialPostResource
     {
         return $this->resource($publisher->retry($request->user(), $this->findPost($request, $post)));
     }
 
     /**
-     * "Viết lại bằng AI": trả { title, content, hashtags, credit_balance } để frontend điền vào form, KHÔNG lưu vào bài.
-     * Chỉ khi bài đang chờ gửi. Trừ social.ai_content_price khi AI viết được; AI lỗi -> 503 AI_CONTENT_FAILED, không trừ.
+     * "Viết lại bằng AI": trả { title, content, hashtags } để frontend điền vào form, KHÔNG lưu vào bài.
+     * Chỉ khi bài đang chờ gửi. AI lỗi -> 503 AI_CONTENT_FAILED.
      */
     public function aiContent(Request $request, int $post, SocialContentJobService $contentJobs): JsonResponse
     {
@@ -177,28 +142,6 @@ class PostController extends Controller
     public function destroy(Request $request, int $post): Response
     {
         $this->posts->delete($request->user(), $this->findPost($request, $post));
-
-        return response()->noContent();
-    }
-
-    /** "Cắt ảnh": multipart image = ảnh đã cắt trên trình duyệt, ghi đè ảnh gốc. Chỉ khi bài đang chờ gửi. */
-    public function cropImage(Request $request, int $post, int $image): JsonResponse
-    {
-        $request->validate([
-            'image' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:'.self::CROP_MAX_KB],
-        ], [
-            'image.max' => 'Ảnh đã cắt tối đa '.(self::CROP_MAX_KB / 1024).'MB.',
-        ]);
-
-        $cropped = $this->posts->cropImage($request->user(), $this->findPost($request, $post), $image, $request->file('image'));
-
-        return response()->json(['data' => SocialPostResource::image($cropped)]);
-    }
-
-    /** "Hủy bỏ" bài đang chuẩn bị: dừng tạo ảnh / viết nội dung và xoá bài. 409 POST_NOT_CANCELLABLE khi đã qua bước chuẩn bị. */
-    public function cancel(Request $request, int $post): Response
-    {
-        $this->posts->cancel($request->user(), $this->findPost($request, $post));
 
         return response()->noContent();
     }

@@ -29,8 +29,6 @@
                                 —
                             @endforelse
                         </dd>
-                        <dt>Giá</dt>
-                        <dd>@credit($creative->price_per_image) Credit / ảnh</dd>
                         <dt>Ngày đăng</dt>
                         <dd>{{ $creative->published_at?->format('d/m/Y H:i') ?? 'Chưa đăng' }}</dd>
                     </dl>
@@ -56,10 +54,7 @@
             <div class="card">
                 <div class="card-header"><h3 class="card-title">Thống kê (ảnh thành công)</h3></div>
                 <ul class="list-group list-group-flush">
-                    <li class="list-group-item d-flex justify-content-between"><span>Số ảnh bán được</span><b>@credit($stats->images)</b></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Doanh số</span><b>@credit($stats->gmv)</b></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Phí nền tảng</span><b>@credit($stats->fee)</b></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Creator nhận</span><b>@credit($stats->creator_amount)</b></li>
+                    <li class="list-group-item d-flex justify-content-between"><span>Số ảnh đã tạo</span><b>@number($stats->images)</b></li>
                 </ul>
             </div>
         </div>

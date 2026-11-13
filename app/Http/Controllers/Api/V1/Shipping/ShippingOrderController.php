@@ -15,7 +15,6 @@ use Illuminate\Validation\Rule;
 
 /**
  * Đơn vận chuyển GHN tạo từ ảnh chat (note/tao-don-ghn-tu-anh.txt ở repo frontend). Đơn của người khác -> 404.
- * AI đọc ảnh không trừ credit.
  */
 class ShippingOrderController extends Controller
 {

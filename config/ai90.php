@@ -10,19 +10,15 @@ return [
 
     // Giá trị mặc định cho bảng settings (admin sửa được trong DB).
     'defaults' => [
-        'creator_share_percent' => 10,
-        'revenue_hold_days' => 7,
         'generation.default_max_outputs' => 5,
         'generation.max_outputs_limit' => 10,
         'generation.input_max_size_kb' => 10240,
         // Số nguyên liệu ẩn (trường hidden_image) tối đa của một Creative.
         'generation.max_hidden_images' => 5,
-        // Giá mỗi lần AI viết tiêu đề / nội dung / hashtag bài đăng (tạo bài bật AI hoặc bấm "Viết lại bằng AI").
-        'social.ai_content_price' => 2000,
     ],
 
     'generation' => [
-        // Ảnh chưa worker nào nhận thì chờ mãi (không tự thất bại); người dùng tự hủy ở trang lô để hoàn Credit.
+        // Ảnh chưa worker nào nhận thì chờ mãi (không tự thất bại); người dùng tự hủy ở trang lô.
         // Số request tạo ảnh tối đa mỗi phút cho mỗi user.
         'rate_limit_per_minute' => 10,
     ],
@@ -45,8 +41,6 @@ return [
         'ai_max_images' => 4,
         // Bài kẹt ở bước AI viết nội dung quá số phút này (social:sweep) thì dùng nội dung mặc định và hoàn phí.
         'ai_stuck_minutes' => 30,
-        // Múi giờ tính "ngày" của kế hoạch nội dung + lọc bài theo ngày (app chạy UTC, chủ shop ở Việt Nam)
-        'planner_timezone' => env('SOCIAL_PLANNER_TIMEZONE', 'Asia/Ho_Chi_Minh'),
     ],
 
     'auth' => [
@@ -54,9 +48,9 @@ return [
     ],
 
     'worker' => [
-        // Worker phải trả kết quả trong thời gian này, quá hạn thì ảnh về hàng đợi cho worker khác nhận.
-        'lease_minutes' => 5,
-        // Số lần giao job tối đa; quá số lần này thì ảnh thất bại và hoàn Credit.
+        // Worker phải trả kết quả trong thời gian này, quá hạn thì job được giao lại cho worker khác.
+        'lease_minutes' => 15,
+        // Số lần giao job tối đa; quá số lần này thì ảnh thất bại.
         'max_attempts' => 3,
         // Dung lượng ảnh kết quả tối đa worker được gửi lên (KB).
         'output_max_size_kb' => 20480,

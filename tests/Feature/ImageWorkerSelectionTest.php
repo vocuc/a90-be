@@ -32,7 +32,7 @@ class ImageWorkerSelectionTest extends TestCase
     public function test_only_chosen_worker_claims_the_job(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         [$chosen, $chosenToken] = Worker::register('chon', Worker::TYPE_IMAGE);
         [$otherWorker, $otherToken] = Worker::register('khac', Worker::TYPE_IMAGE);
         $chosen->users()->attach($buyer->id);
@@ -48,7 +48,7 @@ class ImageWorkerSelectionTest extends TestCase
     public function test_job_falls_back_to_other_worker_when_chosen_one_is_disabled(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         [$chosen] = Worker::register('chon', Worker::TYPE_IMAGE);
         [$otherWorker, $otherToken] = Worker::register('khac', Worker::TYPE_IMAGE);
         $chosen->users()->attach($buyer->id);
@@ -63,7 +63,7 @@ class ImageWorkerSelectionTest extends TestCase
     public function test_rejects_worker_not_assigned_or_wrong_type(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         [$publish] = Worker::register('dang-bai', Worker::TYPE_PUBLISH);
         $publish->users()->attach($buyer->id);
 
@@ -83,8 +83,8 @@ class ImageWorkerSelectionTest extends TestCase
 
     public function test_batch_saves_chosen_worker_on_every_generation(): void
     {
-        $creative = $this->publishedCreative($this->creator(), price: 1000); // max_outputs = 5 -> 7 ảnh = 2 generation
-        $buyer = $this->buyer(credit: 20000);
+        $creative = $this->publishedCreative($this->creator()); // max_outputs = 5 -> 7 ảnh = 2 generation
+        $buyer = $this->buyer();
         [$chosen] = Worker::register('chon', Worker::TYPE_IMAGE);
         $chosen->users()->attach($buyer->id);
 
@@ -104,7 +104,7 @@ class ImageWorkerSelectionTest extends TestCase
     public function test_retry_keeps_chosen_worker(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         [$chosen, $token] = Worker::register('chon', Worker::TYPE_IMAGE);
         $chosen->users()->attach($buyer->id);
         $id = $this->generate($buyer, $creative, extra: ['worker_id' => $chosen->id])->json('data.id');

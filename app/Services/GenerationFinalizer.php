@@ -4,33 +4,23 @@ namespace App\Services;
 
 use App\Enums\GenerationStatus;
 use App\Enums\GenerationType;
-use App\Enums\LedgerType;
 use App\Enums\OutputStatus;
-use App\Enums\TransactionStatus;
 use App\Events\GenerationOutputFinished;
 use App\Models\AiCreative;
 use App\Models\CreatorProfile;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
-use App\Models\Transaction;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
  * Chốt kết quả của từng ảnh. Mỗi hàm idempotent: output đã chốt thì không làm gì nữa,
- * nên worker gửi lặp hay lệnh sweep chạy lặp cũng không hoàn tiền hay ghi doanh thu 2 lần.
- * Thứ tự khóa: output -> generation -> transaction -> ví.
+ * nên worker gửi lặp hay lệnh sweep chạy lặp cũng không đếm 2 lần. Thứ tự khóa: output -> generation.
  */
 class GenerationFinalizer
 {
     /** Mã lỗi khi người dùng hủy ảnh đang chờ (ImageBatchService::cancelQueued). */
     public const CANCELLED = 'CANCELLED';
-
-    public function __construct(
-        private CreditService $credits,
-        private RevenueService $revenues,
-        private AuditLogger $audit,
-    ) {}
 
     public function complete(int $outputId, string $imagePath, ?string $thumbPath, string $mime, int $sizeBytes): void
     {
@@ -54,16 +44,7 @@ class GenerationFinalizer
                 'finished_at' => now(),
             ]);
 
-            if ($output->transaction_id) {
-                $transaction = Transaction::query()->lockForUpdate()->findOrFail($output->transaction_id);
-                $transaction->update(['status' => TransactionStatus::Completed, 'completed_at' => now()]);
-                $revenue = $this->revenues->record($transaction);
-                if ($revenue) {
-                    $this->audit->log('revenue.create', $revenue, ['amount' => $revenue->amount], $transaction->creator_id);
-                }
-            }
-
-            // Chỉ ảnh thành công của người mua mới tính lượt sử dụng.
+            // Chỉ ảnh thành công của lượt tạo thật (không phải tạo thử) mới tính lượt sử dụng.
             if ($generation->type === GenerationType::Paid) {
                 AiCreative::query()->whereKey($generation->creative_id)->increment('usage_count');
                 CreatorProfile::query()->where('user_id', $generation->creator_id)->increment('usage_count');
@@ -94,35 +75,11 @@ class GenerationFinalizer
                 'finished_at' => now(),
             ]);
 
-            if ($output->transaction_id) {
-                $transaction = Transaction::query()->lockForUpdate()->findOrFail($output->transaction_id);
-                $this->refund($transaction, $errorCode);
-            }
-
             $generation->failed_count++;
             $this->settle($generation);
 
             GenerationOutputFinished::dispatch($output->id);
         });
-    }
-
-    private function refund(Transaction $transaction, string $reason): void
-    {
-        if ($transaction->status === TransactionStatus::Refunded) {
-            return;
-        }
-
-        $wallet = $this->credits->lockWallet($transaction->user_id);
-        $note = $reason === self::CANCELLED ? 'Hoàn Credit do hủy tạo ảnh' : 'Hoàn Credit do tạo ảnh thất bại';
-        $this->credits->apply($wallet, $transaction->amount, LedgerType::GenerationRefund, "refund:tx:{$transaction->id}", 'transaction', $transaction->id, $note);
-
-        $transaction->update([
-            'status' => TransactionStatus::Refunded,
-            'failure_reason' => $reason,
-            'refunded_at' => now(),
-        ]);
-
-        $this->audit->log('credit.refund', $transaction, ['amount' => $transaction->amount, 'reason' => $reason], $transaction->user_id);
     }
 
     private function settle(Generation $generation): void

@@ -21,7 +21,6 @@ class CreatorStudioTest extends TestCase
         $creativeId = $this->postJson('/api/v1/creator/creatives', [
             'title' => 'Ảnh mỹ phẩm',
             'model_id' => AiModel::query()->firstOrFail()->id,
-            'price_per_image' => 2000,
             'max_outputs' => 4,
             'input_schema' => [
                 ['key' => 'product_image', 'label' => 'Ảnh mỹ phẩm', 'type' => 'image', 'required' => true],
@@ -40,7 +39,7 @@ class CreatorStudioTest extends TestCase
 
         // Tạo mới bắt buộc có form người mua và prompt
         $this->postJson('/api/v1/creator/creatives', [
-            'title' => 'Thiếu template', 'model_id' => AiModel::query()->firstOrFail()->id, 'price_per_image' => 0,
+            'title' => 'Thiếu template', 'model_id' => AiModel::query()->firstOrFail()->id,
         ])->assertStatus(422)->assertJsonValidationErrors(['input_schema', 'prompt_template']);
 
         // Không bắt buộc ảnh mẫu: chưa có ảnh vẫn đăng được, cover_url = null (frontend hiện ảnh mặc định)
@@ -66,7 +65,6 @@ class CreatorStudioTest extends TestCase
         $this->app['auth']->forgetGuards();
         $detail = $this->getJson("/api/v1/creatives/{$slug}")
             ->assertOk()
-            ->assertJsonPath('data.price_per_image', 2000)
             ->assertJsonPath('data.options.max_outputs', 4)
             ->assertJsonPath('data.options.aspect_ratios', AiModel::query()->firstOrFail()->supported_aspect_ratios)
             ->assertJsonPath('data.options.default_aspect_ratio', '4:5')
@@ -89,7 +87,7 @@ class CreatorStudioTest extends TestCase
 
     public function test_private_creative_is_hidden_from_marketplace_but_usable_by_owner(): void
     {
-        $creator = $this->creator(credit: 10000);
+        $creator = $this->creator();
         $creative = $this->publishedCreative($creator);
         $creative->update(['is_public' => false]);
 
@@ -97,7 +95,6 @@ class CreatorStudioTest extends TestCase
         $this->actingAs($creator)->postJson('/api/v1/creator/creatives', [
             'title' => 'Mẫu riêng',
             'model_id' => AiModel::query()->firstOrFail()->id,
-            'price_per_image' => 0,
             'input_schema' => [
                 ['key' => 'product_image', 'label' => 'Ảnh', 'type' => 'image', 'required' => true],
                 ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '1:1'],
@@ -110,7 +107,7 @@ class CreatorStudioTest extends TestCase
         $this->generate($creator, $creative)->assertStatus(202);
 
         // Người khác không thấy, không tạo ảnh được
-        $buyer = $this->buyer(10000);
+        $buyer = $this->buyer();
         $this->app['auth']->forgetGuards();
         $this->getJson('/api/v1/creatives')->assertOk()->assertJsonCount(0, 'data');
         $this->getJson("/api/v1/creatives/{$creative->slug}")->assertNotFound();
@@ -148,10 +145,10 @@ class CreatorStudioTest extends TestCase
         $this->actingAs($this->creator())->getJson('/api/v1/creator/api-keys')->assertNotFound();
     }
 
-    public function test_creator_test_run_goes_through_worker_without_charging(): void
+    public function test_creator_test_run_goes_through_worker(): void
     {
         $creator = $this->creator();
-        $creative = $this->publishedCreative($creator, price: 5000);
+        $creative = $this->publishedCreative($creator);
         $creative->update(['status' => 'draft']);
 
         $response = $this->actingAs($creator)->post("/api/v1/creator/creatives/{$creative->id}/test", [
@@ -166,7 +163,6 @@ class CreatorStudioTest extends TestCase
         $this->runWorker([null]);
         $this->assertSame('completed', $this->latestStatus($response)['status']);
 
-        $this->assertSame(0, $this->balance($creator));
     }
 
     public function test_other_creators_cannot_touch_my_creative(): void
@@ -182,7 +178,7 @@ class CreatorStudioTest extends TestCase
     {
         $creator = $this->creator();
         $creative = $this->publishedCreative($creator);
-        $this->generate($this->buyer(credit: 5000), $creative);
+        $this->generate($this->buyer(), $creative);
         $creative->update(['status' => 'draft']);
 
         $this->actingAs($creator)->deleteJson("/api/v1/creator/creatives/{$creative->id}")
@@ -207,7 +203,6 @@ class CreatorStudioTest extends TestCase
         $creativeId = $this->postJson('/api/v1/creator/creatives', [
             'title' => '',
             'model_id' => AiModel::query()->firstOrFail()->id,
-            'price_per_image' => 0,
             'input_schema' => [
                 ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '1:1'],
             ],

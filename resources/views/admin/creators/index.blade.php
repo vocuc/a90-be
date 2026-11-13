@@ -14,15 +14,13 @@
                 </select>
                 <button class="btn btn-sm btn-primary mb-1"><i class="fas fa-search"></i> Lọc</button>
             </form>
-            <p class="text-muted small mb-0 mt-2">Creator nhận mặc định: <b>{{ rtrim(rtrim(number_format($defaultShare, 2), '0'), '.') }}%</b> giá mỗi ảnh, phần còn lại là phí nền tảng. Để trống ô % để Creator dùng mức mặc định.</p>
         </div>
         <div class="card-body p-0 table-responsive">
             <table class="table table-hover table-sm mb-0">
                 <thead>
                 <tr>
                     <th>Creator</th><th>Email</th><th class="text-center">Creative</th><th class="text-right">Lượt dùng</th>
-                    <th class="text-right">Ví (pending / available)</th>
-                    <th style="width:330px">Xác minh &amp; % Creator nhận riêng</th>
+                    <th style="width:200px">Xác minh</th>
                 </tr>
                 </thead>
                 <tbody>
@@ -35,11 +33,7 @@
                         </td>
                         <td><a href="{{ route('admin.users.show', $creator->user_id) }}">{{ $creator->user->email }}</a></td>
                         <td class="text-center"><a href="{{ route('admin.creatives.index', ['q' => $creator->username]) }}">{{ $creator->creative_count }}</a></td>
-                        <td class="text-right">@credit($creator->usage_count)</td>
-                        <td class="text-right">
-                            @credit($creator->user->creatorWallet?->pending_balance ?? 0) /
-                            @credit($creator->user->creatorWallet?->available_balance ?? 0)
-                        </td>
+                        <td class="text-right">@number($creator->usage_count)</td>
                         <td>
                             <form method="POST" action="{{ route('admin.creators.update', $creator) }}" class="form-inline">
                                 @csrf @method('PUT')
@@ -48,18 +42,12 @@
                                     <input type="checkbox" class="custom-control-input" id="verified-{{ $creator->id }}" name="verified" value="1" @checked($creator->verified)>
                                     <label class="custom-control-label" for="verified-{{ $creator->id }}">Verified</label>
                                 </div>
-                                <div class="input-group input-group-sm mr-2" style="width:110px">
-                                    <input type="number" name="creator_share_percent" step="0.01" min="0" max="100"
-                                           value="{{ $creator->creator_share_percent !== null ? (float) $creator->creator_share_percent : '' }}"
-                                           class="form-control" placeholder="{{ (float) $defaultShare }}">
-                                    <div class="input-group-append"><span class="input-group-text">%</span></div>
-                                </div>
                                 <button class="btn btn-sm btn-outline-primary">Lưu</button>
                             </form>
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="7" class="text-center text-muted py-3">Chưa có Creator.</td></tr>
+                    <tr><td colspan="5" class="text-center text-muted py-3">Chưa có Creator.</td></tr>
                 @endforelse
                 </tbody>
             </table>

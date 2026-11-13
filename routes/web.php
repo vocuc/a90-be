@@ -7,7 +7,6 @@ use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\CreativeController;
 use App\Http\Controllers\Admin\CreatorController;
 use App\Http\Controllers\Admin\DashboardController;
-use App\Http\Controllers\Admin\FinanceController;
 use App\Http\Controllers\Admin\GenerationController;
 use App\Http\Controllers\Admin\SettingController;
 use App\Http\Controllers\Admin\UserController;
@@ -27,7 +26,6 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
         Route::get('users', [UserController::class, 'index'])->name('users.index');
         Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
-        Route::post('users/{user}/credits', [UserController::class, 'adjustCredit'])->name('users.credits');
         Route::post('users/{user}/toggle-ban', [UserController::class, 'toggleBan'])->name('users.toggle-ban');
         Route::post('users/{user}/toggle-admin', [UserController::class, 'toggleAdmin'])->name('users.toggle-admin');
 
@@ -55,10 +53,6 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
         Route::get('generations', [GenerationController::class, 'index'])->name('generations.index');
         Route::get('generations/{generation}', [GenerationController::class, 'show'])->name('generations.show');
-
-        Route::get('transactions', [FinanceController::class, 'transactions'])->name('transactions.index');
-        Route::get('credit-ledger', [FinanceController::class, 'ledger'])->name('ledger.index');
-        Route::get('revenues', [FinanceController::class, 'revenues'])->name('revenues.index');
 
         Route::get('settings', [SettingController::class, 'edit'])->name('settings.edit');
         Route::put('settings', [SettingController::class, 'update'])->name('settings.update');

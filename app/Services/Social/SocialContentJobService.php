@@ -2,7 +2,6 @@
 
 namespace App\Services\Social;
 
-use App\Enums\LedgerType;
 use App\Enums\OutputStatus;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
@@ -12,18 +11,15 @@ use App\Models\ShopAiSetting;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\User;
-use App\Services\CreditService;
 use App\Services\MediaStorage;
-use App\Services\SettingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
  * AI viết tiêu đề / nội dung / hashtag bằng Claude API (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend).
- * - Tạo bài bật AI: trừ Credit, tạo 1 job / bài, queue job WriteSocialPostContent viết rồi bài sang pending_review.
- *   AI lỗi / job kẹt quá lâu: dùng nội dung mặc định và hoàn Credit.
- * - "Viết lại bằng AI" (rewrite): gọi thẳng trong request, trả nội dung cho người dùng xem (không lưu vào bài),
- *   chỉ trừ Credit khi viết được.
+ * - Tạo bài bật AI: tạo 1 job / bài, queue job WriteSocialPostContent viết rồi bài sang pending_review.
+ *   AI lỗi / job kẹt quá lâu: dùng nội dung mặc định.
+ * - "Viết lại bằng AI" (rewrite): gọi thẳng trong request, trả nội dung cho người dùng xem (không lưu vào bài).
  * Cài đặt của shop (trang "AI viết nội dung"): AI chỉ chọn hashtag trong kho hashtag,
  * tối đa ai90.social.ai_max_hashtags; học giọng văn theo bài viết mẫu; tiêu đề / nội dung không quá số ký tự shop đặt.
  */
@@ -35,8 +31,6 @@ class SocialContentJobService
     public function __construct(
         private SocialContentWriter $writer,
         private MediaStorage $media,
-        private CreditService $credits,
-        private SettingService $settings,
     ) {}
 
     public static function enabled(): bool
@@ -44,39 +38,17 @@ class SocialContentJobService
         return (bool) config('ai90.social.ai_content');
     }
 
-    public function price(): int
-    {
-        return $this->settings->int('social.ai_content_price');
-    }
-
-    /**
-     * Trừ Credit của chủ bài và giao queue job viết nội dung. Gọi trong transaction tạo bài:
-     * không đủ Credit thì lỗi 402 và không tạo bài.
-     */
+    /** Giao queue job viết nội dung. Gọi trong transaction tạo bài. */
     public function queue(SocialPost $post): void
     {
-        // Bài kế hoạch nội dung miễn phí (FlowKit ke-hoach-noi-dung/thiet-ke.txt mục 5.2)
-        $price = $post->isPlan() ? 0 : $this->price();
-        if ($price > 0) {
-            $this->credits->apply(
-                $this->credits->lockWallet($post->user_id), -$price, LedgerType::SocialContentCharge,
-                "social_content:charge:post:{$post->id}", 'social_post', $post->id, 'AI viết nội dung bài đăng',
-            );
-        }
-
         $job = SocialContentJob::query()->firstOrCreate(
             ['social_post_id' => $post->id],
-            ['status' => OutputStatus::Queued, 'charge_amount' => $price],
+            ['status' => OutputStatus::Queued],
         );
-        // Bài đã có job AI xong từ trước (vd bài kế hoạch bị xoá trắng nội dung rồi tạo lại ảnh): chạy lại job đó,
-        // không thì job bị bỏ qua (không còn queued) và bài kẹt ở generating
-        if (! $job->wasRecentlyCreated && $job->status !== OutputStatus::Queued) {
-            $job->update(['status' => OutputStatus::Queued, 'finished_at' => null, 'error_code' => null, 'error_message' => null]);
-        }
         WriteSocialPostContent::dispatch($job->id)->afterCommit();
     }
 
-    /** Queue job: AI viết xong thì điền vào bài, không viết được thì dùng nội dung mặc định và hoàn Credit. */
+    /** Queue job: AI viết xong thì điền vào bài, không viết được thì dùng nội dung mặc định. */
     public function run(int $jobId): void
     {
         $job = SocialContentJob::query()->with('post')->find($jobId);
@@ -109,7 +81,7 @@ class SocialContentJobService
         });
     }
 
-    /** Job chờ / chạy quá lâu (queue không chạy, tiến trình chết giữa chừng): nội dung mặc định, hoàn Credit. */
+    /** Job chờ / chạy quá lâu (queue không chạy, tiến trình chết giữa chừng): nội dung mặc định. */
     public function failStuck(): int
     {
         $ids = SocialContentJob::query()
@@ -125,26 +97,9 @@ class SocialContentJobService
     }
 
     /**
-     * Bài bị hủy khi AI chưa viết xong: hoàn Credit đã trừ (cùng khoá idempotency với hoàn do lỗi nên không hoàn 2 lần).
-     * Job bị xoá theo bài (cascade); queue job đang chạy viết xong không thấy job nữa thì bỏ qua.
-     */
-    public function cancelForPost(SocialPost $post): void
-    {
-        $job = SocialContentJob::query()->where('social_post_id', $post->id)->lockForUpdate()->first();
-        if (! $job || ! in_array($job->status, [OutputStatus::Queued, OutputStatus::Processing], true) || $job->charge_amount <= 0) {
-            return;
-        }
-
-        $this->credits->apply(
-            $this->credits->lockWallet($post->user_id), $job->charge_amount, LedgerType::SocialContentRefund,
-            "social_content:refund:job:{$job->id}", 'social_post', $post->id, 'Hoàn Credit do hủy bài đăng',
-        );
-    }
-
-    /**
-     * "Viết lại bằng AI": trả nội dung mới, không lưu vào bài. Kiểm tra Credit trước khi gọi AI, chỉ trừ khi viết được.
+     * "Viết lại bằng AI": trả nội dung mới, không lưu vào bài.
      *
-     * @return array{title: string, content: string, hashtags: string[], credit_balance: int}
+     * @return array{title: string, content: string, hashtags: string[]}
      */
     public function rewrite(User $user, SocialPost $post): array
     {
@@ -152,23 +107,8 @@ class SocialContentJobService
             throw new BusinessException('AI_CONTENT_DISABLED', 'Tính năng AI viết nội dung đang tạm tắt.', 409);
         }
 
-        $price = $this->price();
-        DB::transaction(fn () => $this->credits->assertSufficient($this->credits->lockWallet($user->id), $price));
-
-        $content = $this->write($post)
-            ?? throw new BusinessException('AI_CONTENT_FAILED', 'AI chưa viết được nội dung, vui lòng thử lại. Bạn không bị trừ Credit.', 503);
-
-        $balance = DB::transaction(function () use ($user, $post, $price) {
-            $wallet = $this->credits->lockWallet($user->id);
-            $this->credits->apply(
-                $wallet, -$price, LedgerType::SocialContentCharge,
-                'social_content:rewrite:'.Str::uuid(), 'social_post', $post->id, 'AI viết lại nội dung bài đăng',
-            );
-
-            return $wallet->balance;
-        });
-
-        return [...$content, 'credit_balance' => $balance];
+        return $this->write($post)
+            ?? throw new BusinessException('AI_CONTENT_FAILED', 'AI chưa viết được nội dung, vui lòng thử lại.', 503);
     }
 
     /**
@@ -211,8 +151,6 @@ class SocialContentJobService
 
         $result = $this->writer->write([
             'creatives' => $creatives->all(),
-            // Ý chính trong kịch bản của bài kế hoạch (null với bài khác)
-            'idea' => $post->isPlan() ? (trim((string) ($post->script['y_chinh'] ?? '')) ?: null) : null,
             'hashtags' => $pool,
             'samples' => $settings['samples'],
             'requirements' => $settings['requirements'],
@@ -239,18 +177,11 @@ class SocialContentJobService
         ];
     }
 
-    /** Nội dung mặc định từ các mẫu của bài và hoàn Credit đã trừ; người dùng tự sửa ở bước duyệt. */
+    /** Nội dung mặc định từ các mẫu của bài; người dùng tự sửa ở bước duyệt. */
     private function fallback(SocialContentJob $job, string $errorCode, string $errorMessage): void
     {
         $job->forceFill(['error_code' => $errorCode, 'error_message' => Str::limit($errorMessage, 490)]);
         $this->finish($job, $job->post->defaultContent(), OutputStatus::Failed);
-
-        if ($job->charge_amount > 0) {
-            $this->credits->apply(
-                $this->credits->lockWallet($job->post->user_id), $job->charge_amount, LedgerType::SocialContentRefund,
-                "social_content:refund:job:{$job->id}", 'social_post', $job->social_post_id, 'Hoàn Credit do AI không viết được nội dung',
-            );
-        }
     }
 
     /** @param  array{title: ?string, content: string, hashtags: string[]}  $content */

@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
-use App\Models\CreditWallet;
 use App\Models\SocialAccount;
 use App\Models\User;
 use App\Services\AuditLogger;
@@ -34,10 +33,7 @@ class AuthController extends Controller
         ]);
 
         $user = DB::transaction(function () use ($data) {
-            $user = User::query()->create($data);
-            CreditWallet::query()->create(['user_id' => $user->id]);
-
-            return $user;
+            return User::query()->create($data);
         });
 
         return $this->tokenResponse($user, 201);
@@ -103,7 +99,6 @@ class AuthController extends Controller
                         'email' => $identity['email'],
                     ]);
                     $user->forceFill(['email_verified_at' => now()])->save();
-                    CreditWallet::query()->create(['user_id' => $user->id]);
                 }
 
                 $user->socialAccounts()->create([
@@ -134,7 +129,7 @@ class AuthController extends Controller
 
     public function me(Request $request): UserResource
     {
-        return new UserResource($request->user()->load(['creditWallet', 'creatorProfile']));
+        return new UserResource($request->user()->load(['creatorProfile']));
     }
 
     private function tokenResponse(User $user, int $status = 200): JsonResponse
@@ -147,7 +142,7 @@ class AuthController extends Controller
                 'token' => $token,
                 'token_type' => 'Bearer',
                 'expires_at' => $expiresAt,
-                'user' => new UserResource($user->load(['creditWallet', 'creatorProfile'])),
+                'user' => new UserResource($user->load(['creatorProfile'])),
             ],
         ], $status);
     }

@@ -5,15 +5,10 @@ namespace Tests\Feature;
 use App\Enums\CreativeStatus;
 use App\Enums\GenerationStatus;
 use App\Enums\OutputStatus;
-use App\Enums\RevenueStatus;
-use App\Enums\TransactionStatus;
-use App\Models\CreatorRevenue;
-use App\Models\CreatorWallet;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\ImageBatch;
 use App\Models\Product;
-use App\Models\Transaction;
 use App\Models\Worker;
 use App\Services\GenerationFinalizer;
 use App\Services\MediaStorage;
@@ -24,8 +19,8 @@ class GenerationTest extends TestCase
 {
     public function test_generation_waits_in_db_until_a_worker_claims_it(): void
     {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 5000);
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer();
 
         $response = $this->generate($buyer, $creative, quantity: 2)->assertStatus(202);
 
@@ -34,13 +29,12 @@ class GenerationTest extends TestCase
             ['status' => 'queued', 'error_code' => null],
             ['status' => 'queued', 'error_code' => null],
         ]], $this->latestStatus($response));
-        $this->assertSame(3000, $this->balance($buyer));
     }
 
     public function test_worker_receives_prompt_input_image_and_aspect_ratio(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $response = $this->generate($this->buyer(credit: 5000), $creative, inputs: ['aspectRatio' => '4:5'])->assertStatus(202);
+        $response = $this->generate($this->buyer(), $creative, inputs: ['aspectRatio' => '4:5'])->assertStatus(202);
         $generation = Generation::query()->with('outputs')->findOrFail($response->json('data.id'));
         $token = $this->workerToken();
 
@@ -72,8 +66,8 @@ class GenerationTest extends TestCase
     public function test_worker_only_claims_jobs_of_attached_users(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $alice = $this->buyer(credit: 5000);
-        $bob = $this->buyer(credit: 5000);
+        $alice = $this->buyer();
+        $bob = $this->buyer();
         $aliceJob = Generation::query()->with('outputs')->findOrFail($this->generate($alice, $creative)->json('data.id'))->outputs[0];
         $bobJob = Generation::query()->with('outputs')->findOrFail($this->generate($bob, $creative)->json('data.id'))->outputs[0];
         $token = $this->workerToken();
@@ -107,7 +101,7 @@ class GenerationTest extends TestCase
     public function test_each_claim_gets_a_different_image(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $this->generate($this->buyer(credit: 5000), $creative, quantity: 2)->assertStatus(202);
+        $this->generate($this->buyer(), $creative, quantity: 2)->assertStatus(202);
         $first = $this->workerToken('w1');
         $second = $this->workerToken('w2');
 
@@ -118,75 +112,23 @@ class GenerationTest extends TestCase
         $this->claimJob($first)->assertNoContent();
     }
 
-    public function test_paid_generation_charges_per_image_and_records_revenue(): void
+    public function test_same_idempotency_key_creates_once(): void
     {
-        $creator = $this->creator();
-        $creative = $this->publishedCreative($creator, price: 1000);
-        $buyer = $this->buyer(credit: 10000);
-
-        $response = $this->generate($buyer, $creative, quantity: 3)->assertStatus(202);
-        $this->runWorker([null, null, null]);
-
-        $generation = Generation::query()->with('outputs')->findOrFail($response->json('data.id'));
-        $this->assertSame(GenerationStatus::Completed, $generation->status);
-        $this->assertSame(3, $generation->success_count);
-
-        // Ảnh worker gửi lên được lưu và trả link cho người dùng.
-        $output = $generation->outputs[0];
-        $this->assertStringStartsWith('generations/outputs/', $output->image_path);
-        $this->assertSame('image/png', $output->mime);
-        $this->assertTrue(app(MediaStorage::class)->disk()->exists($output->image_path));
-        $this->actingAs($buyer)->getJson("/api/v1/generations/{$generation->id}/status")
-            ->assertJsonPath('data.outputs.0.image_url', "https://media.test/{$output->image_path}");
-
-        // Mỗi ảnh một Transaction, Creator nhận 10%: 100 / ảnh.
-        $transactions = Transaction::query()->where('generation_id', $generation->id)->get();
-        $this->assertCount(3, $transactions);
-        $this->assertTrue($transactions->every(fn ($tx) => $tx->status === TransactionStatus::Completed
-            && $tx->platform_fee_amount === 900 && $tx->creator_amount === 100));
-
-        $this->assertSame(7000, $this->balance($buyer));
-        $this->assertLedgerMatchesBalance($buyer);
-
-        $wallet = CreatorWallet::query()->where('user_id', $creator->id)->firstOrFail();
-        $this->assertSame(300, $wallet->pending_balance);
-        $this->assertSame(0, $wallet->available_balance);
-        $this->assertSame(3, $creative->fresh()->usage_count);
-    }
-
-    public function test_insufficient_credit_creates_nothing(): void
-    {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 1500);
-
-        $this->generate($buyer, $creative, quantity: 2)
-            ->assertStatus(402)
-            ->assertJsonPath('code', 'INSUFFICIENT_CREDIT');
-
-        $this->assertSame(0, Generation::query()->count());
-        $this->assertSame(0, Transaction::query()->count());
-        $this->assertSame(1500, $this->balance($buyer));
-    }
-
-    public function test_same_idempotency_key_does_not_charge_twice(): void
-    {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 5000);
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer();
         $key = (string) Str::uuid();
 
         $first = $this->generate($buyer, $creative, extra: ['idempotency_key' => $key])->assertStatus(202);
         $second = $this->generate($buyer, $creative, extra: ['idempotency_key' => $key])->assertStatus(202);
 
         $this->assertSame($first->json('data.id'), $second->json('data.id'));
-        $this->assertSame(1, Transaction::query()->count());
         $this->assertSame(1, GenerationOutput::query()->count());
-        $this->assertSame(4000, $this->balance($buyer));
     }
 
-    public function test_partial_failure_refunds_only_failed_images(): void
+    public function test_partial_failure_marks_only_failed_images(): void
     {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 10000);
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer();
 
         $response = $this->generate($buyer, $creative, quantity: 4)->assertStatus(202);
         $this->runWorker([null, 'CONTENT_BLOCKED', null, null]);
@@ -198,10 +140,6 @@ class GenerationTest extends TestCase
         $this->assertSame('CONTENT_BLOCKED', $generation->outputs[1]->error_code);
         $this->assertSame('blocked by safety filter', $generation->outputs[1]->error_message);
 
-        $this->assertSame(1, Transaction::query()->where('status', TransactionStatus::Refunded)->count());
-        $this->assertSame(7000, $this->balance($buyer));
-        $this->assertLedgerMatchesBalance($buyer);
-        $this->assertSame(3, CreatorRevenue::query()->where('status', RevenueStatus::Pending)->count());
         $this->assertSame(3, $creative->fresh()->usage_count);
 
         // Người dùng thấy thông báo thân thiện, không thấy lỗi nội bộ của worker.
@@ -209,31 +147,28 @@ class GenerationTest extends TestCase
             ->assertJsonPath('data.outputs.1.error_message', 'Ảnh hoặc nội dung vi phạm chính sách an toàn của AI.');
     }
 
-    public function test_finalizing_an_output_twice_refunds_once(): void
+    public function test_finalizing_an_output_twice_is_ignored(): void
     {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 5000);
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer();
         $this->generate($buyer, $creative)->assertStatus(202);
         $token = $this->workerToken();
 
         $jobId = $this->claimJob($token)->json('data.id');
         $this->failJob($token, $jobId)->assertOk();
-        $this->assertSame(5000, $this->balance($buyer));
 
         // Worker gửi lại hoặc lệnh sweep chạm vào output đã chốt: không hoàn thêm.
         $this->failJob($token, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
         $this->completeJob($token, $jobId)->assertStatus(409);
         app(GenerationFinalizer::class)->fail($jobId, 'TIMEOUT', 'again');
 
-        $this->assertSame(5000, $this->balance($buyer));
-        $this->assertLedgerMatchesBalance($buyer);
         $this->assertSame(OutputStatus::Failed, GenerationOutput::query()->findOrFail($jobId)->status);
     }
 
     public function test_worker_cannot_submit_a_job_held_by_another_worker(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
+        $this->generate($this->buyer(), $creative)->assertStatus(202);
         $owner = $this->workerToken('w1');
         $other = $this->workerToken('w2');
 
@@ -249,7 +184,7 @@ class GenerationTest extends TestCase
     public function test_result_payload_is_validated(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
+        $this->generate($this->buyer(), $creative)->assertStatus(202);
         $token = $this->workerToken();
         $jobId = $this->claimJob($token)->json('data.id');
 
@@ -265,41 +200,15 @@ class GenerationTest extends TestCase
         $this->assertSame(OutputStatus::Processing, GenerationOutput::query()->findOrFail($jobId)->status);
     }
 
-    public function test_creator_using_own_creative_is_charged_like_a_buyer(): void
+    public function test_client_supplied_model_and_prompt_are_ignored(): void
     {
-        $creator = $this->creator(credit: 5000);
-        $creative = $this->publishedCreative($creator, price: 1000);
-
-        $response = $this->generate($creator, $creative)->assertStatus(202);
-        $this->runWorker([null]);
-
-        $this->assertSame('paid', $response->json('data.type'));
-        $this->assertSame('completed', $this->latestStatus($response)['status']);
-        $this->assertSame(1, Transaction::query()->where('user_id', $creator->id)->count());
-        $this->assertSame(4000, $this->balance($creator));
-        $this->assertLedgerMatchesBalance($creator);
-        $this->assertSame(1, $creative->fresh()->usage_count);
-    }
-
-    public function test_creator_without_credit_cannot_use_own_creative(): void
-    {
-        $creator = $this->creator();
-        $creative = $this->publishedCreative($creator, price: 1000);
-
-        $this->generate($creator, $creative)->assertStatus(402);
-        $this->assertSame(0, Generation::query()->count());
-    }
-
-    public function test_client_supplied_price_model_and_prompt_are_ignored(): void
-    {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 5000);
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer();
 
         $this->generate($buyer, $creative, extra: [
             'price' => 1, 'price_per_image' => 1, 'model_id' => 999, 'prompt' => 'hack', 'platform_fee' => 0,
         ])->assertStatus(202);
 
-        $this->assertSame(4000, $this->balance($buyer));
         $job = $this->claimJob($this->workerToken())->json('data');
         $this->assertSame('Gemini 2.5 Flash Image', $job['request']['modelDisplayName']);
         $this->assertStringNotContainsString('hack', $job['request']['prompt']);
@@ -308,23 +217,21 @@ class GenerationTest extends TestCase
     public function test_quantity_and_aspect_ratio_limits(): void
     {
         $creative = $this->publishedCreative($this->creator(), config: ['max_outputs' => 2]);
-        $buyer = $this->buyer(credit: 50000);
+        $buyer = $this->buyer();
 
         $this->generate($buyer, $creative, quantity: 3)->assertStatus(422)->assertJsonPath('code', 'QUANTITY_EXCEEDED');
         // Chỉ nhận tỉ lệ model hỗ trợ
         $this->generate($buyer, $creative, inputs: ['aspectRatio' => '7:3'])->assertStatus(422)->assertJsonValidationErrors('inputs.aspectRatio');
-        $this->assertSame(50000, $this->balance($buyer));
     }
 
-    public function test_retry_selected_outputs_charges_again_with_new_transactions(): void
+    public function test_retry_selected_outputs_creates_new_generation(): void
     {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 10000);
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer();
 
         $original = $this->generate($buyer, $creative, quantity: 2)->json('data');
         $this->runWorker([null, 'CONTENT_BLOCKED']);
         $failedOutputId = $original['outputs'][1]['id'];
-        $this->assertSame(9000, $this->balance($buyer));
 
         $retry = $this->actingAs($buyer)->postJson("/api/v1/generations/{$original['id']}/retry", [
             'output_ids' => [$failedOutputId],
@@ -342,15 +249,12 @@ class GenerationTest extends TestCase
         $this->completeJob($token, $job['id'])->assertOk();
 
         $this->assertSame('completed', $this->latestStatus($retry)['status']);
-        $this->assertSame(3, Transaction::query()->count());
-        $this->assertSame(8000, $this->balance($buyer));
-        $this->assertLedgerMatchesBalance($buyer);
     }
 
     public function test_user_cannot_see_others_generations(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         $id = $this->generate($buyer, $creative)->json('data.id');
         $this->runWorker([null]);
 
@@ -360,15 +264,14 @@ class GenerationTest extends TestCase
             ->assertJsonPath('data.outputs.0.status', OutputStatus::Completed->value);
     }
 
-    public function test_owner_disables_output_without_refund_and_it_disappears(): void
+    public function test_owner_disables_output_and_it_disappears(): void
     {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 5000);
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer();
         $id = $this->generate($buyer, $creative, quantity: 2)->json('data.id');
         $this->runWorker([null, null]);
         $generation = Generation::query()->with('outputs')->findOrFail($id);
         [$disabled, $kept] = $generation->outputs;
-        $balance = $this->balance($buyer);
         $url = "/api/v1/generations/{$id}/outputs/{$disabled->id}/disable";
 
         // Người khác không tắt được
@@ -378,7 +281,6 @@ class GenerationTest extends TestCase
         $this->actingAs($buyer)->postJson($url)->assertNoContent(); // gọi lại không lỗi
         $this->assertNotNull($disabled->fresh()->disabled_at);
         $this->assertSame(OutputStatus::Completed, $disabled->fresh()->status);
-        $this->assertSame($balance, $this->balance($buyer)); // không hoàn tiền
 
         // Lịch sử / chi tiết / trạng thái chỉ còn ảnh chưa tắt, đơn vẫn hiện
         $this->actingAs($buyer)->getJson('/api/v1/generations')->assertOk()
@@ -393,8 +295,8 @@ class GenerationTest extends TestCase
 
     public function test_history_tabs_split_active_failed_and_disabled_images(): void
     {
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
-        $buyer = $this->buyer(credit: 10000);
+        $creative = $this->publishedCreative($this->creator());
+        $buyer = $this->buyer();
         $id = $this->generate($buyer, $creative, quantity: 3)->json('data.id');
         $this->runWorker([null, null, 'CONTENT_BLOCKED']);
         $pending = $this->generate($buyer, $creative)->json('data.id'); // đang chờ worker
@@ -438,9 +340,9 @@ class GenerationTest extends TestCase
     public function test_history_filters_by_creative_and_product(): void
     {
         $creator = $this->creator();
-        $first = $this->publishedCreative($creator, price: 1000);
-        $second = $this->publishedCreative($creator, price: 1000);
-        $buyer = $this->buyer(credit: 10000);
+        $first = $this->publishedCreative($creator);
+        $second = $this->publishedCreative($creator);
+        $buyer = $this->buyer();
         $a = $this->generate($buyer, $first, quantity: 2)->json('data.id');
         $b = $this->generate($buyer, $second)->json('data.id');
         $this->runWorker([null, null, null]);
@@ -471,13 +373,13 @@ class GenerationTest extends TestCase
     public function test_history_filters_list_own_active_creatives_and_products(): void
     {
         $shop = $this->creator();
-        $sold = $this->publishedCreative($shop, price: 1000);
-        $notUsed = $this->publishedCreative($shop, price: 1000);
-        $paused = $this->publishedCreative($shop, price: 1000);
+        $sold = $this->publishedCreative($shop);
+        $notUsed = $this->publishedCreative($shop);
+        $paused = $this->publishedCreative($shop);
         $paused->update(['status' => CreativeStatus::Paused]);
-        $hidden = $this->publishedCreative($shop, price: 1000);
+        $hidden = $this->publishedCreative($shop);
         $hidden->update(['hidden_at' => now()]);
-        $this->publishedCreative($this->creator(), price: 1000); // creative của shop khác
+        $this->publishedCreative($this->creator()); // creative của shop khác
         $active = Product::query()->create(['user_id' => $shop->id, 'name' => 'Đang bán']);
         Product::query()->create(['user_id' => $shop->id, 'name' => 'Đang tắt', 'is_active' => false]);
         Product::query()->create(['user_id' => $this->buyer()->id, 'name' => 'Của người khác']);
@@ -494,7 +396,7 @@ class GenerationTest extends TestCase
 
     public function test_only_completed_output_can_be_disabled(): void
     {
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         $id = $this->generate($buyer, $this->publishedCreative($this->creator()))->json('data.id');
         $output = Generation::query()->findOrFail($id)->outputs()->firstOrFail();
 

@@ -69,7 +69,7 @@ class MarketplaceController extends Controller
             // slug hoặc tên hashtag, có hoặc không có #
             'hashtag' => ['nullable', 'string', 'max:60'],
             'q' => ['nullable', 'string', 'max:100'],
-            'sort' => ['nullable', 'in:newest,popular,price_asc,price_desc'],
+            'sort' => ['nullable', 'in:newest,popular'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
 
@@ -81,8 +81,6 @@ class MarketplaceController extends Controller
 
         match ($filters['sort'] ?? 'newest') {
             'popular' => $query->orderByDesc('usage_count'),
-            'price_asc' => $query->orderBy('price_per_image'),
-            'price_desc' => $query->orderByDesc('price_per_image'),
             default => $query->orderByDesc('published_at'),
         };
 

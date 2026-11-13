@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Enums\OutputStatus;
 use App\Enums\SocialPostStatus;
-use App\Enums\TransactionStatus;
 use App\Jobs\WriteSocialPostContent;
 use App\Models\AiCreative;
 use App\Models\Generation;
@@ -12,7 +11,6 @@ use App\Models\Hashtag;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\SocialPublishJob;
-use App\Models\Transaction;
 use App\Models\User;
 use App\Models\VideoTemplate;
 use App\Models\Worker;
@@ -22,7 +20,6 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -90,11 +87,6 @@ class SocialPostTest extends TestCase
         $owner->shopHashtags()->sync(Hashtag::syncPivot($hashtags));
     }
 
-    private function price(): int
-    {
-        return config('ai90.defaults')['social.ai_content_price'];
-    }
-
     /** Bài đang chờ duyệt từ 1 ảnh có sẵn (không bật AI). */
     private function pendingPost(User $user): SocialPost
     {
@@ -117,9 +109,9 @@ class SocialPostTest extends TestCase
 
     // ---- Tạo bài từ ảnh đã có ----
 
-    public function test_post_with_ai_content_charges_and_fills_content(): void
+    public function test_post_with_ai_content_fills_content(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $first = $this->completedImage($user);
         $second = $this->completedImage($user);
         $this->setShopHashtags($user, ['a51', 'AnhSanPham', 'xuhuong', 'giay', 'dep', 'sale', 'moi']);
@@ -129,7 +121,6 @@ class SocialPostTest extends TestCase
             // Ngoài kho bị bỏ, khác hoa / thường lấy theo tên trong kho, tối đa 5
             'hashtags' => ['khongcotrongkho', '#a51', 'anhsanpham', 'giay', 'dep', 'sale', 'moi'],
         ];
-        $balance = $this->balance($user);
 
         $id = $this->fromImages($user, [$second, $first], ['ai_content' => true])
             ->assertCreated()
@@ -139,8 +130,6 @@ class SocialPostTest extends TestCase
             ->assertJsonPath('data.images.0.output_id', $second['output_id'])
             ->json('data.id');
 
-        $this->assertSame($balance - $this->price(), $this->balance($user));
-        $this->assertLedgerMatchesBalance($user);
 
         // AI nhận ảnh, tên mẫu và kho hashtag của shop
         $this->assertCount(1, $this->aiCalls);
@@ -160,7 +149,7 @@ class SocialPostTest extends TestCase
 
     public function test_ai_content_without_shop_hashtags_adds_no_hashtags(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $this->aiResult = ['title' => 'Tiêu đề', 'content' => 'Nội dung', 'hashtags' => ['a51']];
 
         $id = $this->fromImages($user, [$this->completedImage($user)], ['ai_content' => true])->assertCreated()->json('data.id');
@@ -169,13 +158,12 @@ class SocialPostTest extends TestCase
         $this->getPost($user, $id)->assertJsonPath('data.title', 'Tiêu đề')->assertJsonPath('data.hashtags', []);
     }
 
-    public function test_ai_failure_falls_back_to_creative_info_and_refunds(): void
+    public function test_ai_failure_falls_back_to_creative_info(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $creative = $this->publishedCreative($this->creator());
         $creative->hashtags()->attach(Hashtag::query()->create(['name' => 'MyPham', 'slug' => 'mypham'])->id, ['sort_order' => 1]);
         $image = $this->completedImage($user, $creative);
-        $balance = $this->balance($user);
         $this->aiResult = null;
 
         $id = $this->fromImages($user, [$image], ['ai_content' => true])->assertCreated()->json('data.id');
@@ -185,35 +173,17 @@ class SocialPostTest extends TestCase
             ->assertJsonPath('data.title', 'Ảnh sản phẩm studio')
             ->assertJsonPath('data.content', '')
             ->assertJsonPath('data.hashtags', ['MyPham']);
-        $this->assertSame($balance, $this->balance($user), 'AI lỗi thì hoàn Credit');
-        $this->assertLedgerMatchesBalance($user);
         $this->assertSame(OutputStatus::Failed, SocialContentJob::query()->sole()->status);
     }
 
-    public function test_ai_content_requires_enough_credit(): void
+    public function test_stuck_ai_job_is_failed_by_sweep(): void
     {
-        $user = $this->buyer(credit: 1000 + $this->price() - 1);
+        $user = $this->buyer();
         $image = $this->completedImage($user);
-
-        $this->fromImages($user, [$image], ['ai_content' => true])
-            ->assertStatus(402)->assertJsonPath('code', 'INSUFFICIENT_CREDIT');
-        $this->assertSame(0, SocialPost::query()->count());
-        $this->assertSame([], $this->aiCalls);
-
-        // Tắt công tắc thì tạo được, không tính phí
-        $this->fromImages($user, [$image])->assertCreated()->assertJsonPath('data.status', 'pending_review');
-    }
-
-    public function test_stuck_ai_job_is_failed_by_sweep_and_refunded(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $image = $this->completedImage($user);
-        $balance = $this->balance($user);
         Queue::fake();
 
         $id = $this->fromImages($user, [$image], ['ai_content' => true])->assertJsonPath('data.status', 'generating')->json('data.id');
         Queue::assertPushed(WriteSocialPostContent::class);
-        $this->assertSame($balance - $this->price(), $this->balance($user));
 
         $this->artisan('social:sweep')->assertSuccessful();
         $this->getPost($user, $id)->assertJsonPath('data.status', 'generating');
@@ -222,103 +192,12 @@ class SocialPostTest extends TestCase
         $this->artisan('social:sweep')->assertSuccessful();
 
         $this->getPost($user, $id)->assertJsonPath('data.status', 'pending_review');
-        $this->assertSame($balance, $this->balance($user));
-        $this->assertLedgerMatchesBalance($user);
         $this->assertSame([], $this->aiCalls);
-    }
-
-    public function test_cancel_while_ai_is_writing_refunds_and_deletes_post(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $image = $this->completedImage($user);
-        $balance = $this->balance($user);
-        Queue::fake();
-
-        $id = $this->fromImages($user, [$image], ['ai_content' => true])->assertJsonPath('data.status', 'generating')->json('data.id');
-        $this->assertSame($balance - $this->price(), $this->balance($user));
-
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/cancel")->assertNoContent();
-
-        $this->assertNull(SocialPost::query()->find($id));
-        $this->assertSame(0, SocialContentJob::query()->count());
-        $this->assertSame($balance, $this->balance($user));
-        $this->assertLedgerMatchesBalance($user);
-        $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertNotFound();
-    }
-
-    public function test_crop_post_image_overwrites_original_output(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $image = $this->completedImage($user);
-        $id = $this->fromImages($user, [$image])->assertCreated()->json('data.id');
-        $postImage = SocialPost::query()->findOrFail($id)->images()->with('output')->firstOrFail();
-        $oldPath = $postImage->output->image_path;
-        $balance = $this->balance($user);
-        // Ảnh từ mẫu của creator: không lộ prompt của creator
-        $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertJsonPath('data.images.0.prompt', null);
-
-        $data = $this->actingAs($user)->post("/api/v1/social/posts/{$id}/images/{$postImage->id}/crop", [
-            'image' => UploadedFile::fake()->image('crop.jpg', 300, 400),
-        ], ['Accept' => 'application/json'])
-            ->assertOk()
-            ->assertJsonPath('data.id', $postImage->id)
-            ->assertJsonPath('data.output_id', $image['output_id'])
-            ->json('data');
-
-        // Ghi đè ảnh gốc: lịch sử tạo ảnh / lô / bài khác dùng output này cũng đổi theo
-        $output = $postImage->output->fresh();
-        $this->assertNotSame($oldPath, $output->image_path);
-        $this->assertStringContainsString($output->image_path, $data['image_url']);
-        Storage::disk('media')->assertExists($output->image_path);
-        Storage::disk('media')->assertMissing($oldPath);
-        $this->assertSame($balance, $this->balance($user));
-    }
-
-    public function test_crop_uploaded_post_image_replaces_only_post_file(): void
-    {
-        $user = $this->buyer();
-        $post = SocialPost::query()->create([
-            'user_id' => $user->id,
-            'status' => SocialPostStatus::PendingReview,
-            'source' => SocialPost::SOURCE_LOOKBOOK,
-            'idempotency_key' => 'lookbook-crop',
-            'title' => 'Lookbook',
-        ]);
-        Storage::disk('media')->put('social-posts/old.jpg', 'x');
-        $postImage = $post->images()->create(['image_path' => 'social-posts/old.jpg', 'position' => 1]);
-
-        $this->actingAs($user)->post("/api/v1/social/posts/{$post->id}/images/{$postImage->id}/crop", [
-            'image' => UploadedFile::fake()->image('crop.jpg', 300, 400),
-        ], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.id', $postImage->id);
-
-        $postImage->refresh();
-        $this->assertNotSame('social-posts/old.jpg', $postImage->image_path);
-        Storage::disk('media')->assertExists($postImage->image_path);
-        Storage::disk('media')->assertMissing('social-posts/old.jpg');
-    }
-
-    public function test_crop_post_image_requires_editable_own_post(): void
-    {
-        $user = $this->buyer(credit: 5000);
-        $image = $this->completedImage($user);
-        $id = $this->fromImages($user, [$image])->assertCreated()->json('data.id');
-        $post = SocialPost::query()->findOrFail($id);
-        $postImage = $post->images()->firstOrFail();
-        $url = "/api/v1/social/posts/{$id}/images/{$postImage->id}/crop";
-        $file = fn () => ['image' => UploadedFile::fake()->image('crop.jpg', 300, 400)];
-        $files = count(Storage::disk('media')->allFiles());
-
-        $this->actingAs($this->buyer())->post($url, $file(), ['Accept' => 'application/json'])->assertNotFound();
-
-        $post->update(['status' => SocialPostStatus::Publishing]);
-        $this->actingAs($user)->post($url, $file(), ['Accept' => 'application/json'])->assertStatus(409);
-        // File vừa lưu bị xoá khi không ghi được
-        $this->assertSame($files, count(Storage::disk('media')->allFiles()));
     }
 
     public function test_cannot_use_images_of_other_users_or_unfinished_images(): void
     {
-        $owner = $this->buyer(credit: 5000);
+        $owner = $this->buyer();
         $image = $this->completedImage($owner);
         $other = $this->buyer();
 
@@ -334,11 +213,10 @@ class SocialPostTest extends TestCase
         $this->assertSame(0, SocialPost::query()->count());
     }
 
-    public function test_same_idempotency_key_returns_same_post_and_charges_once(): void
+    public function test_same_idempotency_key_returns_same_post(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $image = $this->completedImage($user);
-        $balance = $this->balance($user);
         $body = ['images' => [$image], 'idempotency_key' => 'same-key', 'ai_content' => true];
 
         $first = $this->actingAs($user)->postJson('/api/v1/social/posts/from-images', $body)->assertCreated()->json('data.id');
@@ -346,14 +224,13 @@ class SocialPostTest extends TestCase
 
         $this->assertSame($first, $second);
         $this->assertSame(1, SocialContentJob::query()->count());
-        $this->assertSame($balance - $this->price(), $this->balance($user));
     }
 
     // ---- Không dùng AI viết nội dung ----
 
     public function test_without_ai_content_post_goes_to_review_with_manual_content(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
 
         $this->fromImages($user, [$this->completedImage($user)], [
             'title' => 'Tiêu đề tự nhập',
@@ -371,11 +248,10 @@ class SocialPostTest extends TestCase
 
     public function test_without_ai_content_and_no_input_uses_creative_defaults(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $creative = $this->publishedCreative($this->creator());
         $creative->hashtags()->attach(Hashtag::query()->create(['name' => 'MyPham', 'slug' => 'mypham'])->id, ['sort_order' => 1]);
         $image = $this->completedImage($user, $creative);
-        $balance = $this->balance($user);
 
         $this->fromImages($user, [$image])
             ->assertCreated()
@@ -384,14 +260,12 @@ class SocialPostTest extends TestCase
             ->assertJsonPath('data.content', '')
             ->assertJsonPath('data.hashtags', ['MyPham']);
         $this->assertSame(0, SocialContentJob::query()->count());
-        $this->assertSame($balance, $this->balance($user));
     }
 
     public function test_ai_content_is_ignored_when_disabled_or_content_is_manual(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $image = $this->completedImage($user);
-        $balance = $this->balance($user);
 
         $this->fromImages($user, [$image], ['ai_content' => true, 'title' => 'Tự viết'])
             ->assertCreated()
@@ -406,13 +280,12 @@ class SocialPostTest extends TestCase
             ->assertJsonPath('data.ai_content', false);
 
         $this->assertSame(0, SocialContentJob::query()->count());
-        $this->assertSame($balance, $this->balance($user));
         $this->assertSame([], $this->aiCalls);
     }
 
     public function test_create_validates_manual_content(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
 
         $this->fromImages($user, [$this->completedImage($user)], [
             'title' => str_repeat('a', 91),
@@ -423,47 +296,36 @@ class SocialPostTest extends TestCase
 
     // ---- Viết lại bằng AI ----
 
-    public function test_rewrite_returns_content_without_saving_and_charges(): void
+    public function test_rewrite_returns_content_without_saving(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
         $this->setShopHashtags($user, ['a51', 'xuhuong']);
         $this->aiResult = ['title' => 'Tiêu đề mới', 'content' => 'Nội dung mới #xuhuong', 'hashtags' => ['xuhuong', 'ngoaikho']];
-        $balance = $this->balance($user);
 
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
             ->assertOk()
             ->assertJsonPath('data.title', 'Tiêu đề mới')
             ->assertJsonPath('data.content', 'Nội dung mới')
-            ->assertJsonPath('data.hashtags', ['xuhuong'])
-            ->assertJsonPath('data.credit_balance', $balance - $this->price());
+            ->assertJsonPath('data.hashtags', ['xuhuong']);
 
         $this->assertSame($post->title, $post->fresh()->title, 'Không lưu vào bài');
-        $this->assertSame($balance - $this->price(), $this->balance($user));
-        $this->assertLedgerMatchesBalance($user);
     }
 
-    public function test_rewrite_does_not_charge_when_ai_fails_or_credit_is_low(): void
+    public function test_rewrite_reports_ai_failure_and_disabled(): void
     {
-        $user = $this->buyer(credit: 1000 + $this->price());
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
-        $other = $this->buyer(credit: 5000);
+        $other = $this->buyer();
 
         $this->actingAs($other)->postJson("/api/v1/social/posts/{$post->id}/ai-content")->assertNotFound();
 
         $this->aiResult = null;
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
             ->assertStatus(503)->assertJsonPath('code', 'AI_CONTENT_FAILED');
-        $this->assertSame($this->price(), $this->balance($user));
 
         $this->aiResult = ['title' => 'x', 'content' => 'y', 'hashtags' => []];
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")->assertOk();
-        $this->assertSame(0, $this->balance($user));
-
-        $calls = count($this->aiCalls);
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
-            ->assertStatus(402)->assertJsonPath('code', 'INSUFFICIENT_CREDIT');
-        $this->assertCount($calls, $this->aiCalls, 'Không đủ Credit thì không gọi AI');
 
         config(['ai90.social.ai_content' => false]);
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
@@ -534,7 +396,7 @@ class SocialPostTest extends TestCase
 
     public function test_ai_follows_shop_samples_and_length_limits(): void
     {
-        $owner = $this->creator(credit: 5000);
+        $owner = $this->creator();
         $this->aiSettings($owner, [
             'samples' => [['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']],
             'requirements' => 'Luôn xưng shop',
@@ -560,8 +422,7 @@ class SocialPostTest extends TestCase
     {
         $this->actingAs($this->buyer())->getJson('/api/v1/auth/me')
             ->assertOk()
-            ->assertJsonPath('data.social_ai.enabled', true)
-            ->assertJsonPath('data.social_ai.price', $this->price());
+            ->assertJsonPath('data.social_ai.enabled', true);
     }
 
     // ---- Đăng (giao cho worker, 1 job / bài chứa mọi nền tảng, note/gop-luong-dang-bai.txt) ----
@@ -592,7 +453,7 @@ class SocialPostTest extends TestCase
 
     public function test_publish_assigns_worker_who_posts_all_platforms_in_one_job(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
         $extra = $this->completedImage($user);
         [$worker, $token] = $this->postWorker($user);
@@ -659,7 +520,7 @@ class SocialPostTest extends TestCase
 
     public function test_scheduled_post_waits_until_due(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
         [$worker, $token] = $this->postWorker($user);
 
@@ -673,7 +534,7 @@ class SocialPostTest extends TestCase
 
     public function test_worker_failure_returns_post_to_review_then_retry(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
         [$worker, $token] = $this->postWorker($user);
         $this->publish($user, $post, $this->publishBody($post, $worker, ['platforms' => ['tiktok', 'instagram']]))->assertOk();
@@ -701,7 +562,7 @@ class SocialPostTest extends TestCase
 
     public function test_recreate_while_worker_silent_rejects_old_result(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
         [$worker, $token] = $this->postWorker($user);
         $this->publish($user, $post, $this->publishBody($post, $worker))->assertOk();
@@ -724,7 +585,7 @@ class SocialPostTest extends TestCase
 
     public function test_publish_as_video_requires_template_and_enough_images(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
         [$worker, $token] = $this->postWorker($user);
         $template = VideoTemplate::query()->create([
@@ -754,7 +615,7 @@ class SocialPostTest extends TestCase
 
     public function test_publish_validates_worker_platforms_and_limits(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
         [$worker] = $this->postWorker($user);
         [$foreign] = $this->postWorker($this->buyer(), 'foreign');
@@ -780,7 +641,7 @@ class SocialPostTest extends TestCase
     {
         config(['ai90.social.ai_content' => false]);
         RateLimiter::for('generations', fn () => Limit::none()); // tạo 11 ảnh liên tiếp
-        $user = $this->buyer(credit: 50000);
+        $user = $this->buyer();
         [$worker] = $this->postWorker($user);
         $images = array_map(fn () => $this->completedImage($user), range(1, 11));
         $post = SocialPost::query()->findOrFail($this->fromImages($user, $images, ['title' => 'x'])->json('data.id'));
@@ -796,7 +657,7 @@ class SocialPostTest extends TestCase
 
     public function test_list_and_show_only_own_posts(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $post = $this->pendingPost($user);
         $other = $this->buyer();
 
@@ -814,7 +675,7 @@ class SocialPostTest extends TestCase
 
     public function test_list_filters_by_worker(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         [$workerA] = $this->postWorker($user, 'worker-a');
         [$workerB] = $this->postWorker($user, 'worker-b');
         $postA = $this->pendingPost($user);
@@ -833,7 +694,7 @@ class SocialPostTest extends TestCase
 
     public function test_delete_only_when_pending_review(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $image = $this->completedImage($user);
         Queue::fake();
         $generating = $this->fromImages($user, [$image], ['ai_content' => true])->json('data.id');
@@ -846,6 +707,5 @@ class SocialPostTest extends TestCase
         $this->assertSame(0, SocialPost::query()->count());
         // Ảnh vẫn còn trong lịch sử tạo ảnh
         $this->assertSame(1, Generation::query()->where('user_id', $user->id)->count());
-        $this->assertTrue(Transaction::query()->where('user_id', $user->id)->get()->every(fn ($tx) => $tx->status === TransactionStatus::Completed));
     }
 }

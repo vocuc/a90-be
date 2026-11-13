@@ -41,11 +41,11 @@ class ImageBatchTest extends TestCase
 
     // ---- Tạo lô ----
 
-    public function test_create_charges_total_and_splits_quantity_over_max_outputs(): void
+    public function test_create_splits_quantity_over_max_outputs(): void
     {
-        $a = $this->publishedCreative($this->creator(), price: 1000); // max_outputs = 5
-        $b = $this->publishedCreative($this->creator(), price: 2000);
-        $user = $this->buyer(credit: 20000);
+        $a = $this->publishedCreative($this->creator()); // max_outputs = 5
+        $b = $this->publishedCreative($this->creator());
+        $user = $this->buyer();
 
         $this->createBatch($user, [[$a, 7], [$b, 1]])
             ->assertCreated()
@@ -53,10 +53,8 @@ class ImageBatchTest extends TestCase
             ->assertJsonPath('data.image_count', 8)
             ->assertJsonPath('data.generating_count', 8)
             ->assertJsonPath('data.images.0.status', 'queued')
-            ->assertJsonPath('data.images.7.creative.price_per_image', 2000)
             ->assertJsonPath('data.post_count', 0);
 
-        $this->assertSame(11000, $this->balance($user));
         // 7 ảnh mẫu A = 5 + 2, dùng chung ảnh đầu vào
         $generations = Generation::query()->where('creative_id', $a->id)->orderBy('id')->get();
         $this->assertSame([5, 2], $generations->pluck('quantity')->all());
@@ -70,14 +68,12 @@ class ImageBatchTest extends TestCase
             ->assertJsonPath('data.0.failed_count', 1)
             ->assertJsonMissingPath('data.0.images');
         $this->assertNotNull($this->actingAs($user)->getJson('/api/v1/image-batches')->json('data.0.cover_url'));
-        $this->assertSame(13000, $this->balance($user));
-        $this->assertLedgerMatchesBalance($user);
     }
 
     public function test_same_creative_only_once_per_batch(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
 
         $this->createBatch($user, [[$creative, 1], [$creative, 2]])
             ->assertStatus(422)
@@ -85,23 +81,9 @@ class ImageBatchTest extends TestCase
         $this->assertSame(0, ImageBatch::query()->count());
     }
 
-    public function test_insufficient_credit_for_total_creates_nothing(): void
-    {
-        $user = $this->buyer(credit: 1500);
-
-        $this->createBatch($user, [[$this->publishedCreative($this->creator(), price: 1000), 2]])
-            ->assertStatus(402)
-            ->assertJsonPath('code', 'INSUFFICIENT_CREDIT')
-            ->assertJsonPath('context.required', 2000);
-
-        $this->assertSame(0, ImageBatch::query()->count());
-        $this->assertSame(0, Generation::query()->count());
-        $this->assertSame(1500, $this->balance($user));
-    }
-
     public function test_inputs_are_validated_per_item(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $a = $this->publishedCreative($this->creator());
         $b = $this->publishedCreative($this->creator());
 
@@ -120,19 +102,17 @@ class ImageBatchTest extends TestCase
             'items' => [['creative_id' => 999999, 'quantity' => 1]], 'idempotency_key' => 'k2',
         ])->assertStatus(404)->assertJsonPath('code', 'CREATIVE_NOT_AVAILABLE');
 
-        $this->assertSame(5000, $this->balance($user));
     }
 
     public function test_same_idempotency_key_returns_same_batch(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
 
         $first = $this->createBatch($user, [[$creative, 1]], ['idempotency_key' => 'same'])->json('data.id');
         $second = $this->createBatch($user, [[$creative, 1]], ['idempotency_key' => 'same'])->json('data.id');
 
         $this->assertSame($first, $second);
-        $this->assertSame(4000, $this->balance($user));
     }
 
     // ---- Logo shop (note/logo-tao-anh.txt) ----
@@ -141,11 +121,11 @@ class ImageBatchTest extends TestCase
     {
         $creative = $this->publishedCreative($this->creator());
 
-        $this->createBatch($this->buyer(credit: 5000), [[$creative, 1]], ['insert_logo' => 1])
+        $this->createBatch($this->buyer(), [[$creative, 1]], ['insert_logo' => 1])
             ->assertStatus(422)
             ->assertJsonPath('errors.insert_logo.0', 'Bạn phải tạo shop để sử dụng tính năng này.');
 
-        $this->createBatch($this->creator(credit: 5000), [[$creative, 1]], ['insert_logo' => 1])
+        $this->createBatch($this->creator(), [[$creative, 1]], ['insert_logo' => 1])
             ->assertStatus(422)
             ->assertJsonPath('errors.insert_logo.0', 'Shop chưa có logo. Hãy thêm ảnh đại diện shop để dùng tính năng này.');
 
@@ -154,7 +134,7 @@ class ImageBatchTest extends TestCase
 
     public function test_worker_gets_current_shop_logo_outside_request_and_regenerate_keeps_it(): void
     {
-        $user = $this->creator(credit: 5000);
+        $user = $this->creator();
         $user->creatorProfile->update(['avatar_path' => 'avatars/logo-1.png']);
         $creative = $this->publishedCreative($this->creator());
         $batchId = $this->createBatch($user, [[$creative, 1]], ['insert_logo' => 1])->assertCreated()->json('data.id');
@@ -176,7 +156,7 @@ class ImageBatchTest extends TestCase
 
     public function test_batch_without_insert_logo_sends_no_logo(): void
     {
-        $user = $this->creator(credit: 5000);
+        $user = $this->creator();
         $user->creatorProfile->update(['avatar_path' => 'avatars/logo-1.png']);
         $this->createBatch($user, [[$this->publishedCreative($this->creator()), 1]], ['insert_logo' => 0])->assertCreated();
 
@@ -185,9 +165,9 @@ class ImageBatchTest extends TestCase
 
     // ---- Tạo lại / sửa nguyên liệu ----
 
-    public function test_regenerate_charges_and_replaces_image_in_same_position(): void
+    public function test_regenerate_replaces_image_in_same_position(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user, 2);
         $image = $batch->images()->get()[1];
 
@@ -200,7 +180,6 @@ class ImageBatchTest extends TestCase
             ->json('data');
 
         $this->assertNotSame($image->output_id, $new['output_id']);
-        $this->assertSame(2000, $this->balance($user));
         $this->assertSame($image->generation_id, Generation::query()->find($new['generation_id'])->parent_generation_id);
 
         // Đang tạo lại: chưa tạo lại / xoá lô được
@@ -218,7 +197,7 @@ class ImageBatchTest extends TestCase
 
     public function test_edit_inputs_keeps_old_file_and_changes_aspect_ratio(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user);
         $image = $batch->images()->first();
         $oldGeneration = Generation::query()->find($image->generation_id);
@@ -251,7 +230,7 @@ class ImageBatchTest extends TestCase
 
     public function test_image_inputs_null_when_input_file_was_deleted(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user);
         $image = $batch->images()->first();
         Storage::disk('media')->delete(Generation::query()->find($image->generation_id)->input_paths['product_image']);
@@ -263,13 +242,12 @@ class ImageBatchTest extends TestCase
 
     // ---- Cắt ảnh ----
 
-    public function test_crop_overwrites_original_image_free_of_charge(): void
+    public function test_crop_overwrites_original_image(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user);
         $image = $batch->images()->with('output')->first();
         $oldPath = $image->output->image_path;
-        $balance = $this->balance($user);
 
         $data = $this->actingAs($user)->post("/api/v1/image-batches/{$batch->id}/images/{$image->id}/crop", [
             'image' => UploadedFile::fake()->image('crop.jpg', 300, 400),
@@ -286,12 +264,11 @@ class ImageBatchTest extends TestCase
         $this->assertNotNull($output->thumb_path);
         Storage::disk('media')->assertExists($output->image_path);
         Storage::disk('media')->assertMissing($oldPath);
-        $this->assertSame($balance, $this->balance($user));
     }
 
     public function test_uploading_new_image_re_enables_disabled_image(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user);
         $image = $batch->images()->first();
         $this->actingAs($user)->postJson("/api/v1/generations/{$image->generation_id}/outputs/{$image->output_id}/disable")
@@ -308,7 +285,7 @@ class ImageBatchTest extends TestCase
 
     public function test_crop_rejects_busy_image_and_other_users(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user);
         $image = $batch->images()->first();
         $url = "/api/v1/image-batches/{$batch->id}/images/{$image->id}/crop";
@@ -327,7 +304,7 @@ class ImageBatchTest extends TestCase
 
     public function test_delete_image_keeps_at_least_one(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user, 2);
         [$first, $second] = $batch->images()->get()->all();
 
@@ -340,7 +317,7 @@ class ImageBatchTest extends TestCase
 
     public function test_delete_batch_keeps_posts_and_history(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user);
         $image = $batch->images()->first();
         $postId = $this->postFromBatch($user, $batch, [$image])->assertCreated()->json('data.id');
@@ -354,12 +331,11 @@ class ImageBatchTest extends TestCase
 
     // ---- Hủy ảnh đang chờ ----
 
-    public function test_cancel_refunds_queued_images_but_keeps_processing_and_done(): void
+    public function test_cancel_fails_queued_images_but_keeps_processing_and_done(): void
     {
-        $user = $this->buyer(credit: 10000);
-        $creative = $this->publishedCreative($this->creator(), price: 1000);
+        $user = $this->buyer();
+        $creative = $this->publishedCreative($this->creator());
         $batchId = $this->createBatch($user, [[$creative, 4]])->assertCreated()->json('data.id');
-        $this->assertSame(6000, $this->balance($user));
 
         // Ảnh 1 xong, ảnh 2 worker đang tạo, ảnh 3-4 còn chờ
         $token = $this->workerToken();
@@ -378,8 +354,6 @@ class ImageBatchTest extends TestCase
             ->assertJsonPath('data.images.2.status', 'failed')
             ->assertJsonPath('data.images.3.status', 'failed')
             ->assertJsonPath('data.failed_count', 2);
-        $this->assertSame(8000, $this->balance($user));
-        $this->assertLedgerMatchesBalance($user);
 
         // Worker không nhận được ảnh đã hủy; ảnh đang tạo vẫn trả kết quả bình thường
         $this->claimJob($token)->assertNoContent();
@@ -388,7 +362,6 @@ class ImageBatchTest extends TestCase
 
         // Bấm lại: không còn ảnh chờ, không hoàn thêm
         $this->actingAs($user)->postJson("/api/v1/image-batches/{$batchId}/cancel")->assertOk()->assertJsonPath('meta.cancelled', 0);
-        $this->assertSame(8000, $this->balance($user));
 
         $this->actingAs($this->buyer())->postJson("/api/v1/image-batches/{$batchId}/cancel")->assertNotFound();
     }
@@ -406,7 +379,7 @@ class ImageBatchTest extends TestCase
 
     public function test_batch_can_be_posted_many_times_and_posts_are_independent(): void
     {
-        $user = $this->buyer(credit: 5000);
+        $user = $this->buyer();
         $batch = $this->completedBatch($user, 2);
         $images = $batch->images()->get();
 
@@ -429,9 +402,9 @@ class ImageBatchTest extends TestCase
 
     public function test_cannot_use_batch_of_other_user(): void
     {
-        $owner = $this->buyer(credit: 5000);
+        $owner = $this->buyer();
         $batch = $this->completedBatch($owner);
-        $other = $this->buyer(credit: 5000);
+        $other = $this->buyer();
         $image = $batch->images()->first();
 
         $this->postFromBatch($other, $batch, [$image])->assertStatus(422)->assertJsonValidationErrors('image_batch_id');

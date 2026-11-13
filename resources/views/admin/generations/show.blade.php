@@ -15,11 +15,10 @@
                     <p><x-admin.status :value="$generation->status" /> <x-admin.status :value="$generation->type" /></p>
                     <dl class="mb-0">
                         <dt>Người dùng</dt><dd><a href="{{ route('admin.users.show', $generation->user_id) }}">{{ $generation->user->email }}</a></dd>
-                        <dt>Creative</dt><dd>@if ($generation->creative)<a href="{{ route('admin.creatives.show', $generation->creative_id) }}">{{ $generation->creative->title }}</a>@else<span class="text-muted">Kế hoạch nội dung (không dùng creative)</span>@endif</dd>
+                        <dt>Creative</dt><dd><a href="{{ route('admin.creatives.show', $generation->creative_id) }}">{{ $generation->creative->title }}</a></dd>
                         <dt>Creator</dt><dd>{{ '@'.($generation->creator->creatorProfile?->username ?? '—') }}</dd>
                         <dt>Model</dt><dd>{{ $generation->model->name }} <code>{{ $generation->model->code }}</code></dd>
                         <dt>Số lượng / tỉ lệ</dt><dd>{{ $generation->quantity }} ảnh · {{ $generation->aspect_ratio }}</dd>
-                        <dt>Giá / ảnh (snapshot)</dt><dd>@credit($generation->price_per_image) Credit</dd>
                         @if ($generation->parent_generation_id)
                             <dt>Retry của</dt><dd><a href="{{ route('admin.generations.show', $generation->parent_generation_id) }}">#{{ $generation->parent_generation_id }}</a></dd>
                         @endif
@@ -84,10 +83,6 @@
                                         </div>
                                         @if ($output->error_code)
                                             <div class="text-danger"><code>{{ $output->error_code }}</code> {{ $output->error_message }}</div>
-                                        @endif
-                                        @if ($output->transaction)
-                                            <div>TX <code>{{ $output->transaction->code }}</code> <x-admin.status :value="$output->transaction->status" /></div>
-                                            <div class="text-muted">@credit($output->transaction->amount) · phí @credit($output->transaction->platform_fee_amount) · Creator @credit($output->transaction->creator_amount)</div>
                                         @endif
                                         @if ($output->worker)
                                             <div class="text-muted">Worker: {{ $output->worker->name }} · lần nhận {{ $output->attempts }}</div>

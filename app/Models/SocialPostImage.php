@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * Ảnh của bài đăng, một trong hai loại:
  * - liên kết tới một output (ảnh tạo trên A51): ảnh, url, trạng thái luôn đọc từ output;
- * - ảnh upload thẳng (bài lookbook cũ): generation_id / output_id = null, file ở image_path /
+ * - ảnh upload thẳng (lookbook từ skill FlowKit, LookbookTask): generation_id / output_id = null, file ở image_path /
  *   thumb_path.
  * Chỗ đọc ảnh bài đăng dùng isUsable() / imagePath() / thumbPath() để không phải phân biệt hai loại.
  */

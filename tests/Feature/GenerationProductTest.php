@@ -14,7 +14,7 @@ class GenerationProductTest extends TestCase
     public function test_single_generation_saves_product_or_zero(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         $product = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Áo thun']);
 
         $withProduct = $this->generate($buyer, $creative, extra: ['product_id' => $product->id])->assertStatus(202)->json('data.id');
@@ -26,7 +26,7 @@ class GenerationProductTest extends TestCase
 
     public function test_product_list_shows_generated_image_count(): void
     {
-        $shop = $this->creator(credit: 10000);
+        $shop = $this->creator();
         $creative = $this->publishedCreative($this->creator());
         $product = Product::query()->create(['user_id' => $shop->id, 'name' => 'Áo thun']);
         $other = Product::query()->create(['user_id' => $shop->id, 'name' => 'Chưa có ảnh']);
@@ -47,7 +47,7 @@ class GenerationProductTest extends TestCase
     public function test_rejects_product_of_other_user(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         $foreign = Product::query()->create(['user_id' => $this->buyer()->id, 'name' => 'Của người khác']);
 
         $this->generate($buyer, $creative, extra: ['product_id' => $foreign->id])
@@ -58,8 +58,8 @@ class GenerationProductTest extends TestCase
 
     public function test_manual_batch_saves_product_only_on_generations(): void
     {
-        $creative = $this->publishedCreative($this->creator(), price: 1000); // max_outputs = 5 -> 7 ảnh = 2 generation
-        $buyer = $this->buyer(credit: 20000);
+        $creative = $this->publishedCreative($this->creator()); // max_outputs = 5 -> 7 ảnh = 2 generation
+        $buyer = $this->buyer();
         $product = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Áo thun']);
 
         $this->actingAs($buyer)->post('/api/v1/image-batches', [
@@ -79,7 +79,7 @@ class GenerationProductTest extends TestCase
     public function test_retry_keeps_product(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         $product = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Áo thun']);
         $id = $this->generate($buyer, $creative, extra: ['product_id' => $product->id])->json('data.id');
         [, $token] = \App\Models\Worker::register('anh', \App\Models\Worker::TYPE_IMAGE);
@@ -97,7 +97,7 @@ class GenerationProductTest extends TestCase
     public function test_product_prompt_note_is_appended_to_prompt(): void
     {
         $creative = $this->publishedCreative($this->creator());
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         $product = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Áo thun', 'prompt_note' => 'Nền trắng, không chữ.']);
         $empty = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Chưa có yêu cầu']);
 

@@ -22,7 +22,7 @@
         </div>
         <div class="card-body p-0 table-responsive">
             <table class="table table-hover table-sm mb-0">
-                <thead><tr><th>ID</th><th>Tên</th><th>Email</th><th>Vai trò</th><th>Creator</th><th class="text-right">Số dư Credit</th><th>Trạng thái</th><th>Ngày tạo</th><th></th></tr></thead>
+                <thead><tr><th>ID</th><th>Tên</th><th>Email</th><th>Vai trò</th><th>Creator</th><th>Trạng thái</th><th>Ngày tạo</th><th></th></tr></thead>
                 <tbody>
                 @forelse ($users as $user)
                     <tr>
@@ -31,13 +31,12 @@
                         <td>{{ $user->email }}</td>
                         <td>{!! $user->isAdmin() ? '<span class="badge badge-danger">Admin</span>' : '<span class="badge badge-light">User</span>' !!}</td>
                         <td>{{ $user->creatorProfile ? '@'.$user->creatorProfile->username : '—' }}</td>
-                        <td class="text-right">@credit($user->creditWallet?->balance ?? 0)</td>
                         <td><x-admin.status :value="$user->status" /></td>
                         <td class="text-muted">{{ $user->created_at->format('d/m/Y') }}</td>
                         <td class="text-right"><a href="{{ route('admin.users.show', $user) }}" class="btn btn-xs btn-outline-primary">Chi tiết</a></td>
                     </tr>
                 @empty
-                    <tr><td colspan="9" class="text-center text-muted py-3">Không có người dùng.</td></tr>
+                    <tr><td colspan="8" class="text-center text-muted py-3">Không có người dùng.</td></tr>
                 @endforelse
                 </tbody>
             </table>

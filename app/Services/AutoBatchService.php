@@ -7,7 +7,6 @@ use App\Enums\OutputStatus;
 use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
 use App\Models\CreativeGroup;
-use App\Models\CreditWallet;
 use App\Models\ImageBatch;
 use App\Models\Product;
 use App\Models\User;
@@ -24,15 +23,12 @@ use Illuminate\Support\Facades\DB;
  * Chọn (xem AutoBatchPlanner): sản phẩm ít ảnh đã tạo nhất trước, mỗi sản phẩm ghép nhóm có ít lượt tạo nhất với sản phẩm
  * đó; bằng nhau thì ngẫu nhiên. Không lặp sản phẩm / nhóm nên số lô tối đa bằng min(số sản phẩm, số nhóm).
  * Nhóm không có creative nào dùng được với sản phẩm thì bỏ qua.
- * Hết tiền giữa chừng thì dừng; lô là đơn vị nhỏ nhất (trừ tiền cả lô như lô tạo tay).
  * Số lô tự động đã tạo của từng sản phẩm lưu ở auto_batch_product_counts (chỉ để hiển thị, không ảnh hưởng cách chọn).
  */
 class AutoBatchService
 {
     /** Số lô tối đa mỗi lần bấm: chặn kỹ thuật (một request tạo tuần tự từng lô), người dùng bấm nhiều lần được. */
     public const MAX_COUNT = 100;
-
-    public const STOP_INSUFFICIENT_CREDIT = 'insufficient_credit';
 
     public const STOP_NO_VALID_PAIR = 'no_valid_pair';
 
@@ -46,7 +42,7 @@ class AutoBatchService
      * null = mọi sản phẩm.
      *
      * @param  int[]|null  $productIds
-     * @return array{plans: array<int, array{product: Product, group: CreativeGroup, items: array, cost: int}>, seed: int}
+     * @return array{plans: array<int, array{product: Product, group: CreativeGroup, items: array}>, seed: int}
      */
     public function preview(User $user, int $count, ?int $seed = null, ?array $productIds = null): array
     {
@@ -57,12 +53,12 @@ class AutoBatchService
 
     /**
      * Tạo tối đa $count lô. Mỗi lô có idempotency_key riêng "auto:{key}:{n}": gửi lại cùng key thì trả đúng các lô
-     * đã tạo, không trừ tiền lần nữa. Không gửi seed thì seed lấy từ idempotency key (gửi lại vẫn chọn như lần đầu).
+     * đã tạo, không tạo lại lần nữa. Không gửi seed thì seed lấy từ idempotency key (gửi lại vẫn chọn như lần đầu).
      *
      * $productIds: như preview.
      *
      * @param  int[]|null  $productIds
-     * @return array{batches: ImageBatch[], stopped: ?string, required: ?int}
+     * @return array{batches: ImageBatch[], stopped: ?string}
      */
     public function create(User $user, int $count, bool $insertLogo, string $idempotencyKey, ?int $seed = null, ?int $workerId = null, ?array $productIds = null): array
     {
@@ -74,7 +70,6 @@ class AutoBatchService
             $plans = $this->planner($user, $productIds)->plan($count, $seed ?? crc32($idempotencyKey) % self::MAX_SEED);
             $created = [];
             $stopped = null;
-            $required = null;
 
             for ($n = 0; $n < $count; $n++) {
                 $key = "auto:{$idempotencyKey}:{$n}";
@@ -90,44 +85,30 @@ class AutoBatchService
                     break;
                 }
 
-                try {
-                    $created[] = DB::transaction(function () use ($user, $plan, $key, $insertLogo, $workerId) {
-                        // Sản phẩm chỉ lưu ở generations.product_id của các ảnh, không lưu ở lô
-                        $batch = $this->batches->create($user, $plan['items'], $key, $insertLogo, [
-                            'source' => ImageBatch::SOURCE_AUTO,
-                            'creative_group_id' => $plan['group']->id,
-                        ], $workerId, $plan['product']->id);
-                        DB::table('auto_batch_product_counts')->upsert(
-                            ['user_id' => $user->id, 'product_id' => $plan['product']->id, 'count' => 1],
-                            ['user_id', 'product_id'],
-                            ['count' => DB::raw('count + 1')],
-                        );
+                $created[] = DB::transaction(function () use ($user, $plan, $key, $insertLogo, $workerId) {
+                    // Sản phẩm chỉ lưu ở generations.product_id của các ảnh, không lưu ở lô
+                    $batch = $this->batches->create($user, $plan['items'], $key, $insertLogo, [
+                        'source' => ImageBatch::SOURCE_AUTO,
+                        'creative_group_id' => $plan['group']->id,
+                    ], $workerId, $plan['product']->id);
+                    DB::table('auto_batch_product_counts')->upsert(
+                        ['user_id' => $user->id, 'product_id' => $plan['product']->id, 'count' => 1],
+                        ['user_id', 'product_id'],
+                        ['count' => DB::raw('count + 1')],
+                    );
 
-                        return $batch;
-                    });
-                } catch (BusinessException $e) {
-                    if ($e->errorCode !== 'INSUFFICIENT_CREDIT' || ! $created) {
-                        throw $e;
-                    }
-                    $stopped = self::STOP_INSUFFICIENT_CREDIT;
-                    $required = $e->context['required'] ?? $plan['cost'];
-                    break;
-                }
+                    return $batch;
+                });
             }
 
             if (! $created) {
                 throw new BusinessException('AUTO_NOTHING_TO_CREATE', 'Chưa có sản phẩm và nhóm creative Đang bán nào dùng được để tạo lô.', 422);
             }
 
-            return ['batches' => $created, 'stopped' => $stopped, 'required' => $required];
+            return ['batches' => $created, 'stopped' => $stopped];
         } finally {
             $lock->release();
         }
-    }
-
-    public function balance(User $user): int
-    {
-        return (int) (CreditWallet::query()->where('user_id', $user->id)->value('balance') ?? 0);
     }
 
     /** @param  int[]|null  $productIds */

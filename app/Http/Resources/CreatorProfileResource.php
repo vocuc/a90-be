@@ -4,7 +4,6 @@ namespace App\Http\Resources;
 
 use App\Models\CreatorProfile;
 use App\Services\MediaStorage;
-use App\Services\SettingService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,7 +13,6 @@ class CreatorProfileResource extends JsonResource
     public function toArray(Request $request): array
     {
         $media = app(MediaStorage::class);
-        $isOwner = $request->user()?->id === $this->user_id;
 
         return [
             'username' => $this->username,
@@ -31,10 +29,6 @@ class CreatorProfileResource extends JsonResource
             'rating_avg' => (float) $this->rating_avg,
             'rating_count' => $this->rating_count,
             'created_at' => $this->created_at?->toIso8601String(),
-            $this->mergeWhen($isOwner, fn () => [
-                'creator_share_percent' => (float) ($this->creator_share_percent
-                    ?? app(SettingService::class)->get('creator_share_percent')),
-            ]),
         ];
     }
 }

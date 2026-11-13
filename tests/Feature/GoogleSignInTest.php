@@ -57,8 +57,7 @@ class GoogleSignInTest extends TestCase
         $this->postJson('/api/v1/auth/google', ['id_token' => $this->idToken()])
             ->assertCreated()
             ->assertJsonPath('data.user.name', 'Nguyễn Google')
-            ->assertJsonPath('data.user.email', 'google@example.com')
-            ->assertJsonPath('data.user.credit_balance', 0);
+            ->assertJsonPath('data.user.email', 'google@example.com');
 
         // Người dùng đổi email Google -> vẫn nhận ra qua sub
         $token = $this->postJson('/api/v1/auth/google', ['id_token' => $this->idToken(['email' => 'new@example.com'])])

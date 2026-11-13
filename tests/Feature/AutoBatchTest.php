@@ -217,7 +217,7 @@ class AutoBatchTest extends TestCase
 
     public function test_picks_distinct_random_products_and_groups_like_preview(): void
     {
-        $user = $this->creator(credit: 100000);
+        $user = $this->creator();
         $groups = array_map(fn (int $i) => $this->group($user, [$this->publishedCreative($user)], "G{$i}")->id, range(1, 4));
         $products = array_map(fn () => $this->product($user)->id, range(1, 5));
 
@@ -246,7 +246,7 @@ class AutoBatchTest extends TestCase
 
     public function test_inactive_products_are_skipped(): void
     {
-        $user = $this->creator(credit: 100000);
+        $user = $this->creator();
         foreach (range(1, 3) as $i) {
             $this->group($user, [$this->publishedCreative($user)], "G{$i}");
         }
@@ -294,7 +294,7 @@ class AutoBatchTest extends TestCase
 
     public function test_count_is_capped_by_fewer_products_or_groups(): void
     {
-        $user = $this->creator(credit: 100000);
+        $user = $this->creator();
         $this->group($user, [$this->publishedCreative($user)], 'G1');
         $this->group($user, [$this->publishedCreative($user)], 'G2');
         foreach (range(1, 4) as $i) {
@@ -310,8 +310,8 @@ class AutoBatchTest extends TestCase
 
     public function test_product_image_fills_linked_field_and_invalid_creatives_are_skipped(): void
     {
-        $user = $this->creator(credit: 100000);
-        $ok = $this->publishedCreative($user, price: 1000);
+        $user = $this->creator();
+        $ok = $this->publishedCreative($user);
         // Không có trường product_image
         $noField = $this->publishedCreative($user, config: ['input_schema' => [
             ['key' => 'model_photo', 'label' => 'Ảnh mẫu', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
@@ -322,7 +322,7 @@ class AutoBatchTest extends TestCase
             ['key' => 'slogan', 'label' => 'Slogan', 'type' => 'text', 'required' => true, 'sort_order' => 2, 'validation' => []],
         ]]);
         // Trường chữ bắt buộc có mặc định thì dùng mặc định
-        $withDefault = $this->publishedCreative($user, price: 2000, config: ['input_schema' => [
+        $withDefault = $this->publishedCreative($user, config: ['input_schema' => [
             ['key' => 'product_image', 'label' => 'Ảnh', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
             ['key' => 'slogan', 'label' => 'Slogan', 'type' => 'text', 'required' => true, 'sort_order' => 2, 'validation' => [], 'default_value' => 'Sale'],
         ]]);
@@ -336,18 +336,16 @@ class AutoBatchTest extends TestCase
             ->assertCreated()
             ->assertJsonPath('data.batches.0.image_count', 2);
 
-        $this->assertSame(97000, $this->balance($user));
         $path = $product->images()->first()->path;
         $generations = Generation::query()->orderBy('id')->get();
         $this->assertSame([$ok->id, $withDefault->id], $generations->pluck('creative_id')->all());
         $this->assertSame(['product_image' => $path], $generations[0]->input_paths);
         $this->assertSame('Sale', $generations[1]->input_values['slogan']);
-        $this->assertLedgerMatchesBalance($user);
     }
 
     public function test_products_pair_with_groups_regardless_of_hashtags(): void
     {
-        $user = $this->creator(credit: 100000);
+        $user = $this->creator();
         $g1 = $this->group($user, [$this->tag($this->publishedCreative($user), ['giay'])], 'G1');
         $g2 = $this->group($user, [$this->tag($this->publishedCreative($user), ['ao'])], 'G2');
 
@@ -365,7 +363,7 @@ class AutoBatchTest extends TestCase
 
     public function test_pair_without_valid_creative_tries_other_group_or_skips_product(): void
     {
-        $user = $this->creator(credit: 100000);
+        $user = $this->creator();
         $g1 = $this->group($user, [$this->publishedCreative($user)], 'G1');
         // Creative cần ảnh key khác: không sản phẩm nào ghép được
         $this->group($user, [$this->publishedCreative($user, config: ['input_schema' => [
@@ -393,31 +391,11 @@ class AutoBatchTest extends TestCase
             ->assertStatus(422)->assertJsonPath('code', 'AUTO_NOTHING_TO_CREATE');
     }
 
-    public function test_stops_when_credit_runs_out(): void
-    {
-        $user = $this->creator(credit: 2500);
-        foreach (range(1, 5) as $i) {
-            $this->group($user, [$this->publishedCreative($user, price: 1000)], "G{$i}");
-            $this->product($user);
-        }
-
-        $this->auto($user, 5)
-            ->assertCreated()
-            ->assertJsonCount(2, 'data.batches')
-            ->assertJsonPath('data.requested', 5)
-            ->assertJsonPath('data.stopped', 'insufficient_credit')
-            ->assertJsonPath('data.required', 1000);
-        $this->assertSame(500, $this->balance($user));
-
-        $this->auto($user, 1)->assertStatus(402)->assertJsonPath('code', 'INSUFFICIENT_CREDIT');
-        $this->assertSame(2, ImageBatch::query()->count());
-    }
-
     public function test_same_idempotency_key_returns_same_batches(): void
     {
-        $user = $this->creator(credit: 10000);
-        $this->group($user, [$this->publishedCreative($user, price: 1000)], 'G1');
-        $this->group($user, [$this->publishedCreative($user, price: 1000)], 'G2');
+        $user = $this->creator();
+        $this->group($user, [$this->publishedCreative($user)], 'G1');
+        $this->group($user, [$this->publishedCreative($user)], 'G2');
         [$p1, $p2] = [$this->product($user), $this->product($user)];
 
         $first = $this->auto($user, 2, ['idempotency_key' => 'same'])->json('data.batches.*.id');
@@ -425,7 +403,6 @@ class AutoBatchTest extends TestCase
 
         $this->assertCount(2, $first);
         $this->assertSame($first, $second);
-        $this->assertSame(8000, $this->balance($user));
         $this->assertSame([1, 1], [$this->autoCount($p1), $this->autoCount($p2)]);
     }
 
@@ -447,10 +424,10 @@ class AutoBatchTest extends TestCase
 
     public function test_products_with_fewest_images_come_first(): void
     {
-        $user = $this->creator(credit: 100000);
-        $creative = $this->publishedCreative($user, price: 1000);
+        $user = $this->creator();
+        $creative = $this->publishedCreative($user);
         foreach (['G1', 'G2', 'G3'] as $name) {
-            $this->group($user, [$this->publishedCreative($user, price: 1000)], $name);
+            $this->group($user, [$this->publishedCreative($user)], $name);
         }
         [$many, $none, $one] = [$this->product($user), $this->product($user), $this->product($user)];
         $this->madeImages($user, $creative, $many, 2);
@@ -463,8 +440,8 @@ class AutoBatchTest extends TestCase
 
     public function test_products_with_same_image_count_are_picked_randomly(): void
     {
-        $user = $this->creator(credit: 100000);
-        $this->group($user, [$this->publishedCreative($user, price: 1000)], 'G1');
+        $user = $this->creator();
+        $this->group($user, [$this->publishedCreative($user)], 'G1');
         foreach (range(1, 5) as $_) {
             $this->product($user);
         }
@@ -476,8 +453,8 @@ class AutoBatchTest extends TestCase
 
     public function test_each_product_gets_group_with_fewest_uses_for_that_product(): void
     {
-        $user = $this->creator(credit: 100000);
-        [$c1, $c2] = [$this->publishedCreative($user, price: 1000), $this->publishedCreative($user, price: 1000)];
+        $user = $this->creator();
+        [$c1, $c2] = [$this->publishedCreative($user), $this->publishedCreative($user)];
         $this->group($user, [$c1], 'G1');
         $g2 = $this->group($user, [$c2], 'G2');
         $product = $this->product($user);
@@ -493,9 +470,9 @@ class AutoBatchTest extends TestCase
 
     public function test_groups_with_same_uses_are_picked_randomly(): void
     {
-        $user = $this->creator(credit: 100000);
+        $user = $this->creator();
         foreach (range(1, 4) as $i) {
-            $this->group($user, [$this->publishedCreative($user, price: 1000)], "G{$i}");
+            $this->group($user, [$this->publishedCreative($user)], "G{$i}");
         }
         $this->product($user);
 
@@ -506,8 +483,8 @@ class AutoBatchTest extends TestCase
 
     public function test_preview_creates_nothing(): void
     {
-        $user = $this->creator(credit: 1500);
-        $creative = $this->publishedCreative($user, price: 1000);
+        $user = $this->creator();
+        $creative = $this->publishedCreative($user);
         $this->group($user, [$creative], 'G1');
         $this->product($user, name: 'Áo');
 
@@ -517,9 +494,7 @@ class AutoBatchTest extends TestCase
             ->assertJsonPath('data.batches.0.product.name', 'Áo')
             ->assertJsonPath('data.batches.0.group.name', 'G1')
             ->assertJsonPath('data.batches.0.creatives.0.id', $creative->id)
-            ->assertJsonPath('data.batches.0.cost', 1000)
-            ->assertJsonPath('data.total_cost', 1000)
-            ->assertJsonPath('data.balance', 1500);
+            ->assertJsonMissingPath('data.batches.0.cost');
 
         $this->assertSame(0, ImageBatch::query()->count());
     }

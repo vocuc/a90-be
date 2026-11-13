@@ -37,7 +37,7 @@ class GenerationController extends Controller
 
     public function show(Generation $generation): View
     {
-        $generation->load(['user', 'creator.creatorProfile', 'creative', 'model', 'outputs.transaction', 'outputs.worker']);
+        $generation->load(['user', 'creator.creatorProfile', 'creative', 'model', 'outputs.worker']);
         $generation->makeVisible('prompt_snapshot');
 
         return view('admin.generations.show', compact('generation'));

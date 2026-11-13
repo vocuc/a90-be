@@ -31,10 +31,10 @@ class VideoPostController extends Controller
 
     /**
      * "Tạo video": worker_id, platforms (mặc định ['tiktok']), count, first_at (giờ đăng bài đầu), gap_min / gap_max (phút giữa 2 bài liên tiếp).
-     * 201 { data: { created, requested, stopped: null|insufficient_credit|no_template|not_enough_images, post_ids } }.
-     * Không tạo được bài nào: 422 VIDEO_NO_TEMPLATE / VIDEO_NOT_ENOUGH_IMAGES, 402 INSUFFICIENT_CREDIT.
+     * 201 { data: { created, requested, stopped: null|no_template|not_enough_images, post_ids } }.
+     * Không tạo được bài nào: 422 VIDEO_NO_TEMPLATE / VIDEO_NOT_ENOUGH_IMAGES.
      */
-    public function auto(Request $request, SocialContentJobService $contentJobs): JsonResponse
+    public function auto(Request $request): JsonResponse
     {
         $data = $request->validate([
             'worker_id' => ['required', 'integer'],
@@ -63,8 +63,7 @@ class VideoPostController extends Controller
         if ($result['created'] === 0) {
             throw match ($result['stopped']) {
                 VideoPostService::STOP_NO_TEMPLATE => new BusinessException('VIDEO_NO_TEMPLATE', 'Chưa có video template nào có số ảnh. Hãy thêm template hoặc điền số ảnh cho template.', 422),
-                VideoPostService::STOP_NOT_ENOUGH_IMAGES => new BusinessException('VIDEO_NOT_ENOUGH_IMAGES', 'Không sản phẩm nào có đủ ảnh cho các template. Hãy tạo thêm ảnh cho sản phẩm.', 422),
-                default => BusinessException::insufficientCredit($contentJobs->price(), (int) ($user->creditWallet?->balance ?? 0)),
+                default => new BusinessException('VIDEO_NOT_ENOUGH_IMAGES', 'Không sản phẩm nào có đủ ảnh cho các template. Hãy tạo thêm ảnh cho sản phẩm.', 422),
             };
         }
 

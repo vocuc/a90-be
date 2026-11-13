@@ -3,7 +3,6 @@
 namespace App\Http\Resources;
 
 use App\Models\User;
-use App\Services\SettingService;
 use App\Services\Social\SocialContentJobService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -18,14 +17,12 @@ class UserResource extends JsonResource
             'name' => $this->name,
             'email' => $this->email,
             'role' => $this->role,
-            'credit_balance' => (int) ($this->creditWallet?->balance ?? 0),
             'creator_profile' => $this->creatorProfile
                 ? new CreatorProfileResource($this->creatorProfile)
                 : null,
             // AI viết nội dung bài đăng (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): tắt thì ẩn công tắc / nút viết lại
             'social_ai' => [
                 'enabled' => SocialContentJobService::enabled(),
-                'price' => app(SettingService::class)->int('social.ai_content_price'),
             ],
             'created_at' => $this->created_at,
         ];

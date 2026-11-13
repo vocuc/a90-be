@@ -1,6 +1,5 @@
 <?php
 
-use App\Http\Controllers\Api\V1\Admin\CreditController as AdminCreditController;
 use App\Http\Controllers\Api\V1\AiModelController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\Creator\AiContentSettingController;
@@ -8,24 +7,20 @@ use App\Http\Controllers\Api\V1\Creator\CreativeAssetController;
 use App\Http\Controllers\Api\V1\Creator\CreativeController;
 use App\Http\Controllers\Api\V1\Creator\CreativeGroupController;
 use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
-use App\Http\Controllers\Api\V1\Creator\DashboardController;
 use App\Http\Controllers\Api\V1\Creator\ProductController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
 use App\Http\Controllers\Api\V1\Creator\ShopWorkerController;
 use App\Http\Controllers\Api\V1\Creator\VideoTemplateController;
-use App\Http\Controllers\Api\V1\CreditWalletController;
 use App\Http\Controllers\Api\V1\GenerationController;
 use App\Http\Controllers\Api\V1\ImageBatchController;
 use App\Http\Controllers\Api\V1\ImageWorkerController;
 use App\Http\Controllers\Api\V1\MarketplaceController;
-use App\Http\Controllers\Api\V1\Planner\PlanContextController;
-use App\Http\Controllers\Api\V1\Planner\PlannerController;
-use App\Http\Controllers\Api\V1\Planner\PlannerTokenController;
 use App\Http\Controllers\Api\V1\Shipping\GhnController;
 use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\Social\VideoPostController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
+use App\Http\Controllers\Api\V1\WorkerLookbookTaskController;
 use App\Http\Controllers\Api\V1\WorkerPostJobController;
 use App\Http\Controllers\Api\V1\WorkerVideoImageController;
 use App\Http\Controllers\Api\V1\WorkerVideoTemplateController;
@@ -38,7 +33,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         Route::post('register', [AuthController::class, 'register'])->middleware('throttle:auth');
         Route::post('login', [AuthController::class, 'login'])->middleware('throttle:auth');
         Route::post('google', [AuthController::class, 'google'])->middleware('throttle:auth');
-        Route::middleware(['auth:sanctum', 'active', 'full_token'])->group(function () {
+        Route::middleware(['auth:sanctum', 'active'])->group(function () {
             Route::post('logout', [AuthController::class, 'logout']);
             Route::get('me', [AuthController::class, 'me']);
         });
@@ -52,21 +47,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     Route::get('creatives/{slug}', [MarketplaceController::class, 'creative']);
     Route::get('creators/{username}', [MarketplaceController::class, 'creator']);
 
-    // Kế hoạch nội dung (FlowKit a51-skills/ke-hoach-noi-dung/thiet-ke.txt mục 9.5): skill gọi bằng token kế hoạch
-    Route::prefix('planner')->middleware(['auth:sanctum', 'active', 'abilities:planner'])->group(function () {
-        Route::get('context', [PlannerController::class, 'context']);
-        Route::post('posts', [PlannerController::class, 'storePost']);
-    });
-
-    Route::middleware(['auth:sanctum', 'active', 'full_token'])->group(function () {
-
-        // Bối cảnh cố định + token cho skill kế hoạch nội dung
-        Route::get('plan-contexts', [PlanContextController::class, 'index']);
-        Route::post('plan-contexts', [PlanContextController::class, 'store']);
-        Route::put('plan-contexts/{context}', [PlanContextController::class, 'update'])->whereNumber('context');
-        Route::delete('plan-contexts/{context}', [PlanContextController::class, 'destroy'])->whereNumber('context');
-        Route::get('planner-token', [PlannerTokenController::class, 'show']);
-        Route::post('planner-token', [PlannerTokenController::class, 'store']);
+    Route::middleware(['auth:sanctum', 'active'])->group(function () {
 
         // Tạo ảnh
         Route::post('generations', [GenerationController::class, 'store'])->middleware('throttle:generations');
@@ -80,10 +61,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         Route::post('generations/{generation}/outputs/{output}/enable', [GenerationController::class, 'enableOutput']);
         // Worker tạo ảnh được gắn cho tài khoản, chọn khi tạo ảnh / tạo lô (note/chon-worker-tao-anh.txt ở repo frontend)
         Route::get('image-workers', [ImageWorkerController::class, 'index']);
-
-        // Ví Credit
-        Route::get('wallet/credit', [CreditWalletController::class, 'show']);
-        Route::get('wallet/credit/ledger', [CreditWalletController::class, 'ledger']);
 
         // Creator Studio
         Route::get('ai-models', [AiModelController::class, 'index']);
@@ -145,10 +122,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::patch('workers/{worker}/name', [ShopWorkerController::class, 'rename'])->whereNumber('worker');
             Route::post('workers/{worker}/token', [ShopWorkerController::class, 'regenerateToken'])->whereNumber('worker');
 
-            Route::get('dashboard', [DashboardController::class, 'dashboard']);
-            Route::get('wallet', [DashboardController::class, 'wallet']);
-            Route::get('wallet/transactions', [DashboardController::class, 'walletTransactions']);
-
             // Tạo đơn GHN từ ảnh chat (note/tao-don-ghn-tu-anh.txt ở repo frontend). AI đọc ảnh gọi thẳng Claude API
             Route::get('shipping/ghn-settings', [GhnController::class, 'settings']);
             Route::put('shipping/ghn-settings', [GhnController::class, 'saveSettings']);
@@ -193,16 +166,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::delete('posts/{post}', [PostController::class, 'destroy'])->whereNumber('post');
             Route::post('posts/{post}/publish', [PostController::class, 'publish'])->whereNumber('post');
             Route::post('posts/{post}/retry', [PostController::class, 'retry'])->whereNumber('post');
-            // "Hủy bỏ" bài đang chuẩn bị: dừng tạo ảnh / AI viết nội dung rồi xoá bài
-            Route::post('posts/{post}/cancel', [PostController::class, 'cancel'])->whereNumber('post');
-            // "Cắt ảnh" trong bài đang chờ gửi: ghi đè ảnh gốc như cắt ảnh ở lô
-            Route::post('posts/{post}/images/{image}/crop', [PostController::class, 'cropImage'])->whereNumber(['post', 'image']);
-            // "Làm lại" bài kế hoạch: tạo lại ảnh theo đúng kịch bản
-            Route::post('posts/{post}/redo', [PostController::class, 'redo'])->whereNumber('post');
-            // "Duyệt" / "Bỏ duyệt" bài kế hoạch: chờ duyệt <-> chờ gửi
-            Route::post('posts/{post}/approve', [PostController::class, 'approve'])->whereNumber('post');
-            Route::post('posts/{post}/unapprove', [PostController::class, 'unapprove'])->whereNumber('post');
-            Route::post('posts/{post}/images/{image}/redo', [PostController::class, 'redoImage'])->whereNumber(['post', 'image']);
             // "Viết lại bằng AI" (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trả nội dung, không lưu vào bài
             Route::post('posts/{post}/ai-content', [PostController::class, 'aiContent'])->whereNumber('post')->middleware('throttle:generations');
 
@@ -216,11 +179,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
                 Route::post('{post}/retry', [VideoPostController::class, 'retry'])->whereNumber('post');
             });
 
-        });
-
-        // Admin
-        Route::prefix('admin')->middleware('admin')->group(function () {
-            Route::post('users/{user}/credits', [AdminCreditController::class, 'topup']);
         });
     });
 });
@@ -244,3 +202,10 @@ Route::get('v1/video-images', [WorkerVideoImageController::class, 'index'])->mid
 // Máy làm template (D:ideo-tmp, npm run sync-templates) đồng bộ danh sách template vào shop worker được gắn (tài khoản tạo video)
 Route::put('v1/video-templates/sync', [WorkerVideoTemplateController::class, 'sync'])->middleware('worker');
 
+// Skill tạo lookbook (FlowKit a51-skills/tao-anh-look-book): xin sản phẩm tiếp theo, báo xong (upload ảnh -> bài chờ duyệt)
+// hoặc lỗi. Worker loại đăng bài, gắn tài khoản shop.
+Route::prefix('v1/lookbook-tasks')->middleware('worker')->group(function () {
+    Route::get('next', [WorkerLookbookTaskController::class, 'next']);
+    Route::post('{id}/complete', [WorkerLookbookTaskController::class, 'complete'])->whereNumber('id');
+    Route::post('{id}/fail', [WorkerLookbookTaskController::class, 'fail'])->whereNumber('id');
+});

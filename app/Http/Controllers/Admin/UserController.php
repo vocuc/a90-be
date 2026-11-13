@@ -4,13 +4,10 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
-use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
-use App\Models\CreditLedger;
 use App\Models\Generation;
 use App\Models\User;
 use App\Services\AuditLogger;
-use App\Services\CreditService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -19,7 +16,6 @@ use Illuminate\View\View;
 class UserController extends Controller
 {
     public function __construct(
-        private CreditService $credits,
         private AuditLogger $audit,
     ) {}
 
@@ -32,7 +28,7 @@ class UserController extends Controller
         ]);
 
         $users = User::query()
-            ->with(['creditWallet', 'creatorProfile'])
+            ->with(['creatorProfile'])
             ->when($filters['q'] ?? null, fn ($q, $term) => $q->where(fn ($q) => $q
                 ->where('email', 'like', "%{$term}%")
                 ->orWhere('name', 'like', "%{$term}%")
@@ -48,35 +44,11 @@ class UserController extends Controller
 
     public function show(User $user): View
     {
-        $user->load(['creditWallet', 'creatorProfile', 'creatorWallet']);
+        $user->load(['creatorProfile']);
 
-        $ledger = CreditLedger::query()->where('user_id', $user->id)->latest('id')->limit(20)->get();
         $generations = Generation::query()->where('user_id', $user->id)->with('creative')->latest('id')->limit(10)->get();
 
-        return view('admin.users.show', compact('user', 'ledger', 'generations'));
-    }
-
-    /** Cộng hoặc trừ Credit bằng tay. */
-    public function adjustCredit(Request $request, User $user): RedirectResponse
-    {
-        $data = $request->validate([
-            'direction' => ['required', Rule::in(['add', 'subtract'])],
-            'amount' => ['required', 'integer', 'min:1', 'max:1000000000'],
-            'note' => ['required', 'string', 'max:255'],
-            'idempotency_key' => ['required', 'string', 'max:100'],
-        ]);
-
-        $amount = $data['direction'] === 'add' ? $data['amount'] : -$data['amount'];
-
-        try {
-            [, $created] = $this->credits->adminAdjust($user->id, $amount, $data['idempotency_key'], $data['note'], $request->user()->id);
-        } catch (BusinessException $e) {
-            return back()->withErrors(['amount' => $e->getMessage()])->withInput();
-        }
-
-        return back()->with('success', $created
-            ? ($amount > 0 ? 'Đã cộng ' : 'Đã trừ ').number_format(abs($amount), 0, ',', '.').' Credit.'
-            : 'Yêu cầu này đã được xử lý trước đó, không ghi thêm.');
+        return view('admin.users.show', compact('user', 'generations'));
     }
 
     public function toggleBan(Request $request, User $user): RedirectResponse

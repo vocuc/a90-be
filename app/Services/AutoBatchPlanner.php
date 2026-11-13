@@ -34,7 +34,7 @@ final class AutoBatchPlanner
     /**
      * Tối đa $count cặp, ít hơn khi hết sản phẩm / nhóm. Sản phẩm không ghép được nhóm nào còn lại thì bỏ qua.
      *
-     * @return array<int, array{product: Product, group: CreativeGroup, items: array, cost: int}>
+     * @return array<int, array{product: Product, group: CreativeGroup, items: array}>
      */
     public function plan(int $count, int $seed): array
     {
@@ -70,7 +70,6 @@ final class AutoBatchPlanner
                 'product' => $product,
                 'group' => $best['group'],
                 'items' => $best['items'],
-                'cost' => array_sum(array_map(fn (array $item) => $item['creative']->price_per_image * $item['quantity'], $best['items'])),
             ];
         }
 

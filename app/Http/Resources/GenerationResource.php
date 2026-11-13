@@ -14,14 +14,14 @@ class GenerationResource extends JsonResource
     /** Thông báo hiển thị cho người dùng theo mã lỗi (không lộ chi tiết nội bộ). */
     private const ERROR_MESSAGES = [
         'CONTENT_BLOCKED' => 'Ảnh hoặc nội dung vi phạm chính sách an toàn của AI.',
-        'NO_IMAGE_RETURNED' => 'AI không tạo được ảnh. Credit đã được hoàn lại.',
-        'TIMEOUT' => 'Quá thời gian xử lý. Credit đã được hoàn lại.',
+        'NO_IMAGE_RETURNED' => 'AI không tạo được ảnh.',
+        'TIMEOUT' => 'Quá thời gian xử lý.',
     ];
 
     public static function errorMessage(?string $errorCode): ?string
     {
         return $errorCode
-            ? (self::ERROR_MESSAGES[$errorCode] ?? 'Tạo ảnh thất bại. Credit đã được hoàn lại.')
+            ? (self::ERROR_MESSAGES[$errorCode] ?? 'Tạo ảnh thất bại.')
             : null;
     }
 
@@ -33,17 +33,14 @@ class GenerationResource extends JsonResource
             'id' => $this->id,
             'type' => $this->type,
             'status' => $this->status,
-            // Ảnh kế hoạch (type plan) không có creative -> null
-            'creative' => $this->whenLoaded('creative', fn () => $this->creative ? [
+            'creative' => $this->whenLoaded('creative', fn () => [
                 'id' => $this->creative->id,
                 'slug' => $this->creative->slug,
                 'title' => $this->creative->title,
-            ] : null),
+            ]),
             'parent_generation_id' => $this->parent_generation_id,
             'quantity' => $this->quantity,
             'aspect_ratio' => $this->aspect_ratio,
-            'price_per_image' => $this->price_per_image,
-            'total_charged' => $this->price_per_image * $this->quantity,
             'success_count' => $this->success_count,
             'failed_count' => $this->failed_count,
             // Ảnh đầu vào theo tên trường

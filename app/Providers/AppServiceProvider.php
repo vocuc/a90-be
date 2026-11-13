@@ -30,7 +30,7 @@ class AppServiceProvider extends ServiceProvider
 
         // Trang quản trị dùng AdminLTE 3 (Bootstrap 4).
         Paginator::useBootstrapFour();
-        Blade::directive('credit', fn (string $expression) => "<?php echo number_format((int) ({$expression}), 0, ',', '.'); ?>");
+        Blade::directive('number', fn (string $expression) => "<?php echo number_format((int) ({$expression}), 0, ',', '.'); ?>");
 
         RateLimiter::for('api', fn (Request $request) => Limit::perMinute(120)->by($request->user()?->id ?: $request->ip()));
 

@@ -104,7 +104,7 @@ class ImageBatchController extends Controller
         return $this->resource($batch)->response()->setStatusCode(201);
     }
 
-    /** Xem trước "Tạo tự động" (note/auto-tao-lo.txt ở repo frontend): count lô sẽ tạo + tổng tiền, không tạo gì. */
+    /** Xem trước "Tạo tự động" (note/auto-tao-lo.txt ở repo frontend): count lô sẽ tạo, không tạo gì. */
     public function autoPreview(Request $request, AutoBatchService $auto): JsonResponse
     {
         $data = $request->validate([
@@ -122,18 +122,15 @@ class ImageBatchController extends Controller
             'product' => self::productSummary($plan['product'], $media),
             'group' => ['id' => $plan['group']->id, 'name' => $plan['group']->name],
             'creatives' => array_map(fn (array $item) => ImageBatchService::creativeSummary($item['creative']), $plan['items']),
-            'cost' => $plan['cost'],
         ], $preview['plans']);
 
         return response()->json(['data' => [
             'seed' => $preview['seed'],
             'batches' => $plans,
-            'total_cost' => array_sum(array_column($plans, 'cost')),
-            'balance' => $auto->balance($user),
         ]]);
     }
 
-    /** "Tạo tự động": tạo lần lượt tới count lô, hết tiền / hết cặp hợp lệ thì dừng. */
+    /** "Tạo tự động": tạo lần lượt tới count lô, hết cặp hợp lệ thì dừng. */
     public function autoStore(Request $request, AutoBatchService $auto): JsonResponse
     {
         $data = $request->validate([
@@ -160,7 +157,6 @@ class ImageBatchController extends Controller
             'batches' => ImageBatchResource::collection($batches)->resolve($request),
             'requested' => (int) $data['count'],
             'stopped' => $result['stopped'],
-            'required' => $result['required'],
         ]], 201);
     }
 
@@ -225,7 +221,7 @@ class ImageBatchController extends Controller
         return response()->noContent();
     }
 
-    /** "Hủy ảnh đang chờ": ảnh chưa worker nào nhận thành thất bại và được hoàn Credit. */
+    /** "Hủy ảnh đang chờ": ảnh chưa worker nào nhận thành thất bại. */
     public function cancel(Request $request, int $batch): JsonResponse
     {
         $batch = $this->findBatch($request, $batch);

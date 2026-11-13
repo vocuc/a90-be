@@ -18,7 +18,6 @@ class CreatorProfile extends Model
             'ghn_token' => 'encrypted',
             'social_links' => 'array',
             'verified' => 'boolean',
-            'creator_share_percent' => 'decimal:2',
             'rating_avg' => 'decimal:2',
         ];
     }

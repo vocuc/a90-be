@@ -70,8 +70,7 @@ class SocialPublishJobService
                 'type' => $template ? SocialPost::TYPE_VIDEO : SocialPost::TYPE_PHOTO,
                 'worker_id' => $worker->id,
                 ...VideoPostService::templateSnapshot($template),
-                // Bài kế hoạch đăng dạng ảnh: giữ sản phẩm của kế hoạch (làm lại ảnh + xoay vòng sản phẩm của planner cần nó)
-                'product_id' => $productId ?? ($post->isPlan() && ! $template ? $post->product_id : null),
+                'product_id' => $productId,
                 'scheduled_at' => $data['scheduled_at'],
                 'title' => trim((string) ($data['title'] ?? '')),
                 'content' => $data['content'] ?? '',
@@ -239,9 +238,6 @@ class SocialPublishJobService
 
     private function assertEditable(SocialPost $post): void
     {
-        if ($post->status === SocialPostStatus::AwaitingApproval) {
-            throw BusinessException::planPostNotApproved();
-        }
         if (! $post->isEditable()) {
             throw new BusinessException('POST_NOT_EDITABLE', match ($post->status) {
                 SocialPostStatus::Generating => 'AI đang viết nội dung, vui lòng chờ xong rồi đăng.',

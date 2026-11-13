@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\CreativeStatus;
 use App\Http\Controllers\Controller;
 use App\Models\AiCreative;
-use App\Models\Transaction;
+use App\Models\GenerationOutput;
 use App\Services\CreativeService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -43,12 +43,10 @@ class CreativeController extends Controller
     {
         $creative->load(['creator.creatorProfile', 'category', 'model.provider', 'images', 'config', 'hashtags']);
 
-        $stats = Transaction::query()
-            ->where('creative_id', $creative->id)
+        $stats = (object) ['images' => GenerationOutput::query()
             ->where('status', 'completed')
-            ->selectRaw('count(*) as images, coalesce(sum(amount),0) as gmv, coalesce(sum(platform_fee_amount),0) as fee, coalesce(sum(creator_amount),0) as creator_amount')
-            ->toBase()
-            ->first();
+            ->whereHas('generation', fn ($q) => $q->where('creative_id', $creative->id))
+            ->count()];
 
         $recentGenerations = $creative->generations()->with('user')->latest('id')->limit(10)->get();
 

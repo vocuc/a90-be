@@ -51,8 +51,8 @@ class AdminPanelTest extends TestCase
     public function test_every_admin_page_renders_with_data(): void
     {
         $creator = $this->creator();
-        $creative = $this->publishedCreative($creator, price: 1000);
-        $buyer = $this->buyer(credit: 5000);
+        $creative = $this->publishedCreative($creator);
+        $buyer = $this->buyer();
         $this->generate($buyer, $creative, quantity: 2)->assertStatus(202);
         $this->runWorker([null, 'CONTENT_BLOCKED']);
         $generation = Generation::query()->firstOrFail();
@@ -62,16 +62,13 @@ class AdminPanelTest extends TestCase
         $pages = [
             '/admin' => 'Lượt tạo ảnh gần đây',
             '/admin/users' => $buyer->email,
-            "/admin/users/{$buyer->id}" => 'Điều chỉnh Credit',
+            "/admin/users/{$buyer->id}" => 'Lượt tạo ảnh gần đây',
             '/admin/creators' => 'creator'.$creator->id,
             '/admin/creatives' => $creative->title,
             "/admin/creatives/{$creative->id}" => 'Place the product on a marble table.',
             '/admin/generations' => $buyer->email,
             "/admin/generations/{$generation->id}" => 'CONTENT_BLOCKED',
-            '/admin/transactions' => 'refunded',
-            '/admin/credit-ledger' => 'generation_refund',
-            '/admin/revenues' => 'Doanh thu Creator',
-            '/admin/settings' => 'Creator nhận mặc định',
+            '/admin/settings' => 'Số ảnh tối đa mặc định',
             '/admin/audit-logs' => 'generation.create',
         ];
 
@@ -99,28 +96,6 @@ class AdminPanelTest extends TestCase
         $this->get('/admin/tiktok-status')->assertNotFound();
     }
 
-    public function test_admin_adjusts_credit_idempotently(): void
-    {
-        $user = $this->buyer();
-        $this->actingAs($this->admin());
-        $key = (string) Str::uuid();
-
-        $this->post("/admin/users/{$user->id}/credits", ['direction' => 'add', 'amount' => 20000, 'note' => 'CK', 'idempotency_key' => $key])
-            ->assertSessionHas('success');
-        // Bấm gửi lại cùng form: không cộng lần 2.
-        $this->post("/admin/users/{$user->id}/credits", ['direction' => 'add', 'amount' => 20000, 'note' => 'CK', 'idempotency_key' => $key]);
-        $this->assertSame(20000, $this->balance($user));
-
-        $this->post("/admin/users/{$user->id}/credits", ['direction' => 'subtract', 'amount' => 5000, 'note' => 'Sai', 'idempotency_key' => (string) Str::uuid()]);
-        $this->assertSame(15000, $this->balance($user));
-
-        // Không cho trừ âm số dư.
-        $this->post("/admin/users/{$user->id}/credits", ['direction' => 'subtract', 'amount' => 999999, 'note' => 'x', 'idempotency_key' => (string) Str::uuid()])
-            ->assertSessionHasErrors('amount');
-        $this->assertSame(15000, $this->balance($user));
-        $this->assertLedgerMatchesBalance($user);
-    }
-
     public function test_hiding_a_creative_removes_it_from_marketplace(): void
     {
         $creative = $this->publishedCreative($this->creator());
@@ -128,33 +103,24 @@ class AdminPanelTest extends TestCase
 
         $this->post("/admin/creatives/{$creative->id}/hide", ['reason' => 'Vi phạm'])->assertSessionHas('success');
         $this->getJson("/api/v1/creatives/{$creative->slug}")->assertNotFound();
-        $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(404)->assertJsonPath('code', 'CREATIVE_NOT_AVAILABLE');
+        $this->generate($this->buyer(), $creative)->assertStatus(404)->assertJsonPath('code', 'CREATIVE_NOT_AVAILABLE');
 
         $this->actingAs(User::query()->where('role', 'admin')->firstOrFail());
         $this->post("/admin/creatives/{$creative->id}/unhide")->assertSessionHas('success');
         $this->getJson("/api/v1/creatives/{$creative->slug}")->assertOk();
     }
 
-    public function test_admin_sets_verified_and_custom_creator_share(): void
+    public function test_admin_sets_verified(): void
     {
         $creator = $this->creator();
-        $creative = $this->publishedCreative($creator, price: 1000);
         $profile = CreatorProfile::query()->where('user_id', $creator->id)->firstOrFail();
         $this->actingAs($this->admin());
 
-        $this->put("/admin/creators/{$profile->id}", ['verified' => 1, 'creator_share_percent' => 25])->assertSessionHas('success');
-        $profile->refresh();
-        $this->assertTrue($profile->verified);
-        $this->assertSame('25.00', $profile->creator_share_percent);
+        $this->put("/admin/creators/{$profile->id}", ['verified' => 1])->assertSessionHas('success');
+        $this->assertTrue($profile->fresh()->verified);
 
-        // Mức riêng được áp dụng cho Transaction mới: Creator nhận 25%.
-        $this->generate($this->buyer(credit: 5000), $creative)->assertStatus(202);
-        $this->assertDatabaseHas('transactions', ['creator_share_percent' => 25, 'platform_fee_amount' => 750, 'creator_amount' => 250]);
-
-        // Để trống = quay về mức mặc định.
-        $this->actingAs(User::query()->where('role', 'admin')->firstOrFail());
-        $this->put("/admin/creators/{$profile->id}", ['verified' => 0, 'creator_share_percent' => ''])->assertSessionHas('success');
-        $this->assertNull($profile->fresh()->creator_share_percent);
+        $this->put("/admin/creators/{$profile->id}", ['verified' => 0])->assertSessionHas('success');
+        $this->assertFalse($profile->fresh()->verified);
     }
 
     public function test_admin_updates_settings(): void
@@ -162,13 +128,12 @@ class AdminPanelTest extends TestCase
         $this->actingAs($this->admin());
 
         $payload = [
-            'creator_share_percent' => 15, 'revenue_hold_days' => 3, 'default_max_outputs' => 4,
+            'default_max_outputs' => 4,
             'max_outputs_limit' => 8, 'input_max_size_kb' => 5120, 'max_hidden_images' => 3,
         ];
         $this->put('/admin/settings', $payload)->assertSessionHas('success');
 
         $settings = app(SettingService::class);
-        $this->assertSame('15', $settings->get('creator_share_percent'));
         $this->assertSame(8, $settings->int('generation.max_outputs_limit'));
         $this->assertSame(3, $settings->int('generation.max_hidden_images'));
         $this->assertDatabaseHas('audit_logs', ['action' => 'admin.settings.update']);

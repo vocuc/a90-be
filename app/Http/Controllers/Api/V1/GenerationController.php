@@ -83,7 +83,6 @@ class GenerationController extends Controller
         };
         $generations = Generation::query()
             ->where('user_id', $userId)
-            // Gồm cả ảnh của bài kế hoạch (type plan, không có creative, miễn phí)
             ->when($data['creative_id'] ?? null, fn ($q, $id) => $q->where('creative_id', $id))
             ->when($productId, fn ($q, $id) => $q->where('product_id', $id))
             ->when($tab || $productId, fn ($q) => $q->whereHas('outputs', $tabFilter))

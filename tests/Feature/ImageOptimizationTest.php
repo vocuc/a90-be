@@ -51,7 +51,7 @@ class ImageOptimizationTest extends TestCase
 
     public function test_worker_output_keeps_original_and_gets_thumbnail(): void
     {
-        $buyer = $this->buyer(credit: 10000);
+        $buyer = $this->buyer();
         $generationId = $this->generate($buyer, $this->publishedCreative($this->creator()))->assertStatus(202)->json('data.id');
 
         $token = $this->workerToken();

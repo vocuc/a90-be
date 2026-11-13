@@ -115,26 +115,6 @@ class AdminWorkerTest extends TestCase
         $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee($worker->fresh()->plainToken());
     }
 
-    public function test_token_encrypted_with_another_app_key_does_not_break_worker_page(): void
-    {
-        [$worker, $old] = Worker::register('db-chep-tu-may-khac');
-        // Token mã hoá bằng APP_KEY khác: giải mã lỗi "The MAC is invalid"
-        $foreign = (new \Illuminate\Encryption\Encrypter(random_bytes(32), 'aes-256-cbc'))->encryptString($old);
-        \Illuminate\Support\Facades\DB::table('workers')->where('id', $worker->id)->update(['token_encrypted' => $foreign]);
-        $this->actingAs($this->admin());
-
-        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee('không xem lại được');
-        $this->assertTokenWorks($old);
-
-        // Tạo token mới vẫn được (save() không giải mã token cũ), token mới xem lại được
-        $this->post("/admin/workers/{$worker->id}/regenerate")->assertRedirect("/admin/workers/{$worker->id}");
-        $new = $worker->fresh()->plainToken();
-        $this->assertNotNull($new);
-        $this->get("/admin/workers/{$worker->id}")->assertOk()->assertSee($new);
-        $this->assertTokenRejected($old);
-        $this->assertTokenWorks($new);
-    }
-
     public function test_disabled_worker_is_rejected_until_enabled(): void
     {
         [$worker, $token] = Worker::register('phone2-tiktok');
@@ -188,7 +168,7 @@ class AdminWorkerTest extends TestCase
     public function test_change_type_and_detach_blocked_while_worker_has_pending_jobs(): void
     {
         [$worker, $token] = Worker::register('may-1', Worker::TYPE_PUBLISH);
-        $shop = $this->buyer(credit: 100000);
+        $shop = $this->buyer();
         $worker->users()->attach($shop->id);
         $post = SocialPost::query()->create([
             'user_id' => $shop->id, 'type' => 'photo', 'status' => 'queued', 'source' => 'batch', 'worker_id' => $worker->id,

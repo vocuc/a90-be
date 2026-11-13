@@ -33,7 +33,6 @@ class CreativeTemplateTest extends TestCase
         return array_merge([
             'title' => 'Người mẫu đi giày',
             'model_id' => AiModel::query()->where('code', 'gemini-3-pro-image')->value('id'),
-            'price_per_image' => 2000,
             // Creative mới mặc định riêng tư: các test ở đây cần người mua thấy mẫu sau khi xuất bản
             'is_public' => true,
             'description' => 'Chụp giày trên nền trơn.',
@@ -108,7 +107,7 @@ class CreativeTemplateTest extends TestCase
     {
         [, $slug] = $this->publishTemplateCreative();
         $creativeId = $this->getJson("/api/v1/creatives/{$slug}")->json('data.id');
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
 
         $send = fn (array $inputs) => $this->actingAs($buyer)->post('/api/v1/generations', [
             'creative_id' => $creativeId,
@@ -198,7 +197,7 @@ class CreativeTemplateTest extends TestCase
         $this->assertCount(3, $detail->json('data.input_schema'));
         $this->assertStringNotContainsString('brand_logo', $detail->getContent());
 
-        $buyer = $this->buyer(credit: 5000);
+        $buyer = $this->buyer();
         $response = $this->actingAs($buyer)->post('/api/v1/generations', [
             'creative_id' => $id,
             'quantity' => 1,

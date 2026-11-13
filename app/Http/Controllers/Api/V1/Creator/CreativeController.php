@@ -94,7 +94,7 @@ class CreativeController extends Controller
         return new CreatorCreativeResource($this->creatives->pause($creative)->load(self::DETAIL_RELATIONS));
     }
 
-    /** Tạo thử (kể cả bản nháp), không trừ Credit. Ảnh do worker tạo như lượt tạo thường. */
+    /** Tạo thử (kể cả bản nháp). Ảnh do worker tạo như lượt tạo thường. */
     public function test(Request $request, AiCreative $creative, GenerationService $generations, SettingService $settings): JsonResponse
     {
         $this->authorizeOwner($request, $creative);

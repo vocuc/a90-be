@@ -6,11 +6,9 @@ use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\CreatorProfileResource;
 use App\Models\CreatorProfile;
-use App\Models\CreatorWallet;
 use App\Services\MediaStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class ProfileController extends Controller
@@ -31,12 +29,7 @@ class ProfileController extends Controller
 
         $data = $request->validate($this->rules());
 
-        $profile = DB::transaction(function () use ($user, $data) {
-            $profile = $user->creatorProfile()->create($data);
-            CreatorWallet::query()->firstOrCreate(['user_id' => $user->id]);
-
-            return $profile;
-        });
+        $profile = $user->creatorProfile()->create($data);
 
         return (new CreatorProfileResource($profile))->response()->setStatusCode(201);
     }
