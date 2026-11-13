@@ -34,7 +34,7 @@ class PostController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             // Lọc theo worker đã giao bài (trang /posts ở repo frontend)
             'worker_id' => ['nullable', 'integer'],
-            // Lọc theo nguồn tạo bài, vd lookbook (bài do skill FlowKit tạo lookbook)
+            // Lọc theo nguồn tạo bài, vd lookbook (bài lookbook cũ)
             'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_LOOKBOOK])],
         ]);
 
