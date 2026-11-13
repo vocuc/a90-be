@@ -136,6 +136,21 @@ class PostController extends Controller
         return $this->resource($planner->redo($request->user(), $this->findPost($request, $post)));
     }
 
+    /** "Duyệt" bài kế hoạch: lưu nội dung đang sửa (nếu gửi) rồi sang chờ gửi (PlannerService::approve). */
+    public function approve(Request $request, int $post, PlannerService $planner): SocialPostResource
+    {
+        $post = $this->findPost($request, $post);
+        $data = $request->validate(self::contentRules(), self::contentMessages());
+
+        return $this->resource($planner->approve($request->user(), $post, $data));
+    }
+
+    /** "Bỏ duyệt": bài kế hoạch đã duyệt, chưa bấm đăng -> về chờ duyệt. */
+    public function unapprove(Request $request, int $post, PlannerService $planner): SocialPostResource
+    {
+        return $this->resource($planner->unapprove($request->user(), $this->findPost($request, $post)));
+    }
+
     /** "Tạo lại ảnh này" của bài kế hoạch đang chờ duyệt: chỉ tạo lại 1 ảnh theo câu lệnh của nó, miễn phí (PlannerService::redoImage). */
     public function redoImage(Request $request, int $post, int $image, PlannerService $planner): SocialPostResource
     {

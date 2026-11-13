@@ -9,6 +9,8 @@ namespace App\Enums;
 enum SocialPostStatus: string
 {
     case Generating = 'generating';
+    // Chờ duyệt: chỉ bài kế hoạch. Ảnh + nội dung xong, chờ chủ shop duyệt (sửa nội dung / làm lại ảnh); duyệt -> chờ gửi
+    case AwaitingApproval = 'awaiting_approval';
     // Chờ gửi: chưa bấm đăng, hoặc đã đăng xong nhưng có nền tảng lỗi (người dùng đăng lại các nền tảng lỗi)
     case PendingReview = 'pending_review';
     // Đã bấm đăng, chưa worker nào nhận (job chờ không hết hạn)

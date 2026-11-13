@@ -121,7 +121,7 @@ class SocialPostService
         if ($post->isPlan() && $post->images()->whereHas('output', fn ($q) => $q->where('status', OutputStatus::Failed))->exists()) {
             $post->update([
                 ...$post->defaultContent(),
-                'status' => SocialPostStatus::PendingReview,
+                'status' => SocialPostStatus::AwaitingApproval,
                 'last_error' => ['code' => SocialPost::PLAN_IMAGES_FAILED, 'message' => 'Có ảnh tạo lỗi, bấm "Làm lại" để tạo lại bài theo kịch bản.', 'platforms' => []],
             ]);
 
@@ -139,7 +139,8 @@ class SocialPostService
 
         $post->update([
             ...($manual ? [] : $post->defaultContent()),
-            'status' => SocialPostStatus::PendingReview,
+            // Bài kế hoạch chờ chủ shop duyệt; bài khác chờ gửi
+            'status' => $post->isPlan() ? SocialPostStatus::AwaitingApproval : SocialPostStatus::PendingReview,
         ]);
     }
 

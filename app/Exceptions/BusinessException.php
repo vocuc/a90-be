@@ -64,7 +64,17 @@ class BusinessException extends RuntimeException
 
     public static function planPostNotRedoable(): self
     {
-        return new self('PLAN_POST_NOT_REDOABLE', 'Chỉ làm lại được bài kế hoạch đang chờ duyệt, chưa đăng nền tảng nào.', 409);
+        return new self('PLAN_POST_NOT_REDOABLE', 'Chỉ làm lại được bài kế hoạch đang chờ duyệt. Bài đã duyệt thì bấm "Bỏ duyệt" trước.', 409);
+    }
+
+    public static function planPostNotApproved(): self
+    {
+        return new self('PLAN_POST_NOT_APPROVED', 'Bài kế hoạch chưa được duyệt, hãy bấm "Duyệt" trước khi đăng.', 409);
+    }
+
+    public static function planPostNotApprovable(string $message): self
+    {
+        return new self('PLAN_POST_NOT_APPROVABLE', $message, 409);
     }
 
     public static function postNotEditable(): self

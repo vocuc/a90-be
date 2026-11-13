@@ -136,6 +136,51 @@ class PlannerService
     }
 
     /**
+     * "Duyệt": bài kế hoạch chờ duyệt -> chờ gửi, lưu nội dung chủ shop vừa sửa (gửi kèm thì ghi đè).
+     * Bài còn ảnh lỗi thì phải làm lại trước. Sau khi duyệt không làm lại ảnh được nữa (bỏ duyệt trước).
+     *
+     * @param  array{title?: ?string, content?: ?string, hashtags?: ?array}  $content
+     */
+    public function approve(User $user, SocialPost $post, array $content): SocialPost
+    {
+        return DB::transaction(function () use ($user, $post, $content) {
+            $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            if (! $post->isPlan() || $post->status !== SocialPostStatus::AwaitingApproval) {
+                throw BusinessException::planPostNotApprovable('Chỉ duyệt được bài kế hoạch đang chờ duyệt.');
+            }
+            if (($post->last_error['code'] ?? null) === SocialPost::PLAN_IMAGES_FAILED) {
+                throw BusinessException::planPostNotApprovable('Bài còn ảnh tạo lỗi, hãy bấm "Làm lại" trước khi duyệt.');
+            }
+
+            $post->update([
+                ...(array_key_exists('title', $content) ? ['title' => trim((string) $content['title'])] : []),
+                ...(array_key_exists('content', $content) ? ['content' => $content['content']] : []),
+                ...(array_key_exists('hashtags', $content) ? ['hashtags' => SocialPost::normalizeHashtags($content['hashtags'] ?? []) ?: null] : []),
+                'status' => SocialPostStatus::PendingReview,
+            ]);
+            $this->audit->log('social_post.plan_approve', $post, [], $user->id);
+
+            return $post;
+        });
+    }
+
+    /** "Bỏ duyệt": bài kế hoạch đã duyệt nhưng chưa bấm đăng lần nào -> về chờ duyệt (để làm lại ảnh). */
+    public function unapprove(User $user, SocialPost $post): SocialPost
+    {
+        return DB::transaction(function () use ($user, $post) {
+            $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            if (! $post->isPlan() || $post->status !== SocialPostStatus::PendingReview || $post->platformStatuses() !== []) {
+                throw BusinessException::planPostNotApprovable('Chỉ bỏ duyệt được bài kế hoạch đã duyệt và chưa bấm đăng.');
+            }
+
+            $post->update(['status' => SocialPostStatus::AwaitingApproval]);
+            $this->audit->log('social_post.plan_unapprove', $post, [], $user->id);
+
+            return $post;
+        });
+    }
+
+    /**
      * "Làm lại": bài kế hoạch chưa bấm đăng -> bỏ ảnh + nội dung cũ, tạo lại ảnh theo đúng kịch bản (bối cảnh hiện tại),
      * về generating. Miễn phí.
      */
@@ -143,7 +188,7 @@ class PlannerService
     {
         return DB::transaction(function () use ($user, $post) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
-            if (! $post->isPlan() || $post->status !== SocialPostStatus::PendingReview || $post->platformStatuses() !== []) {
+            if (! $post->isPlan() || $post->status !== SocialPostStatus::AwaitingApproval) {
                 throw BusinessException::planPostNotRedoable();
             }
             $context = $post->plan_context_id ? PlanContext::query()->find($post->plan_context_id) : null;
@@ -181,7 +226,7 @@ class PlannerService
         return DB::transaction(function () use ($user, $post, $imageId) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
             $image = $post->images()->lockForUpdate()->findOrFail($imageId);
-            if (! $post->isPlan() || $post->status !== SocialPostStatus::PendingReview || $post->platformStatuses() !== []) {
+            if (! $post->isPlan() || $post->status !== SocialPostStatus::AwaitingApproval) {
                 throw BusinessException::planPostNotRedoable();
             }
             // Câu lệnh của ảnh: theo số thứ tự trong key "plan:{bài}:{lượt}:{n}" của generation (ảnh đổi chỗ vẫn đúng câu);

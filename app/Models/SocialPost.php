@@ -95,13 +95,17 @@ class SocialPost extends Model
      */
     public function readyStatus(): SocialPostStatus
     {
+        if ($this->isPlan()) {
+            return SocialPostStatus::AwaitingApproval;
+        }
+
         return $this->worker_id && $this->platforms ? SocialPostStatus::Queued : SocialPostStatus::PendingReview;
     }
 
-    /** Bài đang chờ tới giờ (worker chưa nhận) hoặc chờ gửi: còn sửa / đăng lại / xoá được. */
+    /** Bài chờ duyệt, chờ gửi hoặc đang chờ tới giờ (worker chưa nhận): còn sửa / xoá được. Chờ duyệt thì chưa đăng được. */
     public function isEditable(): bool
     {
-        return $this->status === SocialPostStatus::PendingReview || $this->status === SocialPostStatus::Queued;
+        return in_array($this->status, [SocialPostStatus::AwaitingApproval, SocialPostStatus::PendingReview, SocialPostStatus::Queued], true);
     }
 
     /** @return SocialPlatform[] nền tảng đã chọn */

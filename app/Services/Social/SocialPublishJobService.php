@@ -238,6 +238,9 @@ class SocialPublishJobService
 
     private function assertEditable(SocialPost $post): void
     {
+        if ($post->status === SocialPostStatus::AwaitingApproval) {
+            throw BusinessException::planPostNotApproved();
+        }
         if (! $post->isEditable()) {
             throw new BusinessException('POST_NOT_EDITABLE', match ($post->status) {
                 SocialPostStatus::Generating => 'AI đang viết nội dung, vui lòng chờ xong rồi đăng.',

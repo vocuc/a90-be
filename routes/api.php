@@ -200,6 +200,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('posts/{post}/images/{image}/crop', [PostController::class, 'cropImage'])->whereNumber(['post', 'image']);
             // "Làm lại" bài kế hoạch: tạo lại ảnh theo đúng kịch bản
             Route::post('posts/{post}/redo', [PostController::class, 'redo'])->whereNumber('post');
+            // "Duyệt" / "Bỏ duyệt" bài kế hoạch: chờ duyệt <-> chờ gửi
+            Route::post('posts/{post}/approve', [PostController::class, 'approve'])->whereNumber('post');
+            Route::post('posts/{post}/unapprove', [PostController::class, 'unapprove'])->whereNumber('post');
             Route::post('posts/{post}/images/{image}/redo', [PostController::class, 'redoImage'])->whereNumber(['post', 'image']);
             // "Viết lại bằng AI" (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trả nội dung, không lưu vào bài
             Route::post('posts/{post}/ai-content', [PostController::class, 'aiContent'])->whereNumber('post')->middleware('throttle:generations');

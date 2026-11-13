@@ -5,6 +5,8 @@
         // Creative
         'draft' => ['secondary', 'Nháp'],
         'pending_review' => ['info', 'Chờ duyệt'],
+        // Bài đăng kế hoạch
+        'awaiting_approval' => ['info', 'Chờ duyệt'],
         'published' => ['success', 'Đã xuất bản'],
         'rejected' => ['danger', 'Từ chối'],
         'paused' => ['warning', 'Tạm dừng'],

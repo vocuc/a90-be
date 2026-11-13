@@ -182,13 +182,16 @@ class PlannerApiTest extends TestCase
         $this->runWorker([null]);
 
         $fresh = SocialPost::query()->findOrFail($post['id']);
-        $this->assertSame(SocialPostStatus::PendingReview, $fresh->status);
+        $this->assertSame(SocialPostStatus::AwaitingApproval, $fresh->status);
         $this->assertSame('Giày trắng đi cafe', $fresh->title);
         $this->assertSame('Phối giày trắng đi cafe cuối tuần', $this->aiCalls[0]['request']['idea']);
         $this->assertSame(0, CreditLedger::query()->where('user_id', $user->id)->count(), 'Bài kế hoạch không trừ Credit.');
 
-        // Không hiện trong lịch sử tạo ảnh
-        $this->actingAs($user)->getJson('/api/v1/generations')->assertOk()->assertJsonCount(0, 'data');
+        // Hiện trong lịch sử tạo ảnh, không có creative
+        $this->actingAs($user)->getJson('/api/v1/generations')->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.type', 'plan')
+            ->assertJsonPath('data.0.creative', null);
     }
 
     public function test_plan_images_insert_shop_logo_when_shop_has_one(): void
@@ -255,7 +258,7 @@ class PlannerApiTest extends TestCase
 
         $this->runWorker([null, 'CONTENT_BLOCKED']);
         $post = SocialPost::query()->findOrFail($id);
-        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame(SocialPostStatus::AwaitingApproval, $post->status);
         $this->assertSame(SocialPost::PLAN_IMAGES_FAILED, $post->last_error['code']);
         $this->assertSame([], $this->aiCalls, 'Ảnh lỗi thì không viết nội dung.');
 
@@ -267,7 +270,7 @@ class PlannerApiTest extends TestCase
 
         $this->runWorker([null, null]);
         $post->refresh();
-        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame(SocialPostStatus::AwaitingApproval, $post->status);
         $this->assertNull($post->last_error);
         $this->assertSame('Giày trắng đi cafe', $post->title);
         $this->assertSame(0, CreditLedger::query()->where('user_id', $user->id)->count());
@@ -283,7 +286,7 @@ class PlannerApiTest extends TestCase
         $id = $this->planPost($this->plannerToken($user), $this->product($user), $this->context($user))->assertCreated()->json('data.id');
         $this->runWorker([null, null]);
         $post = SocialPost::query()->findOrFail($id);
-        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame(SocialPostStatus::AwaitingApproval, $post->status);
         $post->update(['title' => 'Tiêu đề đã sửa']);
         [$first, $second] = $post->images()->orderBy('position')->get()->all();
         $firstGeneration = $first->generation_id;
@@ -306,7 +309,7 @@ class PlannerApiTest extends TestCase
         $aiCalls = count($this->aiCalls);
         $this->runWorker([null]);
         $post->refresh();
-        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame(SocialPostStatus::AwaitingApproval, $post->status);
         $this->assertSame('Tiêu đề đã sửa', $post->title, 'Giữ nội dung đã có, không viết lại.');
         $this->assertSame($aiCalls, count($this->aiCalls));
         $this->assertSame(0, CreditLedger::query()->where('user_id', $user->id)->count());
@@ -325,7 +328,7 @@ class PlannerApiTest extends TestCase
         $this->runWorker([null]);
 
         $post->refresh();
-        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame(SocialPostStatus::AwaitingApproval, $post->status);
         $this->assertSame('Giày trắng đi cafe', $post->title);
     }
 
@@ -336,6 +339,56 @@ class PlannerApiTest extends TestCase
 
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/redo")->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_REDOABLE');
         $this->actingAs($this->buyer())->postJson("/api/v1/social/posts/{$id}/redo")->assertNotFound();
+    }
+
+    // ---- Duyệt ----
+
+    public function test_approve_saves_edits_moves_to_pending_review_and_unapprove_goes_back(): void
+    {
+        $user = $this->buyer();
+        $id = $this->planPost($this->plannerToken($user), $this->product($user), $this->context($user))->assertCreated()->json('data.id');
+        $this->runWorker([null, null]);
+        $post = SocialPost::query()->findOrFail($id);
+        $this->assertSame(SocialPostStatus::AwaitingApproval, $post->status);
+        $image = $post->images()->orderBy('position')->firstOrFail();
+
+        // Chờ duyệt: chưa đăng được
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/publish", [
+            'worker_id' => 1, 'platforms' => ['tiktok'], 'images' => [['image_id' => $image->id]],
+        ])->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_APPROVED');
+
+        // Bài người khác: 404
+        $this->actingAs($this->buyer())->postJson("/api/v1/social/posts/{$id}/approve")->assertNotFound();
+
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/approve", ['title' => ' Tiêu đề duyệt ', 'hashtags' => ['#giay', 'giay']])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'pending_review')
+            ->assertJsonPath('data.title', 'Tiêu đề duyệt');
+        $post->refresh();
+        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame('Nhẹ nhàng cuối tuần.', $post->content, 'Không gửi content thì giữ nguyên.');
+        $this->assertSame(['giay'], $post->hashtags);
+
+        // Đã duyệt: không làm lại ảnh, không duyệt lần nữa
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/redo")->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_REDOABLE');
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$image->id}/redo")->assertStatus(409);
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/approve")->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_APPROVABLE');
+
+        // Bỏ duyệt -> chờ duyệt -> làm lại được
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/unapprove")->assertOk()->assertJsonPath('data.status', 'awaiting_approval');
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/unapprove")->assertStatus(409);
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$image->id}/redo")->assertOk();
+    }
+
+    public function test_cannot_approve_while_generating_or_with_failed_images(): void
+    {
+        $user = $this->buyer();
+        $id = $this->planPost($this->plannerToken($user), $this->product($user), $this->context($user))->assertCreated()->json('data.id');
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/approve")->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_APPROVABLE');
+
+        $this->runWorker([null, 'CONTENT_BLOCKED']);
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/approve")->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_APPROVABLE');
+        $this->assertSame(SocialPostStatus::AwaitingApproval, SocialPost::query()->findOrFail($id)->status);
     }
 
     public function test_cancel_generating_plan_post_cancels_queued_images_and_frees_the_slot(): void
