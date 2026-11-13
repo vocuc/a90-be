@@ -254,6 +254,58 @@ class PlannerApiTest extends TestCase
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/redo")->assertStatus(422)->assertJsonPath('code', 'PLAN_CONTEXT_UNAVAILABLE');
     }
 
+    public function test_redo_image_regenerates_only_that_image_and_keeps_content(): void
+    {
+        $user = $this->buyer();
+        $id = $this->planPost($this->plannerToken($user), $this->product($user), $this->context($user))->assertCreated()->json('data.id');
+        $this->runWorker([null, null]);
+        $post = SocialPost::query()->findOrFail($id);
+        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $post->update(['title' => 'Tiêu đề đã sửa']);
+        [$first, $second] = $post->images()->orderBy('position')->get()->all();
+        $firstGeneration = $first->generation_id;
+
+        // Bài của người khác: 404; đang tạo lại thì không bấm ảnh khác được
+        $this->actingAs($this->buyer())->postJson("/api/v1/social/posts/{$id}/images/{$second->id}/redo")->assertNotFound();
+
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$second->id}/redo")->assertOk()
+            ->assertJsonPath('data.status', 'generating');
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$first->id}/redo")
+            ->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_REDOABLE');
+        $this->assertSame(3, Generation::query()->count());
+
+        $first->refresh();
+        $second->refresh();
+        $this->assertSame($firstGeneration, $first->generation_id, 'Ảnh 1 giữ nguyên.');
+        $this->assertSame(Generation::query()->max('id'), $second->generation_id);
+        $this->assertStringStartsWith('giày đặt trên bậc thềm gỗ', Generation::query()->findOrFail($second->generation_id)->prompt_snapshot);
+
+        $aiCalls = count($this->aiCalls);
+        $this->runWorker([null]);
+        $post->refresh();
+        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame('Tiêu đề đã sửa', $post->title, 'Giữ nội dung đã có, không viết lại.');
+        $this->assertSame($aiCalls, count($this->aiCalls));
+        $this->assertSame(0, CreditLedger::query()->where('user_id', $user->id)->count());
+    }
+
+    public function test_redo_failed_image_lets_ai_write_content(): void
+    {
+        $user = $this->buyer();
+        $id = $this->planPost($this->plannerToken($user), $this->product($user), $this->context($user))->assertCreated()->json('data.id');
+        $this->runWorker([null, 'CONTENT_BLOCKED']);
+        $post = SocialPost::query()->findOrFail($id);
+        $failed = $post->images()->where('position', 2)->firstOrFail();
+
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$failed->id}/redo")->assertOk()
+            ->assertJsonPath('data.last_error', null);
+        $this->runWorker([null]);
+
+        $post->refresh();
+        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame('Giày trắng đi cafe', $post->title);
+    }
+
     public function test_redo_rejects_generating_and_other_users_posts(): void
     {
         $user = $this->buyer();

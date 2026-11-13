@@ -136,6 +136,12 @@ class PostController extends Controller
         return $this->resource($planner->redo($request->user(), $this->findPost($request, $post)));
     }
 
+    /** "Tạo lại ảnh này" của bài kế hoạch đang chờ duyệt: chỉ tạo lại 1 ảnh theo câu lệnh của nó, miễn phí (PlannerService::redoImage). */
+    public function redoImage(Request $request, int $post, int $image, PlannerService $planner): SocialPostResource
+    {
+        return $this->resource($planner->redoImage($request->user(), $this->findPost($request, $post), $image));
+    }
+
     public function retry(Request $request, int $post, SocialPublishJobService $publisher): SocialPostResource
     {
         return $this->resource($publisher->retry($request->user(), $this->findPost($request, $post)));

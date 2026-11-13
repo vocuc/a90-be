@@ -170,6 +170,56 @@ class PlannerService
         });
     }
 
+    /**
+     * "Tạo lại ảnh này": chỉ tạo lại 1 ảnh của bài kế hoạch theo đúng câu lệnh của ảnh đó trong kịch bản (bối cảnh hiện tại),
+     * các ảnh khác giữ nguyên, miễn phí. Bài về generating; ảnh xong thì về chờ duyệt, giữ nguyên nội dung đã có.
+     * Bài đang báo ảnh lỗi (chưa có nội dung AI) thì xoá nội dung mặc định để AI viết lại khi đủ ảnh.
+     * Ảnh cũ không gắn vào bài nữa (vẫn trong lịch sử của generation).
+     */
+    public function redoImage(User $user, SocialPost $post, int $imageId): SocialPost
+    {
+        return DB::transaction(function () use ($user, $post, $imageId) {
+            $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            $image = $post->images()->lockForUpdate()->findOrFail($imageId);
+            if (! $post->isPlan() || $post->status !== SocialPostStatus::PendingReview || $post->platformStatuses() !== []) {
+                throw BusinessException::planPostNotRedoable();
+            }
+            // Câu lệnh của ảnh: theo số thứ tự trong key "plan:{bài}:{lượt}:{n}" của generation (ảnh đổi chỗ vẫn đúng câu);
+            // ảnh không tạo từ kịch bản (thêm từ A51, upload) thì không tạo lại được
+            $key = $image->generation_id ? (string) $image->generation()->value('idempotency_key') : '';
+            $item = preg_match('/^plan:'.$post->id.':[^:]+:(\d+)$/', $key, $m) ? (int) $m[1] : 0;
+            $prompt = $item > 0 ? (array_values($post->script['items'] ?? [])[$item - 1] ?? null) : null;
+            if (! $prompt) {
+                throw BusinessException::planPostNotRedoable();
+            }
+            $context = $post->plan_context_id ? PlanContext::query()->find($post->plan_context_id) : null;
+            if (! $context?->is_active) {
+                throw BusinessException::planContextUnavailable();
+            }
+            $product = $this->product($user, (int) $post->product_id);
+
+            $generation = $this->generations->createForPlan(
+                $user, $context, $product, $prompt, "plan:{$post->id}:".Str::uuid()->toString().":{$item}",
+            );
+            $old = $image->output_id;
+            $image->update(['generation_id' => $generation->id, 'output_id' => $generation->outputs->first()->id]);
+
+            $imagesFailed = ($post->last_error['code'] ?? null) === SocialPost::PLAN_IMAGES_FAILED;
+            $post->update([
+                'status' => SocialPostStatus::Generating,
+                'last_error' => null,
+                // Còn ảnh lỗi thì bài chưa có nội dung AI: xoá nội dung mặc định để AI viết khi đủ ảnh
+                ...($imagesFailed ? ['title' => '', 'content' => null, 'hashtags' => null] : []),
+            ]);
+
+            $this->audit->log('social_post.plan_redo_image', $post, [
+                'image_id' => $image->id, 'item' => $item, 'old_output_id' => $old, 'generation_id' => $generation->id,
+            ], $user->id);
+
+            return $post;
+        });
+    }
+
     private function createImages(User $user, SocialPost $post, PlanContext $context, Product $product): void
     {
         $batch = Str::uuid()->toString();

@@ -128,7 +128,8 @@ class SocialPostService
             return;
         }
 
-        if ($post->ai_content) {
+        // Bài kế hoạch tạo lại 1 ảnh (PlannerService::redoImage) đã có nội dung: giữ nguyên, không viết lại
+        if ($post->ai_content && ! ($post->isPlan() && $post->hasManualContent())) {
             $this->contentJobs->queue($post);
 
             return;
