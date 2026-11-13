@@ -380,6 +380,31 @@ class PlannerApiTest extends TestCase
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$image->id}/redo")->assertOk();
     }
 
+    public function test_cancel_queued_plan_post_goes_back_to_awaiting_approval_until_worker_claims(): void
+    {
+        $user = $this->creator();
+        $id = $this->planPost($this->plannerToken($user), $this->product($user), $this->context($user))->assertCreated()->json('data.id');
+        $this->runWorker([null, null]);
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/approve")->assertOk();
+        $post = SocialPost::query()->findOrFail($id);
+        // Đăng (chờ tới giờ): giả lập như publish() để test không phụ thuộc worker đăng bài
+        $post->forceFill(['worker_id' => null, 'platforms' => ['tiktok', 'facebook']]);
+        $post->queuePlatforms();
+        $post->syncStatus();
+        $post->save();
+        $this->assertSame(SocialPostStatus::Queued, $post->fresh()->status);
+
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/unapprove")->assertOk()
+            ->assertJsonPath('data.status', 'awaiting_approval');
+        $post->refresh();
+        $this->assertSame([], $post->platformStatuses());
+        $this->assertSame(['tiktok', 'facebook'], $post->platforms, 'Giữ nền tảng đã chọn để điền sẵn.');
+
+        // Worker đã nhận một nền tảng (publishing): không huỷ được
+        $post->forceFill(['status' => SocialPostStatus::Publishing, 'tiktok_status' => 'publishing'])->save();
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/unapprove")->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_APPROVABLE');
+    }
+
     public function test_cannot_approve_while_generating_or_with_failed_images(): void
     {
         $user = $this->buyer();

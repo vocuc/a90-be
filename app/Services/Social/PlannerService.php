@@ -2,6 +2,8 @@
 
 namespace App\Services\Social;
 
+use App\Enums\PlatformPublishStatus;
+use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
 use App\Models\PlanContext;
@@ -164,17 +166,30 @@ class PlannerService
         });
     }
 
-    /** "Bỏ duyệt": bài kế hoạch đã duyệt nhưng chưa bấm đăng lần nào -> về chờ duyệt (để làm lại ảnh). */
+    /**
+     * "Bỏ duyệt" / "Hủy đăng": bài kế hoạch về chờ duyệt (để xem lại, làm lại ảnh). Được khi:
+     * - đã duyệt, chưa bấm đăng lần nào (chờ gửi, không có trạng thái nền tảng), hoặc
+     * - đã bấm đăng nhưng worker chưa nhận (chờ đăng, mọi nền tảng đều đang chờ): bỏ hàng chờ, giữ worker / nền tảng /
+     *   giờ đã chọn để lần đăng sau điền sẵn. Worker chỉ nhận bài queued nên huỷ xong là không bị đăng nữa.
+     */
     public function unapprove(User $user, SocialPost $post): SocialPost
     {
         return DB::transaction(function () use ($user, $post) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
-            if (! $post->isPlan() || $post->status !== SocialPostStatus::PendingReview || $post->platformStatuses() !== []) {
-                throw BusinessException::planPostNotApprovable('Chỉ bỏ duyệt được bài kế hoạch đã duyệt và chưa bấm đăng.');
+            $statuses = $post->platformStatuses();
+            $approved = $post->status === SocialPostStatus::PendingReview && $statuses === [];
+            $queued = $post->status === SocialPostStatus::Queued && $statuses !== []
+                && collect($statuses)->every(fn ($s) => $s === PlatformPublishStatus::Queued);
+            if (! $post->isPlan() || (! $approved && ! $queued)) {
+                throw BusinessException::planPostNotApprovable('Chỉ bỏ duyệt được bài kế hoạch đã duyệt mà worker chưa nhận đăng.');
             }
 
-            $post->update(['status' => SocialPostStatus::AwaitingApproval]);
-            $this->audit->log('social_post.plan_unapprove', $post, [], $user->id);
+            foreach (SocialPlatform::cases() as $platform) {
+                $post->{$platform->statusColumn()} = null;
+            }
+            $post->status = SocialPostStatus::AwaitingApproval;
+            $post->save();
+            $this->audit->log('social_post.plan_unapprove', $post, ['was' => $queued ? 'queued' : 'pending_review'], $user->id);
 
             return $post;
         });

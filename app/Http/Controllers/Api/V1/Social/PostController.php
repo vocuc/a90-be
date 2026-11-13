@@ -145,7 +145,7 @@ class PostController extends Controller
         return $this->resource($planner->approve($request->user(), $post, $data));
     }
 
-    /** "Bỏ duyệt": bài kế hoạch đã duyệt, chưa bấm đăng -> về chờ duyệt. */
+    /** "Bỏ duyệt" / "Hủy đăng": bài kế hoạch đã duyệt (chờ gửi, hoặc chờ đăng mà worker chưa nhận) -> về chờ duyệt. */
     public function unapprove(Request $request, int $post, PlannerService $planner): SocialPostResource
     {
         return $this->resource($planner->unapprove($request->user(), $this->findPost($request, $post)));
