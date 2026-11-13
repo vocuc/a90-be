@@ -226,6 +226,25 @@ class SocialPostTest extends TestCase
         $this->assertSame([], $this->aiCalls);
     }
 
+    public function test_cancel_while_ai_is_writing_refunds_and_deletes_post(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $image = $this->completedImage($user);
+        $balance = $this->balance($user);
+        Queue::fake();
+
+        $id = $this->fromImages($user, [$image], ['ai_content' => true])->assertJsonPath('data.status', 'generating')->json('data.id');
+        $this->assertSame($balance - $this->price(), $this->balance($user));
+
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/cancel")->assertNoContent();
+
+        $this->assertNull(SocialPost::query()->find($id));
+        $this->assertSame(0, SocialContentJob::query()->count());
+        $this->assertSame($balance, $this->balance($user));
+        $this->assertLedgerMatchesBalance($user);
+        $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertNotFound();
+    }
+
     public function test_cannot_use_images_of_other_users_or_unfinished_images(): void
     {
         $owner = $this->buyer(credit: 5000);

@@ -3,10 +3,12 @@
 namespace Tests\Feature;
 
 use App\Enums\GenerationType;
+use App\Enums\OutputStatus;
 use App\Enums\SocialPostStatus;
 use App\Models\AiModel;
 use App\Models\CreditLedger;
 use App\Models\Generation;
+use App\Models\GenerationOutput;
 use App\Models\PlanContext;
 use App\Models\Product;
 use App\Models\ProductImage;
@@ -258,6 +260,47 @@ class PlannerApiTest extends TestCase
 
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/redo")->assertStatus(409)->assertJsonPath('code', 'PLAN_POST_NOT_REDOABLE');
         $this->actingAs($this->buyer())->postJson("/api/v1/social/posts/{$id}/redo")->assertNotFound();
+    }
+
+    public function test_cancel_generating_plan_post_cancels_queued_images_and_frees_the_slot(): void
+    {
+        $user = $this->buyer();
+        $token = $this->plannerToken($user);
+        $id = $this->planPost($token, $this->product($user), $this->context($user))->assertCreated()->json('data.id');
+
+        // Worker đã nhận 1 ảnh (đang tạo), ảnh còn lại vẫn chờ
+        $worker = $this->workerToken('runner-cancel');
+        $jobId = $this->claimJob($worker)->assertOk()->json('data.id');
+
+        $this->app['auth']->forgetGuards();
+        $this->actingAs($this->buyer())->postJson("/api/v1/social/posts/{$id}/cancel")->assertNotFound();
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/cancel")->assertNoContent();
+
+        $this->assertNull(SocialPost::query()->find($id));
+        $outputs = GenerationOutput::query()->orderBy('id')->get();
+        $this->assertSame([OutputStatus::Processing, OutputStatus::Failed], $outputs->pluck('status')->all());
+        $this->assertSame('CANCELLED', $outputs[1]->error_code);
+
+        // Ảnh đang tạo vẫn nộp được, không tạo lại bài
+        $this->completeJob($worker, $jobId)->assertOk();
+        $this->assertSame(0, SocialPost::query()->count());
+        $this->assertSame([], $this->aiCalls);
+        $this->assertSame(0, CreditLedger::query()->where('user_id', $user->id)->count());
+
+        // Giờ đó trống lại cho lần lập kế hoạch sau
+        $day = now()->addDay()->toDateString();
+        $this->withToken($token)->getJson("/api/v1/planner/context?from={$day}&to={$day}")->assertJsonPath('data.posts', []);
+    }
+
+    public function test_cancel_rejects_posts_past_generating(): void
+    {
+        $user = $this->buyer();
+        $id = $this->planPost($this->plannerToken($user), $this->product($user), $this->context($user))->assertCreated()->json('data.id');
+        $this->runWorker([null, null]);
+
+        $this->app['auth']->forgetGuards();
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/cancel")->assertStatus(409)->assertJsonPath('code', 'POST_NOT_CANCELLABLE');
+        $this->assertNotNull(SocialPost::query()->find($id));
     }
 
     // ---- Trang bài đăng ----

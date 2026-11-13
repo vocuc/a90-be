@@ -120,6 +120,23 @@ class SocialContentJobService
     }
 
     /**
+     * Bài bị hủy khi AI chưa viết xong: hoàn Credit đã trừ (cùng khoá idempotency với hoàn do lỗi nên không hoàn 2 lần).
+     * Job bị xoá theo bài (cascade); queue job đang chạy viết xong không thấy job nữa thì bỏ qua.
+     */
+    public function cancelForPost(SocialPost $post): void
+    {
+        $job = SocialContentJob::query()->where('social_post_id', $post->id)->lockForUpdate()->first();
+        if (! $job || ! in_array($job->status, [OutputStatus::Queued, OutputStatus::Processing], true) || $job->charge_amount <= 0) {
+            return;
+        }
+
+        $this->credits->apply(
+            $this->credits->lockWallet($post->user_id), $job->charge_amount, LedgerType::SocialContentRefund,
+            "social_content:refund:job:{$job->id}", 'social_post', $post->id, 'Hoàn Credit do hủy bài đăng',
+        );
+    }
+
+    /**
      * "Viết lại bằng AI": trả nội dung mới, không lưu vào bài. Kiểm tra Credit trước khi gọi AI, chỉ trừ khi viết được.
      *
      * @return array{title: string, content: string, hashtags: string[], credit_balance: int}

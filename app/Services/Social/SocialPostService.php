@@ -12,6 +12,7 @@ use App\Models\SocialPost;
 use App\Models\SocialPostImage;
 use App\Models\User;
 use App\Services\AuditLogger;
+use App\Services\GenerationFinalizer;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +27,7 @@ class SocialPostService
     public function __construct(
         private AuditLogger $audit,
         private SocialContentJobService $contentJobs,
+        private GenerationFinalizer $finalizer,
     ) {}
 
     /**
@@ -166,6 +168,35 @@ class SocialPostService
             }
 
             $this->audit->log('social_post.delete', $post, ['images' => $post->images()->count()], $user->id);
+            $post->delete();
+        });
+    }
+
+    /**
+     * "Hủy bỏ" bài đang chuẩn bị: ảnh còn trong hàng đợi (chưa worker nhận) thành thất bại CANCELLED và hoàn Credit,
+     * hoàn Credit AI viết nội dung nếu AI chưa xong, rồi xoá bài. Ảnh worker đang tạo vẫn chạy xong, nằm trong lịch sử
+     * tạo ảnh, không gắn vào bài nữa. Bài kế hoạch bị xoá thì giờ đó trống lại, lần lập kế hoạch sau sẽ bù.
+     */
+    public function cancel(User $user, SocialPost $post): void
+    {
+        DB::transaction(function () use ($user, $post) {
+            $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            if ($post->status !== SocialPostStatus::Generating) {
+                throw new BusinessException('POST_NOT_CANCELLABLE', 'Bài không còn ở bước chuẩn bị nên không hủy được.', 409);
+            }
+
+            $queued = GenerationOutput::query()
+                ->whereIn('id', $post->images()->select('output_id'))
+                ->where('status', OutputStatus::Queued)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id');
+            foreach ($queued as $id) {
+                $this->finalizer->fail($id, GenerationFinalizer::CANCELLED, 'Đã hủy bài đăng, Credit đã được hoàn.');
+            }
+            $this->contentJobs->cancelForPost($post);
+
+            $this->audit->log('social_post.cancel', $post, ['source' => $post->source, 'cancelled_images' => $queued->count()], $user->id);
             $post->delete();
         });
     }

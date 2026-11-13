@@ -158,6 +158,14 @@ class PostController extends Controller
         return response()->noContent();
     }
 
+    /** "Hủy bỏ" bài đang chuẩn bị: dừng tạo ảnh / viết nội dung và xoá bài. 409 POST_NOT_CANCELLABLE khi đã qua bước chuẩn bị. */
+    public function cancel(Request $request, int $post): Response
+    {
+        $this->posts->cancel($request->user(), $this->findPost($request, $post));
+
+        return response()->noContent();
+    }
+
     /** Tiêu đề / nội dung / hashtag: không bắt buộc. */
     private static function contentRules(): array
     {
