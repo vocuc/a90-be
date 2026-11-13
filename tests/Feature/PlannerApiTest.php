@@ -292,6 +292,20 @@ class PlannerApiTest extends TestCase
         $this->withToken($token)->getJson("/api/v1/planner/context?from={$day}&to={$day}")->assertJsonPath('data.posts', []);
     }
 
+    public function test_plan_post_images_show_full_prompt_to_owner(): void
+    {
+        $user = $this->buyer();
+        $product = $this->product($user);
+        $product->update(['prompt_note' => 'Ghi chú sản phẩm']);
+        $context = $this->context($user);
+        $id = $this->planPost($this->plannerToken($user), $product, $context)->assertCreated()->json('data.id');
+
+        $this->app['auth']->forgetGuards();
+        $prompt = $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertOk()->json('data.images.0.prompt');
+        $this->assertStringContainsString(trim($context->description), $prompt);
+        $this->assertStringContainsString('Ghi chú sản phẩm', $prompt);
+    }
+
     public function test_cancel_rejects_posts_past_generating(): void
     {
         $user = $this->buyer();

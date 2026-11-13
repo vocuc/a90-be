@@ -254,6 +254,8 @@ class SocialPostTest extends TestCase
         $postImage = SocialPost::query()->findOrFail($id)->images()->with('output')->firstOrFail();
         $oldPath = $postImage->output->image_path;
         $balance = $this->balance($user);
+        // Ảnh từ mẫu của creator: không lộ prompt của creator
+        $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertJsonPath('data.images.0.prompt', null);
 
         $data = $this->actingAs($user)->post("/api/v1/social/posts/{$id}/images/{$postImage->id}/crop", [
             'image' => UploadedFile::fake()->image('crop.jpg', 300, 400),
