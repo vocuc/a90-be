@@ -191,6 +191,29 @@ class PlannerApiTest extends TestCase
         $this->actingAs($user)->getJson('/api/v1/generations')->assertOk()->assertJsonCount(0, 'data');
     }
 
+    public function test_plan_images_insert_shop_logo_when_shop_has_one(): void
+    {
+        $user = $this->creator();
+        $user->creatorProfile->update(['avatar_path' => 'avatars/logo-1.png']);
+        $id = $this->planPost($this->plannerToken($user), $this->product($user), $this->context($user))->assertCreated()->json('data.id');
+
+        $workerToken = $this->workerToken();
+        $job = $this->claimJob($workerToken)->assertOk()->json('data');
+        $this->assertSame(['url' => 'https://media.test/avatars/logo-1.png'], $job['logo']);
+        $this->completeJob($workerToken, $job['id'])->assertOk();
+
+        // Làm lại một ảnh cũng chèn logo
+        $this->runWorker([null]);
+        $image = SocialPost::query()->findOrFail($id)->images()->orderBy('position')->firstOrFail();
+        $this->actingAs($user)->postJson("/api/v1/social/posts/{$id}/images/{$image->id}/redo")->assertOk();
+        $this->assertTrue(Generation::query()->latest('id')->firstOrFail()->insert_logo);
+
+        // Shop chưa có logo: không chèn
+        $noLogo = $this->buyer();
+        $this->planPost($this->plannerToken($noLogo), $this->product($noLogo), $this->context($noLogo))->assertCreated();
+        $this->assertFalse(Generation::query()->where('user_id', $noLogo->id)->firstOrFail()->insert_logo);
+    }
+
     public function test_same_idempotency_key_returns_same_post(): void
     {
         $user = $this->buyer();

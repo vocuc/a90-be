@@ -82,6 +82,8 @@ class GenerationService
             'status' => GenerationStatus::Queued,
             'idempotency_key' => $idempotencyKey,
             'product_id' => $product->id,
+            // Ảnh kế hoạch luôn chèn logo shop (ảnh đại diện); shop chưa có logo thì không chèn
+            'insert_logo' => $user->logoPath() !== null,
         ]);
         $generation->outputs()->create(['position' => 1, 'status' => OutputStatus::Queued]);
 
