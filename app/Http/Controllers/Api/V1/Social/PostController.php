@@ -25,6 +25,8 @@ use Illuminate\Validation\Rule;
  */
 class PostController extends Controller
 {
+    private const CROP_MAX_KB = 20480;
+
     public function __construct(private SocialPostService $posts) {}
 
     public function index(Request $request): AnonymousResourceCollection
@@ -156,6 +158,20 @@ class PostController extends Controller
         $this->posts->delete($request->user(), $this->findPost($request, $post));
 
         return response()->noContent();
+    }
+
+    /** "Cắt ảnh": multipart image = ảnh đã cắt trên trình duyệt, ghi đè ảnh gốc. Chỉ khi bài đang chờ gửi. */
+    public function cropImage(Request $request, int $post, int $image): JsonResponse
+    {
+        $request->validate([
+            'image' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:'.self::CROP_MAX_KB],
+        ], [
+            'image.max' => 'Ảnh đã cắt tối đa '.(self::CROP_MAX_KB / 1024).'MB.',
+        ]);
+
+        $cropped = $this->posts->cropImage($request->user(), $this->findPost($request, $post), $image, $request->file('image'));
+
+        return response()->json(['data' => SocialPostResource::image($cropped)]);
     }
 
     /** "Hủy bỏ" bài đang chuẩn bị: dừng tạo ảnh / viết nội dung và xoá bài. 409 POST_NOT_CANCELLABLE khi đã qua bước chuẩn bị. */

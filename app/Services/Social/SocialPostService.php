@@ -12,8 +12,10 @@ use App\Models\SocialPost;
 use App\Models\SocialPostImage;
 use App\Models\User;
 use App\Services\AuditLogger;
+use App\Services\CroppedImageStore;
 use App\Services\GenerationFinalizer;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -28,6 +30,7 @@ class SocialPostService
         private AuditLogger $audit,
         private SocialContentJobService $contentJobs,
         private GenerationFinalizer $finalizer,
+        private CroppedImageStore $croppedImages,
     ) {}
 
     /**
@@ -199,6 +202,35 @@ class SocialPostService
             $this->audit->log('social_post.cancel', $post, ['source' => $post->source, 'cancelled_images' => $queued->count()], $user->id);
             $post->delete();
         });
+    }
+
+    /**
+     * "Cắt ảnh" trong bài đang chờ gửi: ảnh đã cắt trên trình duyệt ghi đè ảnh gốc (giống cắt ảnh ở lô): ảnh tạo trên
+     * A51 thì lô, lịch sử tạo ảnh và mọi bài dùng ảnh đó đổi theo; ảnh upload thẳng (lookbook) chỉ có ở bài này.
+     */
+    public function cropImage(User $user, SocialPost $post, int $imageId, UploadedFile $file): SocialPostImage
+    {
+        $directory = $post->images()->findOrFail($imageId)->isUploaded()
+            ? "social-posts/{$post->user_id}/crop"
+            : 'generations/outputs';
+
+        $this->croppedImages->replace($file, $directory, function (array $stored) use ($user, $post, $imageId) {
+            $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            $this->assertEditable($post);
+            $image = $post->images()->lockForUpdate()->findOrFail($imageId);
+
+            if ($image->isUploaded()) {
+                $old = [$image->image_path, $image->thumb_path];
+                $image->update(['image_path' => $stored['image_path'], 'thumb_path' => $stored['thumb_path']]);
+            } else {
+                $old = $this->croppedImages->overwriteOutput($image->output_id, $stored);
+            }
+            $this->audit->log('social_post.crop_image', $post, ['image_id' => $image->id, 'output_id' => $image->output_id], $user->id);
+
+            return $old;
+        });
+
+        return $post->images()->with(['output', 'generation.creative'])->findOrFail($imageId);
     }
 
     /**

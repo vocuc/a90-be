@@ -196,6 +196,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('posts/{post}/retry', [PostController::class, 'retry'])->whereNumber('post');
             // "Hủy bỏ" bài đang chuẩn bị: dừng tạo ảnh / AI viết nội dung rồi xoá bài
             Route::post('posts/{post}/cancel', [PostController::class, 'cancel'])->whereNumber('post');
+            // "Cắt ảnh" trong bài đang chờ gửi: ghi đè ảnh gốc như cắt ảnh ở lô
+            Route::post('posts/{post}/images/{image}/crop', [PostController::class, 'cropImage'])->whereNumber(['post', 'image']);
             // "Làm lại" bài kế hoạch: tạo lại ảnh theo đúng kịch bản
             Route::post('posts/{post}/redo', [PostController::class, 'redo'])->whereNumber('post');
             // "Viết lại bằng AI" (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trả nội dung, không lưu vào bài

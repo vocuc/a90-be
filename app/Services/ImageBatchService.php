@@ -29,6 +29,7 @@ class ImageBatchService
         private MediaStorage $media,
         private AuditLogger $audit,
         private GenerationFinalizer $finalizer,
+        private CroppedImageStore $croppedImages,
     ) {}
 
     /**
@@ -132,45 +133,13 @@ class ImageBatchService
      */
     public function crop(User $user, ImageBatch $batch, ImageBatchImage $image, UploadedFile $file): ImageBatchImage
     {
-        // Lưu ảnh trước, ngoài transaction, để không giữ khóa trong lúc upload lên S3 (như WorkerJobService::complete)
-        $directory = MediaStorage::datedDirectory('generations/outputs');
-        $path = $this->media->storeUpload($file, $directory);
-        try {
-            $thumbPath = $this->media->storeOptimizedImage($file, $directory, [WorkerJobService::THUMB_MAX_SIDE])[0];
-        } catch (BusinessException) {
-            $thumbPath = null;
-        }
+        $this->croppedImages->replace($file, 'generations/outputs', function (array $stored) use ($user, $batch, $image) {
+            $image = $batch->images()->lockForUpdate()->findOrFail($image->id);
+            $old = $this->croppedImages->overwriteOutput($image->output_id, $stored);
+            $this->audit->log('image_batch.crop', $batch, ['image_id' => $image->id, 'output_id' => $image->output_id], $user->id);
 
-        try {
-            $old = DB::transaction(function () use ($user, $batch, $image, $file, $path, $thumbPath) {
-                $image = $batch->images()->lockForUpdate()->findOrFail($image->id);
-                $output = GenerationOutput::query()->lockForUpdate()->findOrFail($image->output_id);
-                if ($output->status !== OutputStatus::Completed) {
-                    throw new BusinessException('IMAGE_NOT_READY', 'Chỉ cắt được ảnh đã tạo xong.', 409);
-                }
-
-                $old = [$output->image_path, $output->thumb_path];
-                $output->update([
-                    'image_path' => $path,
-                    'thumb_path' => $thumbPath,
-                    'mime' => $file->getMimeType() ?: 'application/octet-stream',
-                    'size_bytes' => $file->getSize(),
-                    // Ảnh đã tắt mà người dùng tải / cắt ảnh mới thay vào thì bật lại để dùng được ngay
-                    'disabled_at' => null,
-                ]);
-                $this->audit->log('image_batch.crop', $batch, ['image_id' => $image->id, 'output_id' => $output->id], $user->id);
-
-                return $old;
-            });
-        } catch (\Throwable $e) {
-            $this->media->delete($path);
-            $this->media->delete($thumbPath);
-            throw $e;
-        }
-
-        foreach ($old as $oldPath) {
-            $this->media->delete($oldPath);
-        }
+            return $old;
+        });
 
         return $image;
     }

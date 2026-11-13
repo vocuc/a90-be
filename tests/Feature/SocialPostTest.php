@@ -22,6 +22,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -243,6 +244,74 @@ class SocialPostTest extends TestCase
         $this->assertSame($balance, $this->balance($user));
         $this->assertLedgerMatchesBalance($user);
         $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertNotFound();
+    }
+
+    public function test_crop_post_image_overwrites_original_output(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $image = $this->completedImage($user);
+        $id = $this->fromImages($user, [$image])->assertCreated()->json('data.id');
+        $postImage = SocialPost::query()->findOrFail($id)->images()->with('output')->firstOrFail();
+        $oldPath = $postImage->output->image_path;
+        $balance = $this->balance($user);
+
+        $data = $this->actingAs($user)->post("/api/v1/social/posts/{$id}/images/{$postImage->id}/crop", [
+            'image' => UploadedFile::fake()->image('crop.jpg', 300, 400),
+        ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('data.id', $postImage->id)
+            ->assertJsonPath('data.output_id', $image['output_id'])
+            ->json('data');
+
+        // Ghi đè ảnh gốc: lịch sử tạo ảnh / lô / bài khác dùng output này cũng đổi theo
+        $output = $postImage->output->fresh();
+        $this->assertNotSame($oldPath, $output->image_path);
+        $this->assertStringContainsString($output->image_path, $data['image_url']);
+        Storage::disk('media')->assertExists($output->image_path);
+        Storage::disk('media')->assertMissing($oldPath);
+        $this->assertSame($balance, $this->balance($user));
+    }
+
+    public function test_crop_uploaded_post_image_replaces_only_post_file(): void
+    {
+        $user = $this->buyer();
+        $post = SocialPost::query()->create([
+            'user_id' => $user->id,
+            'status' => SocialPostStatus::PendingReview,
+            'source' => SocialPost::SOURCE_LOOKBOOK,
+            'idempotency_key' => 'lookbook-crop',
+            'title' => 'Lookbook',
+        ]);
+        Storage::disk('media')->put('social-posts/old.jpg', 'x');
+        $postImage = $post->images()->create(['image_path' => 'social-posts/old.jpg', 'position' => 1]);
+
+        $this->actingAs($user)->post("/api/v1/social/posts/{$post->id}/images/{$postImage->id}/crop", [
+            'image' => UploadedFile::fake()->image('crop.jpg', 300, 400),
+        ], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.id', $postImage->id);
+
+        $postImage->refresh();
+        $this->assertNotSame('social-posts/old.jpg', $postImage->image_path);
+        Storage::disk('media')->assertExists($postImage->image_path);
+        Storage::disk('media')->assertMissing('social-posts/old.jpg');
+    }
+
+    public function test_crop_post_image_requires_editable_own_post(): void
+    {
+        $user = $this->buyer(credit: 5000);
+        $image = $this->completedImage($user);
+        $id = $this->fromImages($user, [$image])->assertCreated()->json('data.id');
+        $post = SocialPost::query()->findOrFail($id);
+        $postImage = $post->images()->firstOrFail();
+        $url = "/api/v1/social/posts/{$id}/images/{$postImage->id}/crop";
+        $file = fn () => ['image' => UploadedFile::fake()->image('crop.jpg', 300, 400)];
+        $files = count(Storage::disk('media')->allFiles());
+
+        $this->actingAs($this->buyer())->post($url, $file(), ['Accept' => 'application/json'])->assertNotFound();
+
+        $post->update(['status' => SocialPostStatus::Publishing]);
+        $this->actingAs($user)->post($url, $file(), ['Accept' => 'application/json'])->assertStatus(409);
+        // File vừa lưu bị xoá khi không ghi được
+        $this->assertSame($files, count(Storage::disk('media')->allFiles()));
     }
 
     public function test_cannot_use_images_of_other_users_or_unfinished_images(): void
