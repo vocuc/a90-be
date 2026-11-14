@@ -109,6 +109,9 @@ class SocialPostResource extends JsonResource
             'thumb_url' => $completed ? $media->url($output->thumbPathOrOriginal()) : null,
             'error_message' => $output?->status === OutputStatus::Failed ? GenerationResource::errorMessage($output->error_code) : null,
             'creative' => $creative ? ImageBatchService::creativeSummary($creative) : null,
+            // creative | outfit_cover | outfit (lô phối đồ); mã lỗi để hiện "ChatGPT hết lượt"...
+            'kind' => $image->generation?->kind ?? 'creative',
+            'error_code' => $output?->status === OutputStatus::Failed ? $output->error_code : null,
         ];
     }
 

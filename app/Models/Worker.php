@@ -27,7 +27,10 @@ class Worker extends Model
 
     public const TYPE_PUBLISH = 'publish';
 
-    public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH];
+    /** Worker phối đồ (skill Claude): nhận ảnh bìa / ảnh outfit của lô phối đồ qua /v1/jobs. */
+    public const TYPE_OUTFIT = 'outfit';
+
+    public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH, self::TYPE_OUTFIT];
 
     protected $guarded = ['id'];
 
@@ -63,9 +66,27 @@ class Worker extends Model
         return (int) $workerId;
     }
 
+    /** Worker phối đồ (bắt buộc) cho lô phối đồ: phải là worker loại outfit đang bật được gắn cho tài khoản. */
+    public static function outfitWorkerIdFor(int $userId, mixed $workerId): int
+    {
+        $valid = $workerId !== null && $workerId !== ''
+            && self::query()->assignedTo($userId, self::TYPE_OUTFIT)->whereKey((int) $workerId)->exists();
+        if (! $valid) {
+            throw ValidationException::withMessages(['worker_id' => self::query()->assignedTo($userId, self::TYPE_OUTFIT)->exists()
+                ? 'Chọn worker phối đồ được gắn cho tài khoản.'
+                : 'Tài khoản chưa được gắn worker phối đồ, liên hệ A51 để được gắn.']);
+        }
+
+        return (int) $workerId;
+    }
+
     public static function typeLabel(string $type): string
     {
-        return $type === self::TYPE_IMAGE ? 'Tạo ảnh' : 'Đăng bài';
+        return match ($type) {
+            self::TYPE_IMAGE => 'Tạo ảnh',
+            self::TYPE_OUTFIT => 'Phối đồ',
+            default => 'Đăng bài',
+        };
     }
 
     public function isImage(): bool

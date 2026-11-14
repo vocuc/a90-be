@@ -15,6 +15,7 @@ use App\Services\AutoBatchService;
 use App\Services\GenerationInput;
 use App\Services\ImageBatchService;
 use App\Services\MediaStorage;
+use App\Services\OutfitBatchService;
 use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -107,6 +108,9 @@ class ImageBatchController extends Controller
     /** Xem trước "Tạo tự động" (note/auto-tao-lo.txt ở repo frontend): count lô sẽ tạo, không tạo gì. */
     public function autoPreview(Request $request, AutoBatchService $auto): JsonResponse
     {
+        if ($request->input('mode') === 'outfit') {
+            return $this->outfitPreview($request);
+        }
         $data = $request->validate([
             'count' => ['required', 'integer', 'min:1', 'max:'.AutoBatchService::MAX_COUNT],
             'seed' => ['nullable', 'integer', 'min:0', 'max:'.AutoBatchService::MAX_SEED],
@@ -133,6 +137,9 @@ class ImageBatchController extends Controller
     /** "Tạo tự động": tạo lần lượt tới count lô, hết cặp hợp lệ thì dừng. */
     public function autoStore(Request $request, AutoBatchService $auto): JsonResponse
     {
+        if ($request->input('mode') === 'outfit') {
+            return $this->outfitStore($request);
+        }
         $data = $request->validate([
             'count' => ['required', 'integer', 'min:1', 'max:'.AutoBatchService::MAX_COUNT],
             'idempotency_key' => ['required', 'string', 'max:80'],
@@ -160,10 +167,70 @@ class ImageBatchController extends Controller
         ]], 201);
     }
 
+    /** Lô phối đồ (mode=outfit): xem trước các sản phẩm sẽ tạo lô. */
+    private function outfitPreview(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'count' => ['required', 'integer', 'min:1', 'max:'.OutfitBatchService::MAX_COUNT],
+            'images_per_batch' => ['nullable', 'integer', 'min:'.OutfitBatchService::MIN_IMAGES, 'max:'.OutfitBatchService::MAX_IMAGES],
+            'product_ids' => ['nullable', 'array', 'max:'.OutfitBatchService::MAX_COUNT],
+            'product_ids.*' => ['integer'],
+        ]);
+        $media = app(MediaStorage::class);
+        $images = (int) ($data['images_per_batch'] ?? OutfitBatchService::DEFAULT_IMAGES);
+        $products = app(OutfitBatchService::class)->plan($request->user(), (int) $data['count'], self::productIds($data));
+
+        return response()->json(['data' => [
+            'images_per_batch' => $images,
+            'batches' => $products->map(fn (Product $p) => ['product' => self::productSummary($p, $media), 'images' => $images])->values(),
+        ]]);
+    }
+
+    /** Lô phối đồ (mode=outfit): mỗi lô 1 sản phẩm x N ảnh (1 bìa + N-1 outfit), giao worker phối đồ. */
+    private function outfitStore(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'count' => ['required', 'integer', 'min:1', 'max:'.OutfitBatchService::MAX_COUNT],
+            'images_per_batch' => ['nullable', 'integer', 'min:'.OutfitBatchService::MIN_IMAGES, 'max:'.OutfitBatchService::MAX_IMAGES],
+            'idempotency_key' => ['required', 'string', 'max:80'],
+            'insert_logo' => ['nullable', 'boolean'],
+            'worker_id' => ['nullable', 'integer'],
+            'product_ids' => ['nullable', 'array', 'max:'.OutfitBatchService::MAX_COUNT],
+            'product_ids.*' => ['integer'],
+        ]);
+        $user = $request->user();
+        $workerId = Worker::outfitWorkerIdFor($user->id, $data['worker_id'] ?? null);
+        $created = app(OutfitBatchService::class)->create($user, (int) $data['count'],
+            (int) ($data['images_per_batch'] ?? OutfitBatchService::DEFAULT_IMAGES), $this->insertLogo($request, $data),
+            $data['idempotency_key'], $workerId, self::productIds($data));
+        $batches = ImageBatch::query()->whereKey(array_map(fn (ImageBatch $b) => $b->id, $created))
+            ->withSummary()->orderBy('id')->get();
+
+        return response()->json(['data' => [
+            'batches' => ImageBatchResource::collection($batches)->resolve($request),
+            'requested' => (int) $data['count'],
+            'stopped' => count($created) < (int) $data['count'] ? 'no_product' : null,
+        ]], 201);
+    }
+
+    /** "Tạo lại ảnh lỗi" của lô phối đồ: mọi ảnh lỗi về hàng chờ (vd khi ChatGPT đã reset lượt). */
+    public function retryFailed(Request $request, int $batch): JsonResponse
+    {
+        $batch = $this->findBatch($request, $batch);
+        $data = $request->validate(['idempotency_key' => ['required', 'string', 'max:80']]);
+        if ($batch->source !== ImageBatch::SOURCE_OUTFIT) {
+            throw new BusinessException('NOT_OUTFIT_BATCH', 'Chỉ lô phối đồ mới tạo lại hàng loạt ảnh lỗi.', 409);
+        }
+        $count = app(OutfitBatchService::class)->retryFailed($request->user(), $batch, $data['idempotency_key']);
+
+        return response()->json(['data' => ['requeued' => $count, 'batch' => $this->resource($batch)->resolve($request)]], 202);
+    }
+
     /** Popup "Sửa nguyên liệu": nguyên liệu đã dùng để tạo ảnh. */
     public function imageInputs(Request $request, int $batch, int $image): JsonResponse
     {
         $image = $this->findImage($this->findBatch($request, $batch), $image);
+        $this->assertNotOutfit($image);
 
         return response()->json(['data' => $this->batches->imageInputs($image)]);
     }
@@ -179,6 +246,14 @@ class ImageBatchController extends Controller
             'idempotency_key' => ['required', 'string', 'max:100'],
             'keep_files' => ['nullable', 'array'],
         ]);
+
+        // Ảnh phối đồ: chỉ "Tạo lại" (đưa về hàng chờ worker phối đồ), không sửa nguyên liệu
+        if ($image->generation?->isOutfit()) {
+            $this->assertNotOutfit($image, $request->has('inputs') || $request->has('keep_files'));
+            $image = app(OutfitBatchService::class)->requeue($request->user(), $batch, $image, $data['idempotency_key']);
+
+            return response()->json(['data' => SocialPostResource::image($image->load(['output', 'generation.creative']))], 202);
+        }
 
         $input = null;
         $kept = [];
@@ -278,6 +353,13 @@ class ImageBatchController extends Controller
     private static function productSummary(Product $product, MediaStorage $media): array
     {
         return ['id' => $product->id, 'name' => $product->name, 'cover_url' => $media->url($product->images->first()?->thumbPathOrOriginal())];
+    }
+
+    private function assertNotOutfit(ImageBatchImage $image, bool $editing = true): void
+    {
+        if ($editing && $image->generation?->isOutfit()) {
+            throw new BusinessException('OUTFIT_IMAGE_NO_INPUTS', 'Ảnh phối đồ không sửa nguyên liệu được, chỉ tạo lại.', 409);
+        }
     }
 
     private function findBatch(Request $request, int $id): ImageBatch

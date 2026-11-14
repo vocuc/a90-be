@@ -18,8 +18,10 @@ class ImageWorkerController extends Controller
     {
         $onlineSince = now()->subMinutes(ShopWorkerController::ONLINE_MINUTES);
 
+        // ?type=outfit: worker phối đồ cho trang "Tạo lô tự động" chế độ Phối đồ
+        $type = $request->query('type') === Worker::TYPE_OUTFIT ? Worker::TYPE_OUTFIT : Worker::TYPE_IMAGE;
         $workers = Worker::query()
-            ->assignedTo($request->user()->id, Worker::TYPE_IMAGE)
+            ->assignedTo($request->user()->id, $type)
             ->orderBy('name')
             ->get();
 

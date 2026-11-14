@@ -13,6 +13,7 @@ use App\Services\GenerationInput;
 use App\Services\GenerationService;
 use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
+use App\Services\OutfitBatchService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
@@ -35,6 +36,7 @@ class CreativeController extends Controller
 
         $creatives = AiCreative::query()
             ->where('creator_id', $request->user()->id)
+            ->where('slug', '!=', OutfitBatchService::SYSTEM_SLUG) // creative hệ thống của lô phối đồ
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($filters['visibility'] ?? null, fn ($q, $visibility) => $q->where('is_public', $visibility === 'public'))
             ->when($filters['q'] ?? null, fn ($q, $term) => $q->where('title', 'like', '%'.addcslashes($term, '%_\\').'%'))

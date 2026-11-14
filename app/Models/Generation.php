@@ -10,6 +10,21 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Generation extends Model
 {
+    /** Ảnh tạo từ creative (worker loại image). */
+    public const KIND_CREATIVE = 'creative';
+
+    /** Lô phối đồ (worker loại outfit): ảnh bìa (ảnh sản phẩm + hook) và ảnh outfit (ChatGPT). */
+    public const KIND_OUTFIT_COVER = 'outfit_cover';
+
+    public const KIND_OUTFIT = 'outfit';
+
+    public const OUTFIT_KINDS = [self::KIND_OUTFIT_COVER, self::KIND_OUTFIT];
+
+    public function isOutfit(): bool
+    {
+        return in_array($this->kind, self::OUTFIT_KINDS, true);
+    }
+
     protected $guarded = ['id'];
 
     protected $hidden = ['prompt_snapshot'];

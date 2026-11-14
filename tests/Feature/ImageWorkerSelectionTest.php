@@ -29,6 +29,19 @@ class ImageWorkerSelectionTest extends TestCase
         $this->assertSame(['id', 'name', 'online', 'last_seen_at'], array_keys($data[0]));
     }
 
+    public function test_lists_outfit_workers_with_type_param(): void
+    {
+        $buyer = $this->buyer();
+        [$img] = Worker::register('anh', Worker::TYPE_IMAGE);
+        [$outfit] = Worker::register('phoi-do', Worker::TYPE_OUTFIT);
+        foreach ([$img, $outfit] as $w) {
+            $w->users()->attach($buyer->id);
+        }
+
+        $data = $this->actingAs($buyer)->getJson('/api/v1/image-workers?type=outfit')->assertOk()->json('data');
+        $this->assertSame(['phoi-do'], array_column($data, 'name'));
+    }
+
     public function test_only_chosen_worker_claims_the_job(): void
     {
         $creative = $this->publishedCreative($this->creator());

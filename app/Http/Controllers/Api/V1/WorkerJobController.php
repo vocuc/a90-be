@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\ImageBatchImage;
+use App\Models\Product;
 use App\Models\Worker;
 use App\Services\MediaStorage;
 use App\Services\WorkerJobService;
@@ -28,6 +30,9 @@ class WorkerJobController extends Controller
         }
 
         $generation = $output->generation()->with(['model', 'creative.config', 'user.creatorProfile'])->firstOrFail();
+        if ($generation->isOutfit()) {
+            return response()->json(['data' => $this->outfitJob($output, $generation, $media)]);
+        }
 
         // id: mã job để gửi kết quả (POST /jobs/{id}); request: dữ liệu gửi tới model.
         // logo: worker chèn vào ảnh trước khi gửi kết quả. Để ngoài request vì worker dán nguyên request cho model.
@@ -92,6 +97,35 @@ class WorkerJobController extends Controller
         }
 
         return response()->json(['data' => ['id' => $output->id, 'status' => $output->fresh()->status]]);
+    }
+
+    /**
+     * Job lô phối đồ: worker (skill Claude) tự chọn / tạo outfit, tạo ảnh, in hook rồi gửi ảnh có hook.
+     * product.images: mọi ảnh sản phẩm theo field_key; batch.position 1 = ảnh bìa.
+     */
+    private function outfitJob(GenerationOutput $output, Generation $generation, MediaStorage $media): array
+    {
+        $image = ImageBatchImage::query()->where('output_id', $output->id)->first();
+        $product = Product::query()->with('images', 'hashtags')->find($generation->product_id);
+
+        return [
+            'id' => $output->id,
+            'kind' => $generation->kind,
+            'batch' => $image ? [
+                'id' => $image->image_batch_id,
+                'position' => $image->position,
+                'total' => ImageBatchImage::query()->where('image_batch_id', $image->image_batch_id)->count(),
+            ] : null,
+            'user_id' => $generation->user_id,
+            'product' => $product ? [
+                'id' => $product->id,
+                'name' => $product->name,
+                'prompt_note' => $product->prompt_note,
+                'hashtags' => $product->hashtags->pluck('name')->values(),
+                'images' => $product->images->map(fn ($i) => ['field_key' => $i->field_key, 'url' => $media->url($i->path)])->values(),
+            ] : null,
+            'logo' => $this->logo($generation, $media),
+        ];
     }
 
     private function worker(Request $request): Worker

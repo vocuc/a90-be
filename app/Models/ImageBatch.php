@@ -17,6 +17,9 @@ class ImageBatch extends Model
 
     public const SOURCE_AUTO = 'auto';
 
+    /** Lô phối đồ "1 đôi giày – nhiều cách phối" (worker loại outfit). */
+    public const SOURCE_OUTFIT = 'outfit';
+
     protected $guarded = ['id'];
 
     public function user(): BelongsTo

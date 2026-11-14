@@ -16,6 +16,10 @@ class GenerationResource extends JsonResource
         'CONTENT_BLOCKED' => 'Ảnh hoặc nội dung vi phạm chính sách an toàn của AI.',
         'NO_IMAGE_RETURNED' => 'AI không tạo được ảnh.',
         'TIMEOUT' => 'Quá thời gian xử lý.',
+        // Worker phối đồ (ChatGPT trong Chrome): bấm "Tạo lại ảnh lỗi" khi ChatGPT có lượt / đã đăng nhập lại
+        'CHATGPT_LIMIT' => 'ChatGPT hết lượt tạo ảnh, tạo lại sau.',
+        'NOT_LOGGED_IN' => 'ChatGPT trên worker chưa đăng nhập.',
+        'OUTFIT_NOT_FOUND' => 'Không tìm được outfit hợp đôi giày.',
     ];
 
     public static function errorMessage(?string $errorCode): ?string

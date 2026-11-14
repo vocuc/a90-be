@@ -33,11 +33,16 @@ class WorkerJobService
      */
     public function claim(Worker $worker): ?GenerationOutput
     {
-        $worker->assertType(Worker::TYPE_IMAGE);
+        if ($worker->type !== Worker::TYPE_OUTFIT) {
+            $worker->assertType(Worker::TYPE_IMAGE);
+        }
+        // Worker image chỉ nhận ảnh creative; worker outfit chỉ nhận ảnh của lô phối đồ
+        $kinds = $worker->type === Worker::TYPE_OUTFIT ? Generation::OUTFIT_KINDS : [Generation::KIND_CREATIVE];
 
-        return DB::transaction(function () use ($worker) {
+        return DB::transaction(function () use ($worker, $kinds) {
             $generations = Generation::query()
                 ->select('id')
+                ->whereIn('kind', $kinds)
                 ->whereIn('user_id', DB::table('worker_user')->select('user_id')->where('worker_id', $worker->id))
                 ->where(fn ($q) => $q->whereNull('generations.worker_id')
                     ->orWhere('generations.worker_id', $worker->id)
@@ -46,7 +51,7 @@ class WorkerJobService
                         ->whereColumn('workers.id', 'generations.worker_id')
                         ->whereColumn('worker_user.user_id', 'generations.user_id')
                         ->where('workers.is_active', true)
-                        ->where('workers.type', Worker::TYPE_IMAGE)));
+                        ->where('workers.type', $worker->type)));
 
             $output = GenerationOutput::query()
                 ->where('status', OutputStatus::Queued)
