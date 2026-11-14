@@ -8,10 +8,13 @@ use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
 use App\Models\GenerationOutput;
+use App\Models\ImageBatch;
 use App\Models\SocialPost;
 use App\Models\SocialPostImage;
 use App\Models\User;
+use App\Models\Worker;
 use App\Services\AuditLogger;
+use Carbon\CarbonInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -75,6 +78,69 @@ class SocialPostService
         return $post;
     }
 
+    /**
+     * "Lập lịch đăng bài" nhiều lô (chạy trong queue job CreateScheduledBatchPost): 1 lô -> 1 bài ảnh gồm các ảnh đã xong
+     * của lô (theo thứ tự trong lô, tối đa số ảnh mà nền tảng chặt nhất cho phép), giao worker, giờ đăng đã chia sẵn.
+     * Nền tảng chờ sẵn; AI viết xong (hoặc không bật AI) bài sang queued cho worker nhận khi tới giờ.
+     * Gọi lặp cùng $idempotencyKey (queue thử lại): trả bài đã tạo. Lô không còn / không có ảnh dùng được: null.
+     *
+     * @param  string[]  $platforms
+     */
+    public function createScheduledFromBatch(User $user, int $batchId, Worker $worker, array $platforms, CarbonInterface $scheduledAt, bool $aiContent, string $idempotencyKey): ?SocialPost
+    {
+        if ($existing = $this->findExisting($user, $idempotencyKey, SocialPost::SOURCE_BATCH)) {
+            return $existing;
+        }
+
+        $batch = ImageBatch::query()->where('user_id', $user->id)->find($batchId);
+        if (! $batch) {
+            return null;
+        }
+        $platforms = array_values(array_unique($platforms));
+        $maxImages = min(SocialPost::MAX_IMAGES, ...array_map(fn (string $p) => SocialPlatform::from($p)->maxImages(), $platforms));
+        $outputs = $batch->images()->with('output')->get()
+            ->map(fn ($image) => $image->output)
+            ->filter(fn (?GenerationOutput $output) => $output?->isUsable())
+            ->take($maxImages)
+            ->values();
+        if ($outputs->isEmpty()) {
+            return null;
+        }
+
+        $aiContent = $aiContent && SocialContentJobService::enabled();
+
+        try {
+            return DB::transaction(function () use ($user, $batch, $worker, $platforms, $scheduledAt, $aiContent, $idempotencyKey, $outputs) {
+                $post = new SocialPost([
+                    'user_id' => $user->id,
+                    'status' => SocialPostStatus::Generating,
+                    'source' => SocialPost::SOURCE_BATCH,
+                    'ai_content' => $aiContent,
+                    'image_batch_id' => $batch->id,
+                    'worker_id' => $worker->id,
+                    'scheduled_at' => $scheduledAt,
+                    'platforms' => $platforms,
+                    'idempotency_key' => $idempotencyKey,
+                ]);
+                $post->queuePlatforms();
+                $post->save();
+                foreach ($outputs as $i => $output) {
+                    $post->images()->create(['generation_id' => $output->generation_id, 'output_id' => $output->id, 'position' => $i + 1]);
+                }
+                $this->imagesReady($post);
+
+                $this->audit->log('social_post.schedule_batch', $post, [
+                    'image_batch_id' => $batch->id, 'worker_id' => $worker->id, 'platforms' => $platforms,
+                    'images' => $outputs->count(), 'ai_content' => $aiContent,
+                ], $user->id);
+
+                return $post;
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            return $this->findExisting($user, $idempotencyKey, SocialPost::SOURCE_BATCH) ?? throw $e;
+        }
+    }
+
     /** Một ảnh vừa xong: bài đang generating có đủ ảnh xong thì sang bước nội dung. */
     public function outputFinished(int $outputId): void
     {
@@ -108,7 +174,8 @@ class SocialPostService
 
     /**
      * Ảnh của bài đã xong: bài bật AI viết nội dung thì giao AI viết,
-     * không thì sang chờ duyệt ngay (chưa nhập gì: lấy tên mẫu + hashtag của mẫu).
+     * không thì sang bước sau ngay (chưa nhập gì: lấy tên mẫu + hashtag của mẫu): đã giao worker + nền tảng (lập lịch
+     * nhiều lô) thì chờ tới giờ, không thì chờ duyệt.
      */
     private function imagesReady(SocialPost $post): void
     {
@@ -122,7 +189,7 @@ class SocialPostService
 
         $post->update([
             ...($manual ? [] : $post->defaultContent()),
-            'status' => SocialPostStatus::PendingReview,
+            'status' => $post->readyStatus(),
         ]);
     }
 

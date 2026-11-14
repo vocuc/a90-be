@@ -231,6 +231,34 @@ class ImageBatchService
     }
 
     /**
+     * Xoá nhiều lô một lần ($batchIds null: mọi lô của người dùng). Lô còn ảnh đang tạo thì bỏ qua (không lỗi).
+     * Như xoá từng lô: ảnh trong lịch sử tạo ảnh và bài đăng đã tạo vẫn giữ.
+     *
+     * @param  int[]|null  $batchIds
+     * @return array{deleted: int, skipped: int}
+     */
+    public function deleteMany(User $user, ?array $batchIds): array
+    {
+        $batches = ImageBatch::query()
+            ->where('user_id', $user->id)
+            ->when($batchIds !== null, fn ($q) => $q->whereIn('id', $batchIds))
+            ->get(['id']);
+
+        $deleted = 0;
+        $skipped = 0;
+        foreach ($batches as $batch) {
+            try {
+                $this->delete($user, $batch);
+                $deleted++;
+            } catch (BusinessException) {
+                $skipped++;
+            }
+        }
+
+        return ['deleted' => $deleted, 'skipped' => $skipped];
+    }
+
+    /**
      * Nguyên liệu đã dùng để tạo ảnh. Trả null khi file đầu vào không còn (đã xoá theo chính sách lưu trữ).
      *
      * @return array{creative: ?array, inputs: ?array}

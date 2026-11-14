@@ -237,6 +237,24 @@ class ImageBatchController extends Controller
         return response()->noContent();
     }
 
+    /**
+     * Xoá nhiều lô: batch_ids (lô của mình) hoặc all = true (mọi lô). Lô còn ảnh đang tạo bị bỏ qua.
+     * Ảnh trong lịch sử tạo ảnh và bài đăng đã tạo vẫn giữ.
+     */
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'all' => ['nullable', 'boolean'],
+            'batch_ids' => ['required_unless:all,true', 'array', 'max:500'],
+            'batch_ids.*' => ['integer', 'distinct'],
+        ], [
+            'batch_ids.required_unless' => 'Chọn ít nhất một lô.',
+        ]);
+        $ids = ($data['all'] ?? false) ? null : array_map('intval', $data['batch_ids']);
+
+        return response()->json(['data' => $this->batches->deleteMany($request->user(), $ids)]);
+    }
+
     /** Logo = ảnh đại diện shop (note/logo-tao-anh.txt). */
     private function insertLogo(Request $request, array $data): bool
     {

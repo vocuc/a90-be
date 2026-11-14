@@ -4,10 +4,12 @@ namespace Tests\Feature;
 
 use App\Enums\OutputStatus;
 use App\Enums\SocialPostStatus;
+use App\Jobs\CreateScheduledBatchPost;
 use App\Jobs\WriteSocialPostContent;
 use App\Models\AiCreative;
 use App\Models\Generation;
 use App\Models\Hashtag;
+use App\Models\ImageBatch;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\SocialPublishJob;
@@ -707,5 +709,134 @@ class SocialPostTest extends TestCase
         $this->assertSame(0, SocialPost::query()->count());
         // Ảnh vẫn còn trong lịch sử tạo ảnh
         $this->assertSame(1, Generation::query()->where('user_id', $user->id)->count());
+    }
+
+    // ---- Lập lịch đăng bài nhiều lô (queue, 1 lô -> 1 bài, giờ dải đều) ----
+
+    /** Lô 1 mẫu, $quantity ảnh đã tạo xong. */
+    private function completedBatch(User $user, int $quantity = 1): ImageBatch
+    {
+        $id = $this->actingAs($user)->post('/api/v1/image-batches', [
+            'items' => [[
+                'creative_id' => $this->publishedCreative($this->creator())->id,
+                'quantity' => $quantity,
+                'inputs' => ['product_image' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
+            ]],
+            'idempotency_key' => (string) Str::uuid(),
+        ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
+        $this->runWorker(array_fill(0, $quantity, null));
+
+        return ImageBatch::query()->findOrFail($id);
+    }
+
+    private function scheduleBatches(User $user, array $body): TestResponse
+    {
+        return $this->actingAs($user)->postJson('/api/v1/social/posts/schedule-batches', array_merge([
+            'platforms' => ['tiktok'],
+            'start_at' => '2030-01-01T09:00:00+07:00',
+            'end_at' => '2030-01-01T11:00:00+07:00',
+            'idempotency_key' => (string) Str::uuid(),
+        ], $body));
+    }
+
+    public function test_schedule_batches_creates_queued_posts_spread_evenly(): void
+    {
+        $user = $this->buyer();
+        $batches = [$this->completedBatch($user, 2), $this->completedBatch($user), $this->completedBatch($user)];
+        [$worker, $token] = $this->postWorker($user);
+        $body = [
+            // Thứ tự gửi lên = thứ tự đăng
+            'batch_ids' => [$batches[2]->id, $batches[0]->id, $batches[1]->id],
+            'worker_id' => $worker->id,
+            'platforms' => ['tiktok', 'facebook'],
+            'idempotency_key' => 'lich-1',
+        ];
+
+        $this->scheduleBatches($user, $body)
+            ->assertStatus(202)
+            ->assertJsonPath('data.queued', 3)
+            ->assertJsonCount(3, 'data.schedule');
+
+        $posts = SocialPost::query()->orderBy('scheduled_at')->get();
+        $this->assertCount(3, $posts);
+        $this->assertSame([$batches[2]->id, $batches[0]->id, $batches[1]->id], $posts->pluck('image_batch_id')->all());
+        $this->assertSame(
+            ['2030-01-01 02:00:00', '2030-01-01 03:00:00', '2030-01-01 04:00:00'],
+            $posts->map(fn ($p) => $p->scheduled_at->utc()->format('Y-m-d H:i:s'))->all(),
+        );
+        foreach ($posts as $post) {
+            $this->assertSame(SocialPostStatus::Queued, $post->status);
+            $this->assertSame($worker->id, $post->worker_id);
+            $this->assertSame(['tiktok', 'facebook'], $post->platforms);
+            $this->assertNotSame('', $post->title);
+        }
+        $this->assertSame(2, $posts[1]->images()->count());
+
+        // Gửi lại cùng key: không tạo trùng
+        $this->scheduleBatches($user, $body)->assertStatus(202);
+        $this->assertSame(3, SocialPost::query()->count());
+
+        // Tới giờ worker nhận bài đầu
+        $this->claimPostJob($token)->assertNoContent();
+        $this->travelTo('2030-01-01 02:01:00');
+        $this->claimPostJob($token)->assertOk()->assertJsonPath('data.request.post_id', $posts[0]->id);
+    }
+
+    public function test_schedule_batches_with_ai_content_waits_for_ai_then_queues(): void
+    {
+        $user = $this->buyer();
+        $batch = $this->completedBatch($user);
+        [$worker] = $this->postWorker($user);
+
+        $this->scheduleBatches($user, ['batch_ids' => [$batch->id], 'worker_id' => $worker->id, 'ai_content' => true])
+            ->assertStatus(202);
+
+        $post = SocialPost::query()->sole();
+        $this->assertTrue($post->ai_content);
+        $this->assertSame(SocialPostStatus::Queued, $post->status);
+        $this->assertSame('Lột xác ảnh sản phẩm', $post->title);
+        $this->assertCount(1, $this->aiCalls);
+        // 1 lô: đăng lúc bắt đầu
+        $this->assertSame('2030-01-01 02:00:00', $post->scheduled_at->utc()->format('Y-m-d H:i:s'));
+    }
+
+    public function test_schedule_batches_only_queues_jobs(): void
+    {
+        Queue::fake();
+        $user = $this->buyer();
+        $batches = [$this->completedBatch($user), $this->completedBatch($user)];
+        [$worker] = $this->postWorker($user);
+
+        $this->scheduleBatches($user, ['batch_ids' => [$batches[0]->id, $batches[1]->id], 'worker_id' => $worker->id])
+            ->assertStatus(202);
+
+        Queue::assertPushed(CreateScheduledBatchPost::class, 2);
+        $this->assertSame(0, SocialPost::query()->count());
+    }
+
+    public function test_schedule_batches_validates_input(): void
+    {
+        $user = $this->buyer();
+        $batch = $this->completedBatch($user);
+        $otherBatch = $this->completedBatch($this->buyer());
+        [$worker] = $this->postWorker($user);
+        [$otherWorker] = $this->postWorker($this->buyer(), 'other');
+
+        $this->scheduleBatches($user, ['batch_ids' => [$otherBatch->id], 'worker_id' => $worker->id])
+            ->assertStatus(422)->assertJsonValidationErrors('batch_ids.0');
+        $this->scheduleBatches($user, ['batch_ids' => [$batch->id], 'worker_id' => $otherWorker->id])
+            ->assertStatus(422)->assertJsonValidationErrors('worker_id');
+        $this->scheduleBatches($user, ['batch_ids' => [$batch->id], 'worker_id' => $worker->id, 'end_at' => '2030-01-01T08:00:00+07:00'])
+            ->assertStatus(422)->assertJsonValidationErrors('end_at');
+        $this->scheduleBatches($user, ['batch_ids' => [$batch->id], 'worker_id' => $worker->id, 'start_at' => '2020-01-01T08:00:00+07:00'])
+            ->assertStatus(422)->assertJsonValidationErrors('start_at');
+        $this->scheduleBatches($user, ['batch_ids' => [$batch->id], 'worker_id' => $worker->id, 'platforms' => []])
+            ->assertStatus(422)->assertJsonValidationErrors('platforms');
+
+        // Lô chưa có ảnh nào xong
+        $batch->images()->with('output')->get()->each(fn ($image) => $image->output->update(['disabled_at' => now()]));
+        $this->scheduleBatches($user, ['batch_ids' => [$batch->id], 'worker_id' => $worker->id])
+            ->assertStatus(422)->assertJsonValidationErrors('batch_ids');
+        $this->assertSame(0, SocialPost::query()->count());
     }
 }

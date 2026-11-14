@@ -6,7 +6,9 @@ use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\SocialPostResource;
+use App\Jobs\CreateScheduledBatchPost;
 use App\Models\Hashtag;
+use App\Models\ImageBatch;
 use App\Models\SocialPost;
 use App\Services\Social\SocialContentJobService;
 use App\Services\Social\SocialPostService;
@@ -17,6 +19,7 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Bài đăng của người dùng (ảnh / video, worker đăng lên TikTok / Facebook / Instagram), xem note/gop-luong-dang-bai.txt
@@ -24,6 +27,9 @@ use Illuminate\Validation\Rule;
  */
 class PostController extends Controller
 {
+    /** Số lô tối đa mỗi lần "Lập lịch đăng bài". */
+    public const SCHEDULE_MAX_BATCHES = 100;
+
     public function __construct(private SocialPostService $posts) {}
 
     public function index(Request $request): AnonymousResourceCollection
@@ -119,6 +125,67 @@ class PostController extends Controller
             : now();
 
         return $this->resource($publisher->publish($request->user(), $post, $data));
+    }
+
+    /**
+     * "Lập lịch đăng bài" nhiều lô (trang /batches ở repo frontend): mỗi lô thành 1 bài ảnh giao cho worker, giờ đăng dải
+     * đều từ start_at (lô đầu) tới end_at (lô cuối) theo thứ tự batch_ids. Chỉ kiểm tra rồi đưa vào queue
+     * (CreateScheduledBatchPost, 1 job / lô), trả 202 ngay; bài hiện dần ở trang Bài đăng.
+     * Gửi lại cùng idempotency_key: không tạo bài trùng.
+     */
+    public function scheduleBatches(Request $request, SocialPublishJobService $publisher): JsonResponse
+    {
+        $user = $request->user();
+        $data = $request->validate([
+            'batch_ids' => ['required', 'array', 'min:1', 'max:'.self::SCHEDULE_MAX_BATCHES],
+            'batch_ids.*' => ['integer', 'distinct', Rule::exists('image_batches', 'id')->where('user_id', $user->id)],
+            'worker_id' => ['required', 'integer'],
+            'start_at' => ['required', 'date', 'after_or_equal:'.now()->subMinutes(5)->toIso8601String()],
+            'end_at' => ['required', 'date', 'after_or_equal:start_at'],
+            'ai_content' => ['nullable', 'boolean'],
+            'idempotency_key' => ['required', 'string', 'max:60'],
+            ...self::platformRules(),
+        ], [
+            'batch_ids.required' => 'Chọn ít nhất một lô.',
+            'batch_ids.max' => 'Tối đa '.self::SCHEDULE_MAX_BATCHES.' lô mỗi lần.',
+            'batch_ids.*.exists' => 'Lô ảnh không tồn tại.',
+            'worker_id.required' => 'Chọn worker.',
+            'start_at.after_or_equal' => 'Giờ bắt đầu đã qua.',
+            'end_at.after_or_equal' => 'Giờ kết thúc phải sau giờ bắt đầu.',
+            ...self::platformMessages(),
+        ]);
+        $worker = $publisher->findWorker($user, (int) $data['worker_id']);
+        $batchIds = array_map('intval', array_values($data['batch_ids']));
+
+        // Lô chưa có ảnh nào xong (đang tạo / lỗi hết / đã tắt hết): báo ngay thay vì để job bỏ qua
+        $ready = ImageBatch::query()->where('user_id', $user->id)->whereIn('id', $batchIds)
+            ->whereHas('images.output', fn ($q) => $q->usable())
+            ->pluck('id')->all();
+        $empty = array_values(array_diff($batchIds, $ready));
+        if ($empty) {
+            throw ValidationException::withMessages([
+                'batch_ids' => 'Lô #'.implode(', #', $empty).' chưa có ảnh nào tạo xong để đăng.',
+            ]);
+        }
+
+        $start = Carbon::parse($data['start_at'])->setTimezone(config('app.timezone'));
+        $end = Carbon::parse($data['end_at'])->setTimezone(config('app.timezone'));
+        $count = count($batchIds);
+        $step = $count > 1 ? ($end->getTimestamp() - $start->getTimestamp()) / ($count - 1) : 0;
+        $platforms = array_values(array_unique($data['platforms']));
+        $aiContent = (bool) ($data['ai_content'] ?? false);
+
+        $schedule = [];
+        foreach ($batchIds as $i => $batchId) {
+            $at = $start->copy()->addSeconds((int) round($step * $i));
+            CreateScheduledBatchPost::dispatch(
+                $user->id, $batchId, $worker->id, $platforms, $at->toIso8601String(), $aiContent,
+                'schedule:'.$data['idempotency_key'].':'.$batchId,
+            );
+            $schedule[] = ['batch_id' => $batchId, 'scheduled_at' => $at->toIso8601String()];
+        }
+
+        return response()->json(['data' => ['queued' => $count, 'schedule' => $schedule]], 202);
     }
 
     /** "Đăng lại" (bài lỗi) / "Tạo lại" (worker nhận rồi im lặng, có thể đăng trùng): bài về chờ tới giờ. */

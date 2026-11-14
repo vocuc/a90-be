@@ -145,6 +145,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('/', [ImageBatchController::class, 'index']);
             Route::post('/', [ImageBatchController::class, 'store'])->middleware('throttle:generations');
             Route::get('auto/preview', [ImageBatchController::class, 'autoPreview']);
+            // Xoá nhiều lô / tất cả lô (ảnh vẫn giữ trong lịch sử tạo ảnh)
+            Route::post('bulk-delete', [ImageBatchController::class, 'bulkDestroy']);
             Route::post('auto', [ImageBatchController::class, 'autoStore'])->middleware('throttle:generations');
             Route::get('{batch}', [ImageBatchController::class, 'show'])->whereNumber('batch');
             Route::delete('{batch}', [ImageBatchController::class, 'destroy'])->whereNumber('batch');
@@ -161,6 +163,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         Route::prefix('social')->group(function () {
             Route::get('posts', [PostController::class, 'index']);
             Route::post('posts/from-images', [PostController::class, 'storeFromImages']);
+            // Lập lịch đăng bài nhiều lô: đưa vào queue, mỗi lô 1 bài, giờ đăng dải đều trong khung giờ
+            Route::post('posts/schedule-batches', [PostController::class, 'scheduleBatches'])->middleware('throttle:generations');
             Route::get('posts/{post}', [PostController::class, 'show'])->whereNumber('post');
             Route::delete('posts/{post}', [PostController::class, 'destroy'])->whereNumber('post');
             Route::post('posts/{post}/publish', [PostController::class, 'publish'])->whereNumber('post');

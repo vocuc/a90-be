@@ -412,4 +412,33 @@ class ImageBatchTest extends TestCase
         $this->actingAs($other)->deleteJson("/api/v1/image-batches/{$batch->id}")->assertNotFound();
         $this->actingAs($other)->getJson('/api/v1/image-batches')->assertJsonCount(0, 'data');
     }
+
+    public function test_bulk_delete_batches_keeps_history_and_skips_generating(): void
+    {
+        $user = $this->buyer();
+        $creative = $this->publishedCreative($this->creator());
+        [$a, $b] = [$this->completedBatch($user), $this->completedBatch($user)];
+        $other = $this->completedBatch($this->buyer());
+        // Lô còn ảnh đang tạo (worker chưa nhận): bỏ qua
+        $generatingId = $this->createBatch($user, [[$creative, 1]])->assertCreated()->json('data.id');
+        $generations = Generation::query()->count();
+
+        // Theo danh sách: lô của người khác không bị xoá
+        $this->actingAs($user)->postJson('/api/v1/image-batches/bulk-delete', ['batch_ids' => [$a->id, $other->id]])
+            ->assertOk()->assertJsonPath('data.deleted', 1)->assertJsonPath('data.skipped', 0);
+        $this->assertModelMissing($a);
+        $this->assertModelExists($other);
+
+        // Tất cả lô của mình
+        $this->actingAs($user)->postJson('/api/v1/image-batches/bulk-delete', ['all' => true])
+            ->assertOk()->assertJsonPath('data.deleted', 1)->assertJsonPath('data.skipped', 1);
+        $this->assertModelMissing($b);
+        $this->assertNotNull(ImageBatch::query()->find($generatingId));
+        $this->assertModelExists($other);
+
+        // Ảnh vẫn còn trong lịch sử tạo ảnh
+        $this->assertSame($generations, Generation::query()->count());
+
+        $this->actingAs($user)->postJson('/api/v1/image-batches/bulk-delete', [])->assertStatus(422)->assertJsonValidationErrors('batch_ids');
+    }
 }
