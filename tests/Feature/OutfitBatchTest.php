@@ -93,6 +93,8 @@ class OutfitBatchTest extends TestCase
 
         $job2 = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data');
         $this->assertSame('outfit', $job2['kind']);
+        // Ảnh lịch sử chỉ lấy ảnh creative: ảnh bìa phối đồ vừa xong không tính
+        $this->assertSame([], $job2['history_images']);
         $this->failJob($token, $job2['id'], 'CHATGPT_LIMIT')->assertOk();
         $this->withToken($token)->getJson('/api/v1/jobs')->assertNoContent();
     }

@@ -9,6 +9,7 @@ use App\Models\ImageBatchImage;
 use App\Models\Product;
 use App\Models\Worker;
 use App\Services\MediaStorage;
+use App\Services\ShopImageLibrary;
 use App\Services\WorkerJobService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -124,8 +125,26 @@ class WorkerJobController extends Controller
                 'hashtags' => $product->hashtags->pluck('name')->values(),
                 'images' => $product->images->map(fn ($i) => ['field_key' => $i->field_key, 'url' => $media->url($i->path)])->values(),
             ] : null,
+            // Ảnh trong lịch sử tạo ảnh của sản phẩm (ảnh creative đã xong, chưa tắt, mới nhất trước): worker chọn ảnh
+            // chụp cận giày làm ảnh giày cho bìa + ChatGPT thay cho ảnh sản phẩm gốc (yêu cầu người dùng 2026-11-14)
+            'history_images' => $product ? $this->historyImages($generation->user_id, $product->id, $media) : [],
             'logo' => $this->logo($generation, $media),
         ];
+    }
+
+    public const HISTORY_IMAGES = 30;
+
+    private function historyImages(int $userId, int $productId, MediaStorage $media): array
+    {
+        return app(ShopImageLibrary::class)->productImages($userId, $productId)
+            ->whereHas('generation', fn ($q) => $q->where('kind', Generation::KIND_CREATIVE))
+            ->with('generation.creative:id,title')
+            ->orderByDesc('id')->limit(self::HISTORY_IMAGES)->get()
+            ->map(fn (GenerationOutput $o) => [
+                'id' => $o->id,
+                'url' => $media->url($o->image_path),
+                'creative' => $o->generation?->creative?->title,
+            ])->values()->all();
     }
 
     private function worker(Request $request): Worker
