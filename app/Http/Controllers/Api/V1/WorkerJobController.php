@@ -100,6 +100,14 @@ class WorkerJobController extends Controller
         return response()->json(['data' => ['id' => $output->id, 'status' => $output->fresh()->status]]);
     }
 
+    /** POST /api/v1/jobs/{id}/extend: gia hạn job đang làm (WorkerJobService::extend). */
+    public function extend(Request $request, int $id): JsonResponse
+    {
+        $output = $this->jobs->extend($this->worker($request), GenerationOutput::query()->findOrFail($id));
+
+        return response()->json(['data' => ['id' => $output->id, 'lease_expires_at' => $output->lease_expires_at?->toIso8601String()]]);
+    }
+
     /**
      * Job lô phối đồ: worker (skill Claude) tự chọn / tạo outfit, tạo ảnh, in hook rồi gửi ảnh có hook.
      * product.images: mọi ảnh sản phẩm theo field_key; batch.position 1 = ảnh bìa.

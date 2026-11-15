@@ -112,6 +112,21 @@ class WorkerJobService
         }
     }
 
+    /**
+     * Gia hạn job đang làm thêm lease_minutes tính từ bây giờ (worker phối đồ gọi định kỳ vì một ảnh có thể làm lâu hơn
+     * lease_minutes). Job không còn được giao cho worker này -> 409 JOB_NOT_ASSIGNED.
+     */
+    public function extend(Worker $worker, GenerationOutput $output): GenerationOutput
+    {
+        return DB::transaction(function () use ($worker, $output) {
+            $locked = $this->lockOutput($output);
+            $this->assertAssigned($worker, $locked);
+            $locked->update(['lease_expires_at' => now()->addMinutes(config('ai90.worker.lease_minutes'))]);
+
+            return $locked;
+        });
+    }
+
     public function fail(Worker $worker, GenerationOutput $output, string $errorCode, ?string $errorMessage): void
     {
         DB::transaction(function () use ($worker, $output, $errorCode, $errorMessage) {
