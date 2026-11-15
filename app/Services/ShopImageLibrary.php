@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\OutputStatus;
+use App\Models\Generation;
 use App\Models\GenerationOutput;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -11,6 +12,8 @@ use Illuminate\Support\Facades\DB;
 /**
  * Thư viện ảnh của shop để dựng video (API /video-images, bài đăng video): ảnh đã tạo xong, chưa bị tắt.
  * Theo sản phẩm: ảnh có generations.product_id = sản phẩm (lô tự động, lô tạo tay / tạo ảnh lẻ có chọn sản phẩm).
+ * Chỉ ảnh creative: ảnh phối đồ (lô Phối đồ, generations.kind outfit_cover / outfit) không dùng để dựng video
+ * (yêu cầu người dùng 2026-11-15).
  */
 class ShopImageLibrary
 {
@@ -28,6 +31,7 @@ class ShopImageLibrary
             ->where('products.is_active', true)
             ->where('generations.user_id', $userId)
             ->where('generations.product_id', '>', 0)
+            ->where('generations.kind', Generation::KIND_CREATIVE)
             ->where('generation_outputs.status', OutputStatus::Completed->value)
             ->whereNotNull('generation_outputs.image_path')
             ->whereNull('generation_outputs.disabled_at')
@@ -42,14 +46,15 @@ class ShopImageLibrary
     {
         return GenerationOutput::query()
             ->usable()
-            ->whereHas('generation', fn ($q) => $q->where('user_id', $userId)->where('product_id', $productId));
+            ->whereHas('generation', fn ($q) => $q->where('user_id', $userId)->where('product_id', $productId)
+                ->where('kind', Generation::KIND_CREATIVE));
     }
 
-    /** Mọi ảnh dùng được người dùng đã tạo (cả lô tạo tay, lịch sử tạo ảnh). */
+    /** Mọi ảnh creative dùng được người dùng đã tạo (cả lô tạo tay, lịch sử tạo ảnh). */
     public function allImages(int $userId): Builder
     {
         return GenerationOutput::query()
             ->usable()
-            ->whereHas('generation', fn ($q) => $q->where('user_id', $userId));
+            ->whereHas('generation', fn ($q) => $q->where('user_id', $userId)->where('kind', Generation::KIND_CREATIVE));
     }
 }

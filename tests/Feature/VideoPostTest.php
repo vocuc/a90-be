@@ -2,6 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Enums\OutputStatus;
+use App\Models\Generation;
+use App\Models\GenerationOutput;
 use App\Models\ImageBatch;
 use App\Models\Product;
 use App\Models\SocialPost;
@@ -99,7 +102,50 @@ class VideoPostTest extends TestCase
         return $this->withToken($token)->postJson("/api/v1/post-jobs/{$jobId}", $body);
     }
 
+    /** Tạo 1 lô phối đồ ($images ảnh) cho sản phẩm và coi như worker đã làm xong mọi ảnh. */
+    private function outfitImages(User $shop, Product $product, int $images): void
+    {
+        $product->images()->create(['field_key' => 'anh_san_pham', 'path' => 'products/giay.png', 'position' => 1]);
+        [$worker] = Worker::register('phoi-do-'.Str::random(6), Worker::TYPE_OUTFIT);
+        $worker->users()->attach($shop->id);
+        $this->actingAs($shop)->postJson('/api/v1/image-batches/auto', [
+            'mode' => 'outfit', 'count' => 1, 'images_per_batch' => $images,
+            'worker_id' => $worker->id, 'idempotency_key' => (string) Str::uuid(),
+        ])->assertCreated();
+        GenerationOutput::query()
+            ->whereHas('generation', fn ($q) => $q->whereIn('kind', Generation::OUTFIT_KINDS))
+            ->update(['status' => OutputStatus::Completed, 'image_path' => 'outputs/outfit.png']);
+    }
+
     // ---- Tests ----
+
+    public function test_outfit_images_are_not_used_for_video(): void
+    {
+        $shop = $this->creator();
+        $product = $this->productWithImages($shop, 2);
+        $this->outfitImages($shop, $product, 3);
+        $outfit = GenerationOutput::query()->whereHas('generation', fn ($q) => $q->where('kind', Generation::KIND_OUTFIT))->firstOrFail();
+
+        // Ô chọn ảnh: chỉ 2 ảnh creative, theo sản phẩm lẫn "Tất cả ảnh"
+        $this->actingAs($shop)->getJson("/api/v1/social/video-posts/images?product_id={$product->id}")->assertOk()->assertJsonCount(2, 'data');
+        $this->getJson('/api/v1/social/video-posts/images')->assertOk()->assertJsonCount(2, 'data');
+
+        // Tự động: template 3 ảnh không đủ ảnh (ảnh phối đồ không tính)
+        $this->template($shop, 3);
+        [$worker] = $this->worker($shop);
+        $this->auto($shop, $worker, ['count' => 1])->assertStatus(422)->assertJsonPath('code', 'VIDEO_NOT_ENOUGH_IMAGES');
+
+        // Tạo tay gửi ảnh phối đồ -> 422
+        $template = $this->template($shop, 1, 'Một ảnh');
+        $this->postJson('/api/v1/social/video-posts', [
+            'worker_id' => $worker->id,
+            'platforms' => ['tiktok'],
+            'video_template_id' => $template->id,
+            'images' => [['generation_id' => $outfit->generation_id, 'output_id' => $outfit->id]],
+            'scheduled_at' => now()->addHour()->toIso8601String(),
+            'idempotency_key' => (string) Str::uuid(),
+        ])->assertStatus(422)->assertJsonValidationErrors('images.0');
+    }
 
     public function test_auto_creates_scheduled_video_posts_with_ai_content(): void
     {

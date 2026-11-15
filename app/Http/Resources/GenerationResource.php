@@ -36,6 +36,8 @@ class GenerationResource extends JsonResource
         return [
             'id' => $this->id,
             'type' => $this->type,
+            // creative | outfit_cover | outfit (ảnh lô Phối đồ, chỉ outfit chấm điểm được)
+            'kind' => $this->kind,
             'status' => $this->status,
             'creative' => $this->whenLoaded('creative', fn () => [
                 'id' => $this->creative->id,
@@ -60,6 +62,8 @@ class GenerationResource extends JsonResource
                 'error_code' => $output->error_code,
                 'error_message' => self::errorMessage($output->error_code),
                 'retry_of_output_id' => $output->retry_of_output_id,
+                // Điểm chủ shop chấm ảnh phối đồ (1-10), null = chưa chấm
+                'rating' => $output->rating,
             ])->values()),
             'created_at' => $this->created_at,
             'completed_at' => $this->completed_at,

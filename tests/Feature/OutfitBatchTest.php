@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Enums\OutputStatus;
 use App\Models\Generation;
+use App\Models\GenerationOutput;
 use App\Models\ImageBatch;
 use App\Models\Product;
 use App\Models\User;
@@ -137,5 +139,64 @@ class OutfitBatchTest extends TestCase
         $creator = $this->creator();
         $this->actingAs($creator)->getJson('/api/v1/creator/creatives')->assertOk()
             ->assertJsonMissing(['slug' => 'he-thong-phoi-do']);
+    }
+
+    /** Ảnh lô phối đồ (bìa + outfit) tạo xong. */
+    private function completeOutfitImages(): void
+    {
+        GenerationOutput::query()
+            ->whereHas('generation', fn ($q) => $q->whereIn('kind', Generation::OUTFIT_KINDS))
+            ->update(['status' => OutputStatus::Completed, 'image_path' => 'outputs/outfit.png']);
+    }
+
+    public function test_history_has_separate_outfit_tab(): void
+    {
+        $user = $this->buyer();
+        $this->product($user, 'giay-a');
+        [$worker] = $this->outfitWorker($user);
+        $this->createBatches($user, $worker, 1, 3)->assertCreated();
+        $this->completeOutfitImages();
+        $this->generate($user, $this->publishedCreative($this->creator()), 1);
+
+        // Tab "Phối đồ": bìa + 2 ảnh outfit; tab "Đang hoạt động": chỉ ảnh creative
+        $outfit = $this->actingAs($user)->getJson('/api/v1/generations?tab=outfit')->assertOk()->json('data');
+        $this->assertEqualsCanonicalizing(['outfit_cover', 'outfit', 'outfit'], array_column($outfit, 'kind'));
+        $this->assertArrayHasKey('rating', $outfit[0]['outputs'][0]);
+        $active = $this->getJson('/api/v1/generations?tab=active')->assertOk()->json('data');
+        $this->assertSame(['creative'], array_column($active, 'kind'));
+    }
+
+    public function test_owner_rates_outfit_image_from_1_to_10(): void
+    {
+        $user = $this->buyer();
+        $this->product($user, 'giay-a');
+        [$worker] = $this->outfitWorker($user);
+        $this->createBatches($user, $worker, 1, 2)->assertCreated();
+        $outfit = GenerationOutput::query()->whereHas('generation', fn ($q) => $q->where('kind', Generation::KIND_OUTFIT))->firstOrFail();
+        $cover = GenerationOutput::query()->whereHas('generation', fn ($q) => $q->where('kind', Generation::KIND_OUTFIT_COVER))->firstOrFail();
+        $url = fn (GenerationOutput $o) => "/api/v1/generations/{$o->generation_id}/outputs/{$o->id}/rating";
+
+        // Ảnh chưa tạo xong
+        $this->actingAs($user)->putJson($url($outfit), ['rating' => 8])->assertStatus(409)->assertJsonPath('code', 'IMAGE_NOT_READY');
+        $this->completeOutfitImages();
+
+        $this->putJson($url($outfit), ['rating' => 8])->assertOk()->assertJsonPath('data.rating', 8);
+        $this->assertSame(8, $outfit->fresh()->rating);
+        $this->assertNotNull($outfit->fresh()->rated_at);
+        $this->getJson('/api/v1/generations?tab=outfit')->assertOk()->assertJsonFragment(['rating' => 8]);
+
+        // Ngoài 1-10 / thiếu rating
+        $this->putJson($url($outfit), ['rating' => 0])->assertStatus(422)->assertJsonValidationErrors('rating');
+        $this->putJson($url($outfit), ['rating' => 11])->assertStatus(422)->assertJsonValidationErrors('rating');
+        $this->putJson($url($outfit), [])->assertStatus(422)->assertJsonValidationErrors('rating');
+        // Ảnh bìa không chấm điểm
+        $this->putJson($url($cover), ['rating' => 5])->assertStatus(409)->assertJsonPath('code', 'NOT_OUTFIT_IMAGE');
+        // Người khác
+        $this->actingAs($this->buyer())->putJson($url($outfit), ['rating' => 1])->assertNotFound();
+        $this->assertSame(8, $outfit->fresh()->rating);
+
+        // Bỏ điểm
+        $this->actingAs($user)->putJson($url($outfit), ['rating' => null])->assertOk()->assertJsonPath('data.rating', null);
+        $this->assertNull($outfit->fresh()->rated_at);
     }
 }

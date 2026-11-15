@@ -58,14 +58,15 @@ class GenerationController extends Controller
 
     /**
      * Lịch sử mua. tab lọc theo ảnh, mỗi đơn chỉ kèm ảnh của tab đó, đơn không có ảnh nào của tab thì không trả về:
-     * active = ảnh chưa tắt và không lỗi (gồm ảnh đang tạo), failed = ảnh tạo thất bại, disabled = ảnh người dùng đã tắt.
+     * active = ảnh creative chưa tắt và không lỗi (gồm ảnh đang tạo), outfit = ảnh phối đồ (bìa + outfit của lô Phối đồ)
+     * chưa tắt và không lỗi, failed = ảnh tạo thất bại, disabled = ảnh người dùng đã tắt (failed / disabled gồm cả ảnh phối đồ).
      * Không có tab: mọi đơn, kèm ảnh chưa tắt (như cũ, dùng cho ô chọn ảnh).
      * creative_id: chỉ đơn của creative đó. product_id: chỉ đơn có generations.product_id = sản phẩm đó.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
         $data = $request->validate([
-            'tab' => ['nullable', 'in:active,failed,disabled'],
+            'tab' => ['nullable', 'in:active,outfit,failed,disabled'],
             'creative_id' => ['nullable', 'integer'],
             'product_id' => ['nullable', 'integer'],
         ]);
@@ -73,7 +74,7 @@ class GenerationController extends Controller
         $userId = $request->user()->id;
         $productId = $data['product_id'] ?? null;
         $tabFilter = match ($tab) {
-            'active' => fn ($q) => $q->whereNull('disabled_at')->where('status', '!=', OutputStatus::Failed),
+            'active', 'outfit' => fn ($q) => $q->whereNull('disabled_at')->where('status', '!=', OutputStatus::Failed),
             // Ảnh lỗi đã bấm "Tạo lại" (có output mới retry_of_output_id trỏ tới) thì không hiện nữa
             'failed' => fn ($q) => $q->where('status', OutputStatus::Failed)
                 ->whereNotExists(fn ($s) => $s->from('generation_outputs as retries')
@@ -85,6 +86,9 @@ class GenerationController extends Controller
             ->where('user_id', $userId)
             ->when($data['creative_id'] ?? null, fn ($q, $id) => $q->where('creative_id', $id))
             ->when($productId, fn ($q, $id) => $q->where('product_id', $id))
+            // Ảnh phối đồ (lô Phối đồ) tách riêng tab "Phối đồ"; tab "Đang hoạt động" chỉ còn ảnh creative
+            ->when($tab === 'active', fn ($q) => $q->where('kind', Generation::KIND_CREATIVE))
+            ->when($tab === 'outfit', fn ($q) => $q->whereIn('kind', Generation::OUTFIT_KINDS))
             ->when($tab || $productId, fn ($q) => $q->whereHas('outputs', $tabFilter))
             ->with(['creative', 'outputs' => $tabFilter])
             ->latest('id')
@@ -229,6 +233,32 @@ class GenerationController extends Controller
         }
 
         return response()->noContent();
+    }
+
+    /**
+     * Chủ shop chấm điểm ảnh phối đồ (kind = outfit, đã tạo xong) theo thang 1-10: điểm càng cao outfit càng hợp shop
+     * (yêu cầu người dùng 2026-11-15). rating = null để bỏ điểm. Ảnh bìa lô phối đồ và ảnh creative không chấm được.
+     * { data: { id, rating, rated_at } }
+     */
+    public function rateOutput(Request $request, Generation $generation, GenerationOutput $output): JsonResponse
+    {
+        $this->authorizeOwner($request, $generation);
+        abort_unless($output->generation_id === $generation->id, 404);
+        $data = $request->validate(['rating' => ['present', 'nullable', 'integer', 'min:1', 'max:10']]);
+        if ($generation->kind !== Generation::KIND_OUTFIT) {
+            throw new BusinessException('NOT_OUTFIT_IMAGE', 'Chỉ chấm điểm được ảnh phối đồ.', 409);
+        }
+        if ($output->status !== OutputStatus::Completed) {
+            throw new BusinessException('IMAGE_NOT_READY', 'Chỉ chấm điểm được ảnh đã tạo xong.', 409);
+        }
+
+        $rating = $data['rating'] === null ? null : (int) $data['rating'];
+        if ($output->rating !== $rating) {
+            $output->update(['rating' => $rating, 'rated_at' => $rating === null ? null : now()]);
+            app(AuditLogger::class)->log('generation_output.rate', $generation, ['output_id' => $output->id, 'rating' => $rating], $request->user()->id);
+        }
+
+        return response()->json(['data' => ['id' => $output->id, 'rating' => $output->rating, 'rated_at' => $output->rated_at]]);
     }
 
     private function authorizeOwner(Request $request, Generation $generation): void

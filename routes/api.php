@@ -58,6 +58,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         Route::get('generations/{generation}/outputs/{output}/download', [GenerationController::class, 'download']);
         Route::post('generations/{generation}/outputs/{output}/disable', [GenerationController::class, 'disableOutput']);
         Route::post('generations/{generation}/outputs/{output}/enable', [GenerationController::class, 'enableOutput']);
+        Route::put('generations/{generation}/outputs/{output}/rating', [GenerationController::class, 'rateOutput']);
         // Worker tạo ảnh được gắn cho tài khoản, chọn khi tạo ảnh / tạo lô (note/chon-worker-tao-anh.txt ở repo frontend)
         Route::get('image-workers', [ImageWorkerController::class, 'index']);
 

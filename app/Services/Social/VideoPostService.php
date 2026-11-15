@@ -6,6 +6,7 @@ use App\Enums\PlatformPublishStatus;
 use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
+use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\Product;
 use App\Models\SocialPost;
@@ -136,6 +137,13 @@ class VideoPostService
             throw ValidationException::withMessages(['images' => "Template \"{$template->name}\" cần đúng {$template->image_count} ảnh."]);
         }
         $outputs = $this->posts->resolveOwnedOutputs($user, array_values($data['images']), 'images');
+        // Ảnh phối đồ không dùng làm video (yêu cầu người dùng 2026-11-15), giống ShopImageLibrary
+        $outfit = $outputs->filter(fn (GenerationOutput $o) => $o->generation()->value('kind') !== Generation::KIND_CREATIVE);
+        if ($outfit->isNotEmpty()) {
+            throw ValidationException::withMessages($outfit->keys()->mapWithKeys(
+                fn ($i) => ["images.{$i}" => 'Ảnh phối đồ không dùng để tạo video.'],
+            )->all());
+        }
 
         return [$worker, $template, $productId, $outputs];
     }
