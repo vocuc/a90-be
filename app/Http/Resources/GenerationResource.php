@@ -62,8 +62,6 @@ class GenerationResource extends JsonResource
                 'error_code' => $output->error_code,
                 'error_message' => self::errorMessage($output->error_code),
                 'retry_of_output_id' => $output->retry_of_output_id,
-                // Điểm chủ shop chấm ảnh phối đồ (1-10), null = chưa chấm
-                'rating' => $output->rating,
             ])->values()),
             'created_at' => $this->created_at,
             'completed_at' => $this->completed_at,

@@ -235,32 +235,6 @@ class GenerationController extends Controller
         return response()->noContent();
     }
 
-    /**
-     * Chủ shop chấm điểm ảnh phối đồ (kind = outfit, đã tạo xong) theo thang 1-10: điểm càng cao outfit càng hợp shop
-     * (yêu cầu người dùng 2026-11-15). rating = null để bỏ điểm. Ảnh bìa lô phối đồ và ảnh creative không chấm được.
-     * { data: { id, rating, rated_at } }
-     */
-    public function rateOutput(Request $request, Generation $generation, GenerationOutput $output): JsonResponse
-    {
-        $this->authorizeOwner($request, $generation);
-        abort_unless($output->generation_id === $generation->id, 404);
-        $data = $request->validate(['rating' => ['present', 'nullable', 'integer', 'min:1', 'max:10']]);
-        if ($generation->kind !== Generation::KIND_OUTFIT) {
-            throw new BusinessException('NOT_OUTFIT_IMAGE', 'Chỉ chấm điểm được ảnh phối đồ.', 409);
-        }
-        if ($output->status !== OutputStatus::Completed) {
-            throw new BusinessException('IMAGE_NOT_READY', 'Chỉ chấm điểm được ảnh đã tạo xong.', 409);
-        }
-
-        $rating = $data['rating'] === null ? null : (int) $data['rating'];
-        if ($output->rating !== $rating) {
-            $output->update(['rating' => $rating, 'rated_at' => $rating === null ? null : now()]);
-            app(AuditLogger::class)->log('generation_output.rate', $generation, ['output_id' => $output->id, 'rating' => $rating], $request->user()->id);
-        }
-
-        return response()->json(['data' => ['id' => $output->id, 'rating' => $output->rating, 'rated_at' => $output->rated_at]]);
-    }
-
     private function authorizeOwner(Request $request, Generation $generation): void
     {
         abort_unless($generation->user_id === $request->user()->id, 404);

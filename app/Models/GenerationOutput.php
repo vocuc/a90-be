@@ -19,8 +19,6 @@ class GenerationOutput extends Model
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
             'disabled_at' => 'datetime',
-            'rating' => 'integer',
-            'rated_at' => 'datetime',
         ];
     }
 
