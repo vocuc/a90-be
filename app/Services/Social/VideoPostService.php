@@ -82,7 +82,7 @@ class VideoPostService
                 break;
             }
             [$template, $productId] = $pick;
-            $outputs = $this->library->productImages($user->id, $productId)->inRandomOrder()->limit($template->image_count)->get();
+            $outputs = $this->library->productImagesForVideo($user->id, $productId, $template->image_count);
 
             if ($i > 0) {
                 $at = $at->copy()->addMinutes(random_int($gapMin, $gapMax));

@@ -189,6 +189,29 @@ class VideoPostTest extends TestCase
             ->assertJsonPath('data.0.video.product.id', $product->id);
     }
 
+    public function test_auto_uses_newest_unused_images_first_then_used_ones(): void
+    {
+        $shop = $this->creator();
+        $this->template($shop, 2);
+        $product = $this->productWithImages($shop, 5);
+        [$worker] = $this->worker($shop);
+        // Ảnh cũ nhất -> mới nhất
+        $ids = GenerationOutput::query()->whereHas('generation', fn ($q) => $q->where('product_id', $product->id))
+            ->orderBy('id')->pluck('id')->all();
+        foreach ($ids as $i => $id) {
+            GenerationOutput::query()->whereKey($id)->update(['created_at' => now()->subMinutes(10 - $i)]);
+        }
+        [$o1, $o2, $o3, $o4, $o5] = $ids;
+
+        $data = $this->auto($shop, $worker, ['count' => 3])->assertCreated()->json('data');
+        $images = fn (int $postId) => SocialPost::query()->find($postId)->images()->pluck('output_id')->all();
+
+        $this->assertSame([$o5, $o4], $images($data['post_ids'][0]));
+        $this->assertSame([$o3, $o2], $images($data['post_ids'][1]));
+        // Còn 1 ảnh chưa dùng, thiếu 1 thì lấy ảnh đã dùng (ít lần, mới nhất)
+        $this->assertSame([$o1, $o5], $images($data['post_ids'][2]));
+    }
+
     public function test_auto_skips_inactive_products(): void
     {
         $shop = $this->creator();
