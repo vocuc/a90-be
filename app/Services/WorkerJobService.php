@@ -53,11 +53,12 @@ class WorkerJobService
                         ->where('workers.is_active', true)
                         ->where('workers.type', $worker->type)));
 
+            $pending = [OutputStatus::Queued->value, OutputStatus::Processing->value];
             $output = GenerationOutput::query()
                 ->where('status', OutputStatus::Queued)
                 ->whereIn('generation_id', $generations)
-                // Lô phối đồ (2026-11-16): ảnh bìa làm TRƯỚC — worker viết hook bìa = tiêu đề lô, các ảnh outfit chọn outfit
-                // theo tiêu đề đó -> chưa giao ảnh outfit (vị trí > 1) khi ảnh bìa cùng lô còn đang chờ / đang tạo
+                // Lô phối đồ CÓ sản phẩm (2026-11-16): ảnh bìa làm TRƯỚC — worker viết hook bìa = tiêu đề lô, các ảnh outfit
+                // chọn outfit theo tiêu đề đó -> chưa giao ảnh outfit (vị trí > 1) khi ảnh bìa cùng lô còn đang chờ / đang tạo
                 // (bìa lỗi thì ảnh outfit vẫn được giao, worker tự chọn chủ đề)
                 ->whereNotExists(fn ($q) => $q->from('image_batch_images as ob')
                     ->join('image_batch_images as cb', 'cb.image_batch_id', '=', 'ob.image_batch_id')
@@ -66,7 +67,25 @@ class WorkerJobService
                     ->whereColumn('ob.output_id', 'generation_outputs.id')
                     ->where('ob.position', '>', 1)
                     ->where('cg.kind', Generation::KIND_OUTFIT_COVER)
-                    ->whereIn('co.status', [OutputStatus::Queued->value, OutputStatus::Processing->value]))
+                    ->where('cg.product_id', '>', 0)
+                    ->whereIn('co.status', $pending))
+                // Lô KHÔNG dùng sản phẩm (2026-11-16, người dùng chốt): ảnh outfit ĐẦU TIÊN (vị trí 2) làm TRƯỚC — worker viết
+                // hook = tiêu đề lô rồi vẽ; ảnh bìa = chính ảnh đó + hook theo mẫu bìa. Bìa chờ ảnh vị trí 2 xong / lỗi.
+                ->whereNotExists(fn ($q) => $this->firstOutfitPending($q, $pending)->where('ob.position', 1))
+                // Ảnh outfit vị trí 3+ chờ tới khi lô có tiêu đề, hoặc ảnh vị trí 2 và ảnh bìa đều không còn chờ
+                // (ảnh vị trí 2 lỗi -> bìa tự viết hook như cũ, ảnh sau dùng tiêu đề của bìa)
+                ->whereNotExists(fn ($q) => $q->from('image_batch_images as ob')
+                    ->join('image_batches as b', 'b.id', '=', 'ob.image_batch_id')
+                    ->join('generations as og', 'og.id', '=', 'ob.generation_id')
+                    ->join('image_batch_images as pb', 'pb.image_batch_id', '=', 'ob.image_batch_id')
+                    ->join('generation_outputs as po', 'po.id', '=', 'pb.output_id')
+                    ->whereColumn('ob.output_id', 'generation_outputs.id')
+                    ->where('ob.position', '>', 2)
+                    ->where('og.product_id', 0)
+                    ->whereIn('og.kind', Generation::OUTFIT_KINDS)
+                    ->whereNull('b.title')
+                    ->whereIn('pb.position', [1, 2])
+                    ->whereIn('po.status', $pending))
                 ->orderBy('id')
                 ->lock('for update skip locked')
                 ->first();
@@ -90,6 +109,20 @@ class WorkerJobService
 
             return $output;
         });
+    }
+
+    /** Ảnh của lô không sản phẩm mà ảnh outfit đầu tiên (vị trí 2) cùng lô còn đang chờ / đang tạo. */
+    private function firstOutfitPending($q, array $pending)
+    {
+        return $q->from('image_batch_images as ob')
+            ->join('generations as og', 'og.id', '=', 'ob.generation_id')
+            ->join('image_batch_images as fb', 'fb.image_batch_id', '=', 'ob.image_batch_id')
+            ->join('generation_outputs as fo', 'fo.id', '=', 'fb.output_id')
+            ->whereColumn('ob.output_id', 'generation_outputs.id')
+            ->where('og.product_id', 0)
+            ->whereIn('og.kind', Generation::OUTFIT_KINDS)
+            ->where('fb.position', 2)
+            ->whereIn('fo.status', $pending);
     }
 
     public function complete(Worker $worker, GenerationOutput $output, UploadedFile $image): void
