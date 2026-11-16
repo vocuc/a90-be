@@ -56,6 +56,15 @@ class WorkerJobService
             $output = GenerationOutput::query()
                 ->where('status', OutputStatus::Queued)
                 ->whereIn('generation_id', $generations)
+                // Lô phối đồ không dùng sản phẩm (product_id = 0): ảnh bìa dựng từ ảnh outfit đã vẽ của lô, nên chưa giao
+                // job bìa khi lô chưa có ảnh outfit nào xong mà vẫn còn ảnh outfit đang chờ / đang tạo
+                ->whereNotExists(fn ($q) => $q->from('image_batch_images as cb')
+                    ->join('generations as cg', 'cg.id', '=', 'cb.generation_id')
+                    ->whereColumn('cb.output_id', 'generation_outputs.id')
+                    ->where('cg.kind', Generation::KIND_OUTFIT_COVER)
+                    ->where('cg.product_id', 0)
+                    ->whereExists(fn ($p) => $this->batchOutfits($p, [OutputStatus::Queued, OutputStatus::Processing]))
+                    ->whereNotExists(fn ($d) => $this->batchOutfits($d, [OutputStatus::Completed])))
                 ->orderBy('id')
                 ->lock('for update skip locked')
                 ->first();
@@ -79,6 +88,16 @@ class WorkerJobService
 
             return $output;
         });
+    }
+
+    /** Ảnh outfit (vị trí > 1) cùng lô với ảnh bìa "cb" có trạng thái thuộc $statuses. */
+    private function batchOutfits($q, array $statuses): void
+    {
+        $q->from('image_batch_images as ob')
+            ->join('generation_outputs as oo', 'oo.id', '=', 'ob.output_id')
+            ->whereColumn('ob.image_batch_id', 'cb.image_batch_id')
+            ->where('ob.position', '>', 1)
+            ->whereIn('oo.status', array_map(fn (OutputStatus $s) => $s->value, $statuses));
     }
 
     public function complete(Worker $worker, GenerationOutput $output, UploadedFile $image): void

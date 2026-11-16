@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\OutputStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
@@ -136,8 +137,26 @@ class WorkerJobController extends Controller
             // Ảnh trong lịch sử tạo ảnh của sản phẩm (ảnh creative đã xong, chưa tắt, mới nhất trước): worker chọn ảnh
             // chụp cận giày làm ảnh giày cho bìa + ChatGPT thay cho ảnh sản phẩm gốc (yêu cầu người dùng 2026-11-14)
             'history_images' => $product ? $this->historyImages($generation->user_id, $product->id, $media) : [],
+            // false: lô không dùng ảnh sản phẩm (công tắc trên /batches/auto) -> worker vẽ theo ảnh gốc outfit + người mẫu,
+            // ảnh bìa dựng từ ảnh outfit đã xong của lô (outfit_images)
+            'use_product' => (int) $generation->product_id > 0,
+            'outfit_images' => $image && $generation->kind === Generation::KIND_OUTFIT_COVER
+                ? $this->batchOutfitImages($image->image_batch_id, $media) : [],
             'logo' => $this->logo($generation, $media),
         ];
+    }
+
+    /** Ảnh outfit đã xong của lô (vị trí > 1, theo vị trí): nguồn ảnh bìa của lô không dùng sản phẩm. */
+    private function batchOutfitImages(int $batchId, MediaStorage $media): array
+    {
+        return ImageBatchImage::query()->where('image_batch_id', $batchId)->where('position', '>', 1)
+            ->with('output')->orderBy('position')->get()
+            ->filter(fn (ImageBatchImage $i) => $i->output?->status === OutputStatus::Completed && $i->output->image_path)
+            ->map(fn (ImageBatchImage $i) => [
+                'position' => $i->position,
+                'output_id' => $i->output->id,
+                'url' => $media->url($i->output->image_path),
+            ])->values()->all();
     }
 
     public const HISTORY_IMAGES = 30;

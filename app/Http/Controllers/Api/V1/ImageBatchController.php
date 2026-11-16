@@ -175,13 +175,24 @@ class ImageBatchController extends Controller
             'images_per_batch' => ['nullable', 'integer', 'min:'.OutfitBatchService::MIN_IMAGES, 'max:'.OutfitBatchService::MAX_IMAGES],
             'product_ids' => ['nullable', 'array', 'max:'.OutfitBatchService::MAX_COUNT],
             'product_ids.*' => ['integer'],
+            'use_product' => ['nullable', 'boolean'],
         ]);
         $media = app(MediaStorage::class);
         $images = (int) ($data['images_per_batch'] ?? OutfitBatchService::DEFAULT_IMAGES);
+        $useProduct = $request->boolean('use_product', true);
+        if (! $useProduct) {
+            // Không dùng ảnh sản phẩm: đúng count lô, không gắn sản phẩm
+            return response()->json(['data' => [
+                'images_per_batch' => $images,
+                'use_product' => false,
+                'batches' => array_fill(0, (int) $data['count'], ['product' => null, 'images' => $images]),
+            ]]);
+        }
         $products = app(OutfitBatchService::class)->plan($request->user(), (int) $data['count'], self::productIds($data));
 
         return response()->json(['data' => [
             'images_per_batch' => $images,
+            'use_product' => true,
             'batches' => $products->map(fn (Product $p) => ['product' => self::productSummary($p, $media), 'images' => $images])->values(),
         ]]);
     }
@@ -197,12 +208,13 @@ class ImageBatchController extends Controller
             'worker_id' => ['nullable', 'integer'],
             'product_ids' => ['nullable', 'array', 'max:'.OutfitBatchService::MAX_COUNT],
             'product_ids.*' => ['integer'],
+            'use_product' => ['nullable', 'boolean'],
         ]);
         $user = $request->user();
         $workerId = Worker::outfitWorkerIdFor($user->id, $data['worker_id'] ?? null);
         $created = app(OutfitBatchService::class)->create($user, (int) $data['count'],
             (int) ($data['images_per_batch'] ?? OutfitBatchService::DEFAULT_IMAGES), $this->insertLogo($request, $data),
-            $data['idempotency_key'], $workerId, self::productIds($data));
+            $data['idempotency_key'], $workerId, self::productIds($data), $request->boolean('use_product', true));
         $batches = ImageBatch::query()->whereKey(array_map(fn (ImageBatch $b) => $b->id, $created))
             ->withSummary()->orderBy('id')->get();
 

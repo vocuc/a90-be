@@ -69,7 +69,13 @@ class OutfitBatchService
      * @param  int[]|null  $productIds
      * @return ImageBatch[]
      */
-    public function create(User $user, int $count, int $images, bool $insertLogo, string $idempotencyKey, int $workerId, ?array $productIds = null): array
+    /**
+     * $useProduct = false (công tắc "Dùng ảnh sản phẩm" tắt, 2026-11-16): lô không gắn sản phẩm (product_id = 0),
+     * tạo đúng $count lô; worker vẽ outfit theo ảnh gốc outfit OOTD + người mẫu, ảnh bìa dựng từ ảnh outfit đã vẽ của lô
+     * (WorkerJobService::claim chỉ giao job bìa khi lô đã có ảnh outfit xong hoặc không còn ảnh outfit nào chờ).
+     */
+    public function create(User $user, int $count, int $images, bool $insertLogo, string $idempotencyKey, int $workerId,
+        ?array $productIds = null, bool $useProduct = true): array
     {
         $lock = Cache::lock("outfit-batch:{$user->id}", 120);
         $lock->block(30);
@@ -79,9 +85,13 @@ class OutfitBatchService
             if ($existing->isNotEmpty()) {
                 return $existing->all();
             }
-            $products = $this->plan($user, $count, $productIds);
-            if ($products->isEmpty()) {
-                throw new BusinessException('OUTFIT_NO_PRODUCT', 'Chưa có sản phẩm đang hoạt động (có ảnh) để tạo lô phối đồ.', 422);
+            if ($useProduct) {
+                $products = $this->plan($user, $count, $productIds);
+                if ($products->isEmpty()) {
+                    throw new BusinessException('OUTFIT_NO_PRODUCT', 'Chưa có sản phẩm đang hoạt động (có ảnh) để tạo lô phối đồ.', 422);
+                }
+            } else {
+                $products = collect(array_fill(0, min($count, self::MAX_COUNT), null));
             }
             $creative = $this->systemCreative($user);
             $created = [];
@@ -92,17 +102,18 @@ class OutfitBatchService
                         'idempotency_key' => "outfit:{$idempotencyKey}:{$n}",
                         'source' => ImageBatch::SOURCE_OUTFIT,
                     ]);
-                    $paths = $product->images->pluck('path', 'field_key')->all();
+                    $paths = $product ? $product->images->pluck('path', 'field_key')->all() : [];
                     for ($pos = 1; $pos <= $images; $pos++) {
                         $generation = $this->newGeneration($user, $creative, $pos === 1 ? Generation::KIND_OUTFIT_COVER : Generation::KIND_OUTFIT,
-                            $paths, $product->id, $workerId, $insertLogo, "outfit:{$batch->id}:{$pos}");
+                            $paths, $product?->id, $workerId, $insertLogo, "outfit:{$batch->id}:{$pos}");
                         $batch->images()->create([
                             'generation_id' => $generation->id,
                             'output_id' => $generation->outputs->first()->id,
                             'position' => $pos,
                         ]);
                     }
-                    $this->audit->log('image_batch.create_outfit', $batch, ['product_id' => $product->id, 'images' => $images], $user->id);
+                    $this->audit->log('image_batch.create_outfit', $batch,
+                        ['product_id' => $product?->id, 'use_product' => (bool) $product, 'images' => $images], $user->id);
 
                     return $batch;
                 });
