@@ -56,15 +56,17 @@ class WorkerJobService
             $output = GenerationOutput::query()
                 ->where('status', OutputStatus::Queued)
                 ->whereIn('generation_id', $generations)
-                // Lô phối đồ không dùng sản phẩm (product_id = 0): ảnh bìa dựng từ ảnh outfit đã vẽ của lô, nên chưa giao
-                // job bìa khi lô chưa có ảnh outfit nào xong mà vẫn còn ảnh outfit đang chờ / đang tạo
-                ->whereNotExists(fn ($q) => $q->from('image_batch_images as cb')
+                // Lô phối đồ (2026-11-16): ảnh bìa làm TRƯỚC — worker viết hook bìa = tiêu đề lô, các ảnh outfit chọn outfit
+                // theo tiêu đề đó -> chưa giao ảnh outfit (vị trí > 1) khi ảnh bìa cùng lô còn đang chờ / đang tạo
+                // (bìa lỗi thì ảnh outfit vẫn được giao, worker tự chọn chủ đề)
+                ->whereNotExists(fn ($q) => $q->from('image_batch_images as ob')
+                    ->join('image_batch_images as cb', 'cb.image_batch_id', '=', 'ob.image_batch_id')
                     ->join('generations as cg', 'cg.id', '=', 'cb.generation_id')
-                    ->whereColumn('cb.output_id', 'generation_outputs.id')
+                    ->join('generation_outputs as co', 'co.id', '=', 'cb.output_id')
+                    ->whereColumn('ob.output_id', 'generation_outputs.id')
+                    ->where('ob.position', '>', 1)
                     ->where('cg.kind', Generation::KIND_OUTFIT_COVER)
-                    ->where('cg.product_id', 0)
-                    ->whereExists(fn ($p) => $this->batchOutfits($p, [OutputStatus::Queued, OutputStatus::Processing]))
-                    ->whereNotExists(fn ($d) => $this->batchOutfits($d, [OutputStatus::Completed])))
+                    ->whereIn('co.status', [OutputStatus::Queued->value, OutputStatus::Processing->value]))
                 ->orderBy('id')
                 ->lock('for update skip locked')
                 ->first();
@@ -88,16 +90,6 @@ class WorkerJobService
 
             return $output;
         });
-    }
-
-    /** Ảnh outfit (vị trí > 1) cùng lô với ảnh bìa "cb" có trạng thái thuộc $statuses. */
-    private function batchOutfits($q, array $statuses): void
-    {
-        $q->from('image_batch_images as ob')
-            ->join('generation_outputs as oo', 'oo.id', '=', 'ob.output_id')
-            ->whereColumn('ob.image_batch_id', 'cb.image_batch_id')
-            ->where('ob.position', '>', 1)
-            ->whereIn('oo.status', array_map(fn (OutputStatus $s) => $s->value, $statuses));
     }
 
     public function complete(Worker $worker, GenerationOutput $output, UploadedFile $image): void

@@ -192,6 +192,7 @@ Route::prefix('v1/jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerJobController::class, 'next']);
     Route::post('{id}', [WorkerJobController::class, 'submit'])->whereNumber('id');
     Route::post('{id}/extend', [WorkerJobController::class, 'extend'])->whereNumber('id');
+    Route::get('{id}/batch', [WorkerJobController::class, 'batch'])->whereNumber('id');
 });
 
 // Worker đăng bài (ảnh / video): nhận bài đã tới giờ được giao cho chính worker, 1 job / bài chứa mọi nền tảng

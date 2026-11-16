@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Enums\OutputStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\ImageBatch;
 use App\Models\ImageBatchImage;
 use App\Models\Product;
 use App\Models\Worker;
@@ -89,16 +89,54 @@ class WorkerJobController extends Controller
             'image' => ['required_if:status,completed', 'image', 'mimes:jpg,jpeg,png,webp', 'max:'.config('ai90.worker.output_max_size_kb')],
             'error_code' => ['required_if:status,failed', 'nullable', 'string', 'max:50', 'regex:/^[A-Z0-9_]+$/'],
             'error_message' => ['nullable', 'string', 'max:490'],
+            // Ảnh bìa lô phối đồ: hook bìa -> tiêu đề lô (ảnh outfit sau chọn outfit theo tiêu đề này)
+            'title' => ['nullable', 'string', 'max:255'],
         ]);
 
         $worker = $this->worker($request);
         if ($data['status'] === 'completed') {
             $this->jobs->complete($worker, $output, $data['image']);
+            $this->saveBatchTitle($output, $data['title'] ?? null);
         } else {
             $this->jobs->fail($worker, $output, $data['error_code'], $data['error_message'] ?? null);
         }
 
         return response()->json(['data' => ['id' => $output->id, 'status' => $output->fresh()->status]]);
+    }
+
+    /** Ảnh bìa lô phối đồ xong kèm title -> tiêu đề lô (bỏ dấu * tô màu từ khoá). Ảnh khác: bỏ qua title. */
+    private function saveBatchTitle(GenerationOutput $output, ?string $title): void
+    {
+        $title = trim(str_replace('*', '', (string) $title));
+        if ($title === '' || $output->generation?->kind !== Generation::KIND_OUTFIT_COVER) {
+            return;
+        }
+        $image = ImageBatchImage::query()->where('output_id', $output->id)->first();
+        if ($image) {
+            ImageBatch::query()->whereKey($image->image_batch_id)->update(['title' => $title]);
+        }
+    }
+
+    /**
+     * GET /api/v1/jobs/{id}/batch: lô của job worker đang / đã làm: id, title (hook bìa; null khi bìa chưa xong / lỗi),
+     * position, total. Ảnh outfit đọc tiêu đề lô để chọn outfit đúng chủ đề.
+     */
+    public function batch(Request $request, int $id): JsonResponse
+    {
+        $output = GenerationOutput::query()->whereKey($id)->where('worker_id', $this->worker($request)->id)->firstOrFail();
+        $image = ImageBatchImage::query()->where('output_id', $output->id)->firstOrFail();
+
+        return response()->json(['data' => $this->batchInfo($image)]);
+    }
+
+    private function batchInfo(ImageBatchImage $image): array
+    {
+        return [
+            'id' => $image->image_batch_id,
+            'title' => ImageBatch::query()->whereKey($image->image_batch_id)->value('title'),
+            'position' => $image->position,
+            'total' => ImageBatchImage::query()->where('image_batch_id', $image->image_batch_id)->count(),
+        ];
     }
 
     /** POST /api/v1/jobs/{id}/extend: gia hạn job đang làm (WorkerJobService::extend). */
@@ -121,11 +159,8 @@ class WorkerJobController extends Controller
         return [
             'id' => $output->id,
             'kind' => $generation->kind,
-            'batch' => $image ? [
-                'id' => $image->image_batch_id,
-                'position' => $image->position,
-                'total' => ImageBatchImage::query()->where('image_batch_id', $image->image_batch_id)->count(),
-            ] : null,
+            // batch.title: tiêu đề lô = hook bìa (ảnh bìa làm trước); ảnh outfit chọn outfit theo chủ đề này
+            'batch' => $image ? $this->batchInfo($image) : null,
             'user_id' => $generation->user_id,
             'product' => $product ? [
                 'id' => $product->id,
@@ -138,25 +173,10 @@ class WorkerJobController extends Controller
             // chụp cận giày làm ảnh giày cho bìa + ChatGPT thay cho ảnh sản phẩm gốc (yêu cầu người dùng 2026-11-14)
             'history_images' => $product ? $this->historyImages($generation->user_id, $product->id, $media) : [],
             // false: lô không dùng ảnh sản phẩm (công tắc trên /batches/auto) -> worker vẽ theo ảnh gốc outfit + người mẫu,
-            // ảnh bìa dựng từ ảnh outfit đã xong của lô (outfit_images)
+            // ảnh bìa cũng vẽ mới (outfit khác các ảnh outfit của lô)
             'use_product' => (int) $generation->product_id > 0,
-            'outfit_images' => $image && $generation->kind === Generation::KIND_OUTFIT_COVER
-                ? $this->batchOutfitImages($image->image_batch_id, $media) : [],
             'logo' => $this->logo($generation, $media),
         ];
-    }
-
-    /** Ảnh outfit đã xong của lô (vị trí > 1, theo vị trí): nguồn ảnh bìa của lô không dùng sản phẩm. */
-    private function batchOutfitImages(int $batchId, MediaStorage $media): array
-    {
-        return ImageBatchImage::query()->where('image_batch_id', $batchId)->where('position', '>', 1)
-            ->with('output')->orderBy('position')->get()
-            ->filter(fn (ImageBatchImage $i) => $i->output?->status === OutputStatus::Completed && $i->output->image_path)
-            ->map(fn (ImageBatchImage $i) => [
-                'position' => $i->position,
-                'output_id' => $i->output->id,
-                'url' => $media->url($i->output->image_path),
-            ])->values()->all();
     }
 
     public const HISTORY_IMAGES = 30;

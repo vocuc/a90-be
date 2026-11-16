@@ -44,6 +44,8 @@ class ImageBatchResource extends JsonResource
 
         return [
             'id' => $this->id,
+            // Tiêu đề lô: lô phối đồ = hook bìa do worker gửi kèm ảnh bìa; null khi chưa có
+            'title' => $this->title,
             'status' => $counts['generating_count'] > 0 ? 'generating' : 'completed',
             // Lô tạo tự động (note/auto-tao-lo.txt ở repo frontend): sản phẩm / nhóm null khi lô tạo tay hoặc đã xoá
             'source' => $this->source ?? ImageBatch::SOURCE_MANUAL,

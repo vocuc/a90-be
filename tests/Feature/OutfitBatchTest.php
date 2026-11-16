@@ -9,6 +9,7 @@ use App\Models\ImageBatch;
 use App\Models\Product;
 use App\Models\User;
 use App\Models\Worker;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -65,7 +66,7 @@ class OutfitBatchTest extends TestCase
         $this->createBatches($user, $worker, 1)->assertCreated()->assertJsonPath('data.batches.0.product.id', $b->id);
     }
 
-    public function test_without_product_creates_count_batches_and_cover_waits_for_outfit(): void
+    public function test_without_product_cover_first_sets_batch_title_for_outfit_jobs(): void
     {
         $user = $this->buyer(); // không có sản phẩm nào vẫn tạo được
         [$worker, $token] = $this->outfitWorker($user);
@@ -82,34 +83,55 @@ class OutfitBatchTest extends TestCase
         $this->assertSame(0, $batch->images->first()->generation->product_id);
         $this->assertSame([], $batch->images->first()->generation->input_paths);
 
-        // Bìa (ảnh 1) chưa được giao khi lô chưa có ảnh outfit nào xong -> worker nhận ảnh outfit trước
-        $job = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data');
-        $this->assertSame('outfit', $job['kind']);
-        $this->assertFalse($job['use_product']);
-        $this->assertNull($job['product']);
-        $this->assertSame([], $job['history_images']);
-        $this->completeJob($token, $job['id'])->assertOk();
-
-        // Lô 1 đã có 1 ảnh outfit xong -> giờ giao bìa lô 1, kèm ảnh outfit đã xong của lô
+        // Bìa làm TRƯỚC (2026-11-16): ảnh outfit chưa được giao khi bìa cùng lô còn đang chờ / đang tạo
         $cover = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data');
         $this->assertSame('outfit_cover', $cover['kind']);
         $this->assertSame($batch->id, $cover['batch']['id']);
-        $this->assertCount(1, $cover['outfit_images']);
-        $this->assertSame(2, $cover['outfit_images'][0]['position']);
-        $this->completeJob($token, $cover['id'])->assertOk();
+        $this->assertNull($cover['batch']['title']);
+        $this->assertFalse($cover['use_product']);
+        $this->assertNull($cover['product']);
+        $this->assertSame([], $cover['history_images']);
+        $cover2 = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data');
+        $this->assertSame('outfit_cover', $cover2['kind']);
+        $this->assertNotSame($batch->id, $cover2['batch']['id']);
+        $this->withToken($token)->getJson('/api/v1/jobs')->assertNoContent(); // 2 bìa đang làm -> chưa có ảnh outfit
 
-        // Ảnh outfit còn lại của lô 1 lỗi hết: bìa vẫn đã xong; lô 2: outfit lỗi hết thì bìa vẫn được giao (worker báo lỗi)
-        $next = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data');
-        $this->assertSame('outfit', $next['kind']);
-        $this->failJob($token, $next['id'], 'CHATGPT_LIMIT')->assertOk();
-        foreach ([1, 2] as $_) {
+        // Bìa xong kèm hook -> tiêu đề lô (bỏ dấu *); ảnh outfit của lô nhận tiêu đề qua payload và GET /jobs/{id}/batch
+        $this->withToken($token)->post("/api/v1/jobs/{$cover['id']}", [
+            'status' => 'completed', 'title' => '1 chiếc *short trắng* 3 cách phối',
+            'image' => UploadedFile::fake()->image('cover.png', 32, 32),
+        ], ['Accept' => 'application/json'])->assertOk();
+        $this->assertSame('1 chiếc short trắng 3 cách phối', $batch->fresh()->title);
+        $job = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data');
+        $this->assertSame('outfit', $job['kind']);
+        $this->assertSame($batch->id, $job['batch']['id']);
+        $this->assertSame('1 chiếc short trắng 3 cách phối', $job['batch']['title']);
+        $this->withToken($token)->getJson("/api/v1/jobs/{$job['id']}/batch")->assertOk()
+            ->assertJsonPath('data.title', '1 chiếc short trắng 3 cách phối')->assertJsonPath('data.total', 3);
+        $this->actingAs($user)->getJson("/api/v1/image-batches/{$batch->id}")->assertOk()
+            ->assertJsonPath('data.title', '1 chiếc short trắng 3 cách phối');
+
+        // Title gửi kèm ảnh outfit bị bỏ qua (chỉ ảnh bìa đặt tiêu đề lô)
+        $this->withToken($token)->post("/api/v1/jobs/{$job['id']}", [
+            'status' => 'completed', 'title' => 'khác',
+            'image' => UploadedFile::fake()->image('o.png', 32, 32),
+        ], ['Accept' => 'application/json'])->assertOk();
+        $this->assertSame('1 chiếc short trắng 3 cách phối', $batch->fresh()->title);
+
+        // Bìa lô 2 lỗi -> ảnh outfit lô 2 vẫn được giao, không có tiêu đề (worker tự chọn chủ đề)
+        $this->failJob($token, $cover2['id'], 'CHATGPT_LIMIT')->assertOk();
+        $ids = [];
+        foreach ([1, 2, 3] as $_) {
             $j = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data');
             $this->assertSame('outfit', $j['kind']);
+            $ids[] = $j['batch']['id'];
+            if ($j['batch']['id'] !== $batch->id) {
+                $this->assertNull($j['batch']['title']);
+            }
             $this->failJob($token, $j['id'], 'CHATGPT_LIMIT')->assertOk();
         }
-        $last = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data');
-        $this->assertSame('outfit_cover', $last['kind']);
-        $this->assertSame([], $last['outfit_images']);
+        $this->assertContains($cover2['batch']['id'], $ids);
+        $this->withToken($token)->getJson('/api/v1/jobs')->assertNoContent();
     }
 
     public function test_requires_outfit_worker(): void
