@@ -20,4 +20,15 @@ class AiCreativeConfig extends Model
     {
         return $this->belongsTo(AiCreative::class, 'creative_id');
     }
+
+    public function promptTemplate(): BelongsTo
+    {
+        return $this->belongsTo(PromptTemplate::class, 'prompt_template_id');
+    }
+
+    /** Prompt riêng của Creative (không gồm phần Template). Creative cũ chưa có cột này thì prompt_template là của riêng nó. */
+    public function ownPrompt(): string
+    {
+        return (string) ($this->own_prompt_template ?? ($this->prompt_template_id ? '' : $this->prompt_template));
+    }
 }

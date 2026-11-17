@@ -161,21 +161,49 @@ class CreativeTemplate
                 : 'Hiện chưa cho phép dùng nguyên liệu ẩn.');
         }
 
-        $prompt = (string) $prompt;
-        if (trim($prompt) === '') {
-            $add('prompt_template', 'Chưa viết Prompt Template.');
-        } elseif (mb_strlen($prompt) > self::MAX_PROMPT_LENGTH) {
-            $add('prompt_template', 'Prompt tối đa '.number_format(self::MAX_PROMPT_LENGTH, 0, ',', '.').' ký tự.');
-        }
-        foreach (self::variables($prompt) as $variable) {
-            if (! isset($keys[$variable])) {
-                $add('prompt_template', "Prompt dùng biến {{{$variable}}} chưa khai báo trong Template.");
-            } elseif (in_array($keys[$variable], ['image', self::HIDDEN_IMAGE], true)) {
-                $add('prompt_template', "{{{$variable}}} là trường ảnh — ảnh được gửi kèm, không chèn vào prompt như chữ.");
-            }
+        if ($message = self::promptError($fields, $prompt)) {
+            $add('prompt_template', $message);
         }
 
         return $errors;
+    }
+
+    /**
+     * Lỗi đầu tiên của prompt (đã gộp Template) so với các trường của Creative, null = hợp lệ.
+     * Dùng cả khi sửa Template: kiểm tra lại prompt gộp của mọi Creative đang dùng nó.
+     */
+    public static function promptError(array $fields, ?string $prompt): ?string
+    {
+        $keys = [];
+        foreach ($fields as $field) {
+            if (is_array($field) && is_string($field['key'] ?? null)) {
+                $keys[$field['key']] ??= $field['type'] ?? null;
+            }
+        }
+
+        $prompt = (string) $prompt;
+        if (trim($prompt) === '') {
+            return 'Chưa viết Prompt Template.';
+        }
+        if (mb_strlen($prompt) > self::MAX_PROMPT_LENGTH) {
+            return 'Prompt tối đa '.number_format(self::MAX_PROMPT_LENGTH, 0, ',', '.').' ký tự.';
+        }
+        foreach (self::variables($prompt) as $variable) {
+            if (! array_key_exists($variable, $keys)) {
+                return "Prompt dùng biến {{{$variable}}} chưa khai báo trong Template.";
+            }
+            if (in_array($keys[$variable], ['image', self::HIDDEN_IMAGE], true)) {
+                return "{{{$variable}}} là trường ảnh — ảnh được gửi kèm, không chèn vào prompt như chữ.";
+            }
+        }
+
+        return null;
+    }
+
+    /** Prompt cuối = prompt Template rồi đến prompt riêng của Creative, cách nhau 1 dòng trống. Khớp frontend mergePrompt. */
+    public static function mergePrompt(?string $templatePrompt, ?string $ownPrompt): string
+    {
+        return implode("\n\n", array_filter([trim((string) $templatePrompt), trim((string) $ownPrompt)], fn ($p) => $p !== ''));
     }
 
     /**

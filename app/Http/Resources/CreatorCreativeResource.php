@@ -52,7 +52,10 @@ class CreatorCreativeResource extends JsonResource
                 ])->values(),
                 'config' => [
                     'input_schema' => $this->inputSchema($media),
-                    'prompt_template' => $this->config?->prompt_template,
+                    // Prompt riêng của Creative để sửa; prompt cuối (đã gộp Template) ở full_prompt_template
+                    'prompt_template' => $this->config?->ownPrompt(),
+                    'prompt_template_id' => $this->config?->prompt_template_id,
+                    'full_prompt_template' => $this->config?->prompt_template,
                     'max_outputs' => $this->config?->max_outputs,
                     'default_aspect_ratio' => $this->config?->default_aspect_ratio,
                 ],

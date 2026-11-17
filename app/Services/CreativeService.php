@@ -8,6 +8,7 @@ use App\Models\AiCreative;
 use App\Models\AiCreativeAsset;
 use App\Models\CreatorProfile;
 use App\Models\Hashtag;
+use App\Models\PromptTemplate;
 use App\Models\User;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -15,7 +16,7 @@ use Illuminate\Support\Str;
 
 class CreativeService
 {
-    private const CONFIG_FIELDS = ['input_schema', 'prompt_template', 'max_outputs', 'default_aspect_ratio'];
+    private const CONFIG_FIELDS = ['input_schema', 'prompt_template', 'max_outputs', 'default_aspect_ratio', 'prompt_template_id', 'own_prompt_template'];
 
     public function __construct(
         private SettingService $settings,
@@ -53,7 +54,7 @@ class CreativeService
 
     public function update(AiCreative $creative, array $data): AiCreative
     {
-        $data = $this->prepareTemplate($data);
+        $data = $this->prepareTemplate($data, $creative);
         if (array_key_exists('title', $data)) {
             $data['title'] = $this->titleOrDefault($data['title']);
         }
@@ -195,9 +196,24 @@ class CreativeService
         }
     }
 
-    /** Chuẩn hóa input_schema; tỉ lệ mặc định lấy từ trường tỉ lệ khung hình. */
-    private function prepareTemplate(array $data): array
+    /**
+     * Chuẩn hóa input_schema; tỉ lệ mặc định lấy từ trường tỉ lệ khung hình.
+     * Prompt: lưu prompt riêng (own_prompt_template) và bản gộp với Template (prompt_template) để tạo ảnh.
+     */
+    private function prepareTemplate(array $data, ?AiCreative $creative = null): array
     {
+        if (array_key_exists('prompt_template', $data) || array_key_exists('prompt_template_id', $data)) {
+            $config = $creative?->config;
+            $templateId = array_key_exists('prompt_template_id', $data) ? $data['prompt_template_id'] : $config?->prompt_template_id;
+            $own = array_key_exists('prompt_template', $data) ? (string) $data['prompt_template'] : (string) $config?->ownPrompt();
+            $data['prompt_template_id'] = $templateId;
+            $data['own_prompt_template'] = $own;
+            $data['prompt_template'] = CreativeTemplate::mergePrompt(
+                $templateId ? PromptTemplate::query()->find($templateId)?->prompt() : null,
+                $own,
+            );
+        }
+
         if (empty($data['input_schema'])) {
             return $data;
         }

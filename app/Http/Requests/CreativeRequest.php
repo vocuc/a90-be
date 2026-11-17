@@ -5,6 +5,7 @@ namespace App\Http\Requests;
 use App\Models\AiCreativeAsset;
 use App\Models\AiModel;
 use App\Models\Hashtag;
+use App\Models\PromptTemplate;
 use App\Services\CreativeTemplate;
 use App\Services\SettingService;
 use Closure;
@@ -34,7 +35,10 @@ class CreativeRequest extends FormRequest
             // Form người mua + Prompt Template, luôn gửi cùng nhau (kiểm tra chi tiết ở after()).
             // Tỉ lệ mặc định lấy từ trường tỉ lệ khung hình trong input_schema.
             'input_schema' => [$required, 'array', 'required_with:prompt_template'],
-            'prompt_template' => [$required, 'string', 'required_with:input_schema'],
+            // Prompt riêng của Creative. Chọn Template (prompt_template_id) thì được bỏ trống, prompt cuối = Template + prompt này
+            'prompt_template' => [$this->isMethod('POST') ? 'required_without:prompt_template_id' : 'sometimes', 'nullable', 'string'],
+            'prompt_template_id' => ['sometimes', 'nullable', 'integer',
+                Rule::exists('prompt_templates', 'id')->where('creator_id', $this->user()->id)],
             'category_id' => ['nullable', 'integer', Rule::exists('categories', 'id')->where('is_active', true)],
             'model_id' => [$required, 'integer', Rule::exists('ai_models', 'id')->where('is_active', true)],
             // false (mặc định khi tạo) = private: chỉ Creator thấy, không hiện trên Marketplace
@@ -57,7 +61,7 @@ class CreativeRequest extends FormRequest
                 $settings = app(SettingService::class);
                 $errors = CreativeTemplate::errors(
                     $this->input('input_schema'),
-                    $this->input('prompt_template'),
+                    $this->mergedPrompt(),
                     $this->supportedRatios(),
                     $settings->int('generation.input_max_size_kb'),
                     $settings->int('generation.max_hidden_images'),
@@ -68,6 +72,16 @@ class CreativeRequest extends FormRequest
                 }
             },
         ];
+    }
+
+    /** Prompt cuối cùng sẽ lưu: prompt Template (gửi lên hoặc đang dùng) + prompt riêng (gửi lên hoặc đang có). */
+    private function mergedPrompt(): string
+    {
+        $config = $this->route('creative')?->config;
+        $templateId = $this->has('prompt_template_id') ? $this->input('prompt_template_id') : $config?->prompt_template_id;
+        $own = $this->has('prompt_template') ? (string) $this->input('prompt_template') : (string) $config?->ownPrompt();
+
+        return CreativeTemplate::mergePrompt($templateId ? PromptTemplate::query()->find($templateId)?->prompt() : null, $own);
     }
 
     /**

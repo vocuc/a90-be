@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Creator\CreativeGroupController;
 use App\Http\Controllers\Api\V1\Creator\CreativeImageController;
 use App\Http\Controllers\Api\V1\Creator\ProductController;
 use App\Http\Controllers\Api\V1\Creator\ProfileController;
+use App\Http\Controllers\Api\V1\Creator\PromptTemplateController;
 use App\Http\Controllers\Api\V1\Creator\ShopWorkerController;
 use App\Http\Controllers\Api\V1\Creator\VideoTemplateController;
 use App\Http\Controllers\Api\V1\GenerationController;
@@ -79,6 +80,13 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('creatives/{creative}/publish', [CreativeController::class, 'publish']);
             Route::post('creatives/{creative}/pause', [CreativeController::class, 'pause']);
             Route::post('creatives/{creative}/test', [CreativeController::class, 'test'])->middleware('throttle:generations');
+
+            // Template prompt: các block ghép thành prompt, Creative chọn Template thì prompt = Template + prompt riêng
+            Route::get('prompt-templates', [PromptTemplateController::class, 'index']);
+            Route::post('prompt-templates', [PromptTemplateController::class, 'store']);
+            Route::get('prompt-templates/{template}', [PromptTemplateController::class, 'show'])->whereNumber('template');
+            Route::put('prompt-templates/{template}', [PromptTemplateController::class, 'update'])->whereNumber('template');
+            Route::delete('prompt-templates/{template}', [PromptTemplateController::class, 'destroy'])->whereNumber('template');
 
             // Nguyên liệu ẩn (trường hidden_image): tải ảnh trước, lưu Creative thì gắn vào
             Route::get('template-limits', [CreativeAssetController::class, 'limits']);
