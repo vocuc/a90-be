@@ -19,8 +19,10 @@ class PromptTemplateResource extends JsonResource
             'id' => $this->id,
             'title' => $this->title,
             'blocks' => $this->blocks ?? [],
-            // Prompt đã ghép các block, đứng trước prompt riêng của Creative
+            // Block thường đã ghép, đứng trước prompt riêng của Creative
             'prompt' => $this->prompt(),
+            // Block ghim cuối, đứng sau prompt riêng của Creative
+            'pinned_prompt' => $this->pinnedPrompt(),
             // Số Creative đang dùng
             'creative_count' => $this->configs_count ?? null,
             'created_at' => $this->created_at,

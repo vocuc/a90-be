@@ -208,10 +208,7 @@ class CreativeService
             $own = array_key_exists('prompt_template', $data) ? (string) $data['prompt_template'] : (string) $config?->ownPrompt();
             $data['prompt_template_id'] = $templateId;
             $data['own_prompt_template'] = $own;
-            $data['prompt_template'] = CreativeTemplate::mergePrompt(
-                $templateId ? PromptTemplate::query()->find($templateId)?->prompt() : null,
-                $own,
-            );
+            $data['prompt_template'] = PromptTemplate::mergeFor($templateId ? (int) $templateId : null, $own);
         }
 
         if (empty($data['input_schema'])) {

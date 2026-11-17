@@ -81,7 +81,7 @@ class CreativeRequest extends FormRequest
         $templateId = $this->has('prompt_template_id') ? $this->input('prompt_template_id') : $config?->prompt_template_id;
         $own = $this->has('prompt_template') ? (string) $this->input('prompt_template') : (string) $config?->ownPrompt();
 
-        return CreativeTemplate::mergePrompt($templateId ? PromptTemplate::query()->find($templateId)?->prompt() : null, $own);
+        return PromptTemplate::mergeFor($templateId ? (int) $templateId : null, $own);
     }
 
     /**

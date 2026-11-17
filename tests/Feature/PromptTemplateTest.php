@@ -79,6 +79,40 @@ class PromptTemplateTest extends TestCase
         $this->deleteJson("/api/v1/creator/prompt-templates/{$templateId}")->assertNoContent();
     }
 
+    public function test_pinned_block_goes_after_creative_prompt(): void
+    {
+        $this->actingAs($this->creator());
+
+        $templateId = $this->postJson('/api/v1/creator/prompt-templates', [
+            'title' => 'Có ghim',
+            'blocks' => [
+                ['title' => 'ĐẦU RA', 'content' => 'Không watermark.', 'pinned' => true],
+                ['title' => 'MỤC TIÊU', 'content' => 'Ảnh studio.'],
+            ],
+        ])->assertCreated()
+            ->assertJsonPath('data.prompt', "MỤC TIÊU\nẢnh studio.")
+            ->assertJsonPath('data.pinned_prompt', "ĐẦU RA\nKhông watermark.")
+            ->assertJsonPath('data.blocks.0.pinned', true)
+            ->json('data.id');
+
+        $this->postJson('/api/v1/creator/creatives', [
+            'model_id' => AiModel::query()->firstOrFail()->id,
+            'input_schema' => $this->schema(),
+            'prompt_template' => 'Nền gỗ.',
+            'prompt_template_id' => $templateId,
+        ])->assertCreated()
+            ->assertJsonPath('data.config.full_prompt_template', "MỤC TIÊU\nẢnh studio.\n\nNền gỗ.\n\nĐẦU RA\nKhông watermark.");
+
+        // Chỉ ghim được 1 block
+        $this->putJson("/api/v1/creator/prompt-templates/{$templateId}", [
+            'title' => 'Có ghim',
+            'blocks' => [
+                ['title' => 'A', 'content' => 'a', 'pinned' => true],
+                ['title' => 'B', 'content' => 'b', 'pinned' => true],
+            ],
+        ])->assertStatus(422)->assertJsonValidationErrors(['blocks']);
+    }
+
     public function test_creative_without_template_still_requires_prompt_and_templates_are_private(): void
     {
         $owner = $this->creator();

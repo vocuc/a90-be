@@ -51,15 +51,15 @@ class PromptTemplateController extends Controller
     {
         $template = $this->find($request, $template);
         $data = $this->validated($request);
-        $prompt = PromptTemplate::compose($data['blocks']);
+        $merge = fn (AiCreativeConfig $config) => PromptTemplate::merge($data['blocks'], $config->ownPrompt());
 
-        DB::transaction(function () use ($template, $data, $prompt) {
+        DB::transaction(function () use ($template, $data, $merge) {
             $configs = $template->configs()->with('creative:id,title')->lockForUpdate()->get();
 
             // Prompt gộp của Creative nào lỗi (quá dài, dùng biến Creative không có...) thì không lưu Template
             $broken = $configs->filter(fn (AiCreativeConfig $config) => CreativeTemplate::promptError(
                 $config->input_schema ?? [],
-                CreativeTemplate::mergePrompt($prompt, $config->ownPrompt()),
+                $merge($config),
             ) !== null);
             if ($broken->isNotEmpty()) {
                 throw ValidationException::withMessages([
@@ -70,7 +70,7 @@ class PromptTemplateController extends Controller
 
             $template->update($data);
             $configs->each(fn (AiCreativeConfig $config) => $config->update([
-                'prompt_template' => CreativeTemplate::mergePrompt($prompt, $config->ownPrompt()),
+                'prompt_template' => $merge($config),
             ]));
         });
 
@@ -95,13 +95,19 @@ class PromptTemplateController extends Controller
             'blocks' => ['required', 'array', 'min:1', 'max:'.self::MAX_BLOCKS],
             'blocks.*.title' => ['nullable', 'string', 'max:200'],
             'blocks.*.content' => ['nullable', 'string', 'max:'.CreativeTemplate::MAX_PROMPT_LENGTH],
+            // Block ghim: đứng sau prompt riêng của Creative, tối đa 1 block
+            'blocks.*.pinned' => ['sometimes', 'boolean'],
         ]);
 
         $blocks = array_values(array_map(fn (array $b) => [
             'title' => trim((string) ($b['title'] ?? '')),
             'content' => trim((string) ($b['content'] ?? '')),
+            'pinned' => (bool) ($b['pinned'] ?? false),
         ], $data['blocks']));
-        $prompt = PromptTemplate::compose($blocks);
+        if (count(array_filter($blocks, fn ($b) => $b['pinned'])) > 1) {
+            throw ValidationException::withMessages(['blocks' => 'Chỉ ghim được 1 block xuống cuối.']);
+        }
+        $prompt = PromptTemplate::merge($blocks, null);
         if ($prompt === '') {
             throw ValidationException::withMessages(['blocks' => 'Template cần ít nhất 1 block có nội dung.']);
         }

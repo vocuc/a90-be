@@ -200,10 +200,10 @@ class CreativeTemplate
         return null;
     }
 
-    /** Prompt cuối = prompt Template rồi đến prompt riêng của Creative, cách nhau 1 dòng trống. Khớp frontend mergePrompt. */
-    public static function mergePrompt(?string $templatePrompt, ?string $ownPrompt): string
+    /** Nối các phần prompt khác rỗng, cách nhau 1 dòng trống. Khớp frontend mergePrompt. */
+    public static function mergePrompt(?string ...$parts): string
     {
-        return implode("\n\n", array_filter([trim((string) $templatePrompt), trim((string) $ownPrompt)], fn ($p) => $p !== ''));
+        return implode("\n\n", array_filter(array_map(fn ($p) => trim((string) $p), $parts), fn ($p) => $p !== ''));
     }
 
     /**

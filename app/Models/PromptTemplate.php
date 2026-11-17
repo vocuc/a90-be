@@ -2,13 +2,14 @@
 
 namespace App\Models;
 
+use App\Services\CreativeTemplate;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Template prompt của Creator: các block { title, content } ghép thành một prompt.
- * Creative chọn Template thì prompt cuối = prompt Template + prompt riêng của Creative (CreativeTemplate::mergePrompt).
+ * Template prompt của Creator: các block { title, content, pinned } ghép thành một prompt.
+ * Creative chọn Template thì prompt cuối = block thường + prompt riêng của Creative + block ghim cuối (merge()).
  */
 class PromptTemplate extends Model
 {
@@ -47,8 +48,38 @@ class PromptTemplate extends Model
         return implode("\n\n", $parts);
     }
 
+    /**
+     * Prompt cuối: các block thường + prompt riêng của Creative + block ghim cuối (pinned).
+     * Khớp frontend mergeTemplatePrompt.
+     */
+    public static function merge(array $blocks, ?string $ownPrompt): string
+    {
+        $pinned = fn (array $b) => (bool) ($b['pinned'] ?? false);
+
+        return CreativeTemplate::mergePrompt(
+            self::compose(array_filter($blocks, fn ($b) => ! $pinned($b))),
+            $ownPrompt,
+            self::compose(array_filter($blocks, $pinned)),
+        );
+    }
+
+    /** Prompt cuối của Creative dùng Template $id (null / không tìm thấy = chỉ prompt riêng). */
+    public static function mergeFor(?int $id, ?string $ownPrompt): string
+    {
+        $template = $id ? self::query()->find($id) : null;
+
+        return $template ? self::merge($template->blocks ?? [], $ownPrompt) : CreativeTemplate::mergePrompt($ownPrompt);
+    }
+
+    /** Phần đứng trước prompt riêng của Creative. */
     public function prompt(): string
     {
-        return self::compose($this->blocks ?? []);
+        return self::compose(array_filter($this->blocks ?? [], fn ($b) => ! ($b['pinned'] ?? false)));
+    }
+
+    /** Block ghim: đứng sau prompt riêng của Creative. */
+    public function pinnedPrompt(): string
+    {
+        return self::compose(array_filter($this->blocks ?? [], fn ($b) => (bool) ($b['pinned'] ?? false)));
     }
 }
