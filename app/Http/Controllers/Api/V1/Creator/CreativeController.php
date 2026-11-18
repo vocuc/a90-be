@@ -8,6 +8,8 @@ use App\Http\Resources\CreatorCreativeResource;
 use App\Http\Resources\GenerationResource;
 use App\Models\AiCreative;
 use App\Models\AiCreativeConfig;
+use App\Models\GenerationOutput;
+use App\Enums\OutputStatus;
 use App\Services\CreativeService;
 use App\Services\GenerationInput;
 use App\Services\GenerationService;
@@ -45,6 +47,18 @@ class CreativeController extends Controller
             ->addSelect(['default_aspect_ratio' => AiCreativeConfig::query()
                 ->select('default_aspect_ratio')
                 ->whereColumn('creative_id', 'ai_creatives.id')
+                ->limit(1)])
+            // Ảnh bìa trên thẻ: ảnh dùng được mới nhất chính tài khoản tạo từ Creative (như Lịch sử tạo ảnh), không có thì dùng ảnh bìa
+            ->addSelect(['latest_output_path' => GenerationOutput::query()
+                // Như GenerationOutput::usable() nhưng ghi rõ bảng (generations cũng có cột status)
+                ->where('generation_outputs.status', OutputStatus::Completed)
+                ->whereNotNull('generation_outputs.image_path')
+                ->whereNull('generation_outputs.disabled_at')
+                ->join('generations', 'generations.id', '=', 'generation_outputs.generation_id')
+                ->where('generations.user_id', $request->user()->id)
+                ->whereColumn('generations.creative_id', 'ai_creatives.id')
+                ->selectRaw('COALESCE(generation_outputs.thumb_path, generation_outputs.image_path)')
+                ->orderByDesc('generation_outputs.id')
                 ->limit(1)])
             ->latest('updated_at')
             ->paginate($filters['per_page'] ?? 20);

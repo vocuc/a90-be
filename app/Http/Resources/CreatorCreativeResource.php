@@ -36,7 +36,9 @@ class CreatorCreativeResource extends JsonResource
             'rating_avg' => (float) $this->rating_avg,
             // Chi tiết lấy từ config; danh sách lấy từ cột subquery default_aspect_ratio (CreativeController::index)
             'default_aspect_ratio' => $detailed ? $this->config?->default_aspect_ratio : $this->resource->getAttributes()['default_aspect_ratio'] ?? null,
-            'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),
+            // Danh sách: ảnh mới nhất trong lịch sử tạo của chính tài khoản (cột subquery latest_output_path ở CreativeController::index),
+            // không có thì dùng ảnh bìa của Creative
+            'cover_url' => $media->url(($this->resource->getAttributes()['latest_output_path'] ?? null) ?: $this->images->first()?->thumbPathOrOriginal()),
             // Nhóm tạo lô tự động đang chứa Creative (chỉ có ở danh sách)
             'group' => $this->whenLoaded('groups', fn () => ($group = $this->groups->first()) ? ['id' => $group->id, 'name' => $group->name] : null),
             'published_at' => $this->published_at,
