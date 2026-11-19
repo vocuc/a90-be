@@ -2,7 +2,7 @@
 
 namespace App\Services\Social;
 
-/** AI viết tiêu đề / nội dung / hashtag cho 1 bài đăng từ ảnh và thông tin mẫu. */
+/** AI viết tiêu đề + chọn hashtag cho 1 bài đăng từ ảnh và thông tin mẫu (không viết nội dung: content = ''). */
 interface SocialContentWriter
 {
     /**

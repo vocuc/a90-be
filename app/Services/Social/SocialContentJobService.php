@@ -112,8 +112,8 @@ class SocialContentJobService
     }
 
     /**
-     * Gọi AI cho 1 bài theo cài đặt của shop rồi chuẩn hoá kết quả: cắt theo số ký tự shop đặt, bỏ #tag lẫn trong
-     * nội dung, hashtag chỉ giữ cái có trong kho.
+     * Gọi AI cho 1 bài theo cài đặt của shop rồi chuẩn hoá kết quả: tiêu đề cắt theo số ký tự shop đặt, hashtag chỉ
+     * giữ cái có trong kho. AI KHÔNG viết nội dung: content luôn rỗng (2026-11-19, bài ảnh / video chỉ tiêu đề + hashtag).
      *
      * @return array{title: string, content: string, hashtags: string[]}|null
      */
@@ -160,7 +160,6 @@ class SocialContentJobService
             return null;
         }
 
-        $content = trim(preg_replace('/[ \t]*#[\p{L}\p{N}_]+/u', '', $result['content']));
         $allowed = collect($pool)->keyBy(fn ($name) => Hashtag::slugFor($name));
         $hashtags = collect(SocialPost::normalizeHashtags($result['hashtags']))
             ->map(fn ($name) => $allowed->get(Hashtag::slugFor($name)))
@@ -172,7 +171,8 @@ class SocialContentJobService
 
         return [
             'title' => Str::limit(trim(preg_replace('/\s+/u', ' ', $result['title'])), $titleMax, ''),
-            'content' => mb_substr($content, 0, $contentMax),
+            // AI chỉ viết tiêu đề + hashtag, nội dung để trống (nội dung dài làm TikTok co khung ảnh về 3:4)
+            'content' => '',
             'hashtags' => $hashtags,
         ];
     }

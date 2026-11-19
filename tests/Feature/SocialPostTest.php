@@ -143,7 +143,8 @@ class SocialPostTest extends TestCase
         $post = $this->getPost($user, $id)
             ->assertJsonPath('data.status', 'pending_review')
             ->assertJsonPath('data.hashtags', ['a51', 'AnhSanPham', 'giay', 'dep', 'sale'])
-            ->assertJsonPath('data.content', "Ảnh đẹp mỗi ngày\nThử ngay!")
+            // AI chỉ viết tiêu đề + hashtag: nội dung AI lỡ trả về bị bỏ, để trống
+            ->assertJsonPath('data.content', '')
             ->json('data');
         $this->assertLessThanOrEqual(90, mb_strlen($post['title']));
         $this->assertSame(OutputStatus::Completed, SocialContentJob::query()->sole()->status);
@@ -308,7 +309,7 @@ class SocialPostTest extends TestCase
         $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
             ->assertOk()
             ->assertJsonPath('data.title', 'Tiêu đề mới')
-            ->assertJsonPath('data.content', 'Nội dung mới')
+            ->assertJsonPath('data.content', '')
             ->assertJsonPath('data.hashtags', ['xuhuong']);
 
         $this->assertSame($post->title, $post->fresh()->title, 'Không lưu vào bài');
@@ -417,7 +418,7 @@ class SocialPostTest extends TestCase
 
         $post = $this->getPost($owner, $id)->json('data');
         $this->assertLessThanOrEqual(20, mb_strlen($post['title']));
-        $this->assertLessThanOrEqual(60, mb_strlen($post['content']));
+        $this->assertSame('', $post['content']);
     }
 
     public function test_me_exposes_ai_content_setting(): void
