@@ -88,6 +88,9 @@ class ShopWorkerController extends Controller
             'last_seen_at' => $worker->last_seen_at,
             // Chủ shop tự chạy máy worker nên được xem token; null với worker tạo trước khi lưu token mã hoá
             'token' => $worker->plainToken(),
+            // Worker đăng bài thuộc kênh nào (mọi bài thuộc 1 kênh, a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 5.2)
+            'channel' => ($channel = \App\Models\Channel::query()->where('worker_id', $worker->id)->first(['id', 'name']))
+                ? ['id' => $channel->id, 'name' => $channel->name] : null,
         ];
     }
 }

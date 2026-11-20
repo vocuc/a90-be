@@ -12,6 +12,7 @@
         ['route' => 'admin.generations.index', 'pattern' => 'admin.generations.*', 'icon' => 'fas fa-images', 'label' => 'Lượt tạo ảnh'],
         ['route' => 'admin.workers.index', 'pattern' => 'admin.workers.*', 'icon' => 'fas fa-robot', 'label' => 'Worker'],
         ['header' => 'HỆ THỐNG'],
+        ['route' => 'admin.plan-tokens.index', 'pattern' => 'admin.plan-tokens.*', 'icon' => 'fas fa-key', 'label' => 'Token lập kế hoạch'],
         ['route' => 'admin.settings.edit', 'pattern' => 'admin.settings.*', 'icon' => 'fas fa-cogs', 'label' => 'Cấu hình'],
         ['route' => 'admin.audit-logs.index', 'pattern' => 'admin.audit-logs.*', 'icon' => 'fas fa-history', 'label' => 'Nhật ký hệ thống'],
     ];

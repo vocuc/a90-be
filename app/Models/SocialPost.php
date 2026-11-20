@@ -34,6 +34,9 @@ class SocialPost extends Model
     /** Bài video tạo bằng nút "Tạo video" ở trang Bài đăng. */
     public const SOURCE_VIDEO = 'video';
 
+    /** Sinh từ kỳ kế hoạch của kênh (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 5.9). */
+    public const SOURCE_PLAN = 'plan';
+
     public const TYPE_PHOTO = 'photo';
 
     public const TYPE_VIDEO = 'video';
@@ -271,6 +274,37 @@ class SocialPost extends Model
     public function worker(): BelongsTo
     {
         return $this->belongsTo(Worker::class);
+    }
+
+    public function channel(): BelongsTo
+    {
+        return $this->belongsTo(Channel::class);
+    }
+
+    public function planItem(): BelongsTo
+    {
+        return $this->belongsTo(ContentPlanItem::class, 'plan_item_id');
+    }
+
+    public function overlayJobs(): HasMany
+    {
+        return $this->hasMany(TextOverlayJob::class, 'social_post_id');
+    }
+
+    /**
+     * Mọi bài thuộc 1 kênh (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 5.2): giao bài cho worker nào thì bài
+     * thuộc kênh của worker đó. Worker được chọn luôn đã thuộc kênh (VideoPostService::findWorker kiểm tra).
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (SocialPost $post) {
+            if ($post->worker_id && ($post->isDirty('worker_id') || ! $post->channel_id)) {
+                $channelId = Channel::query()->where('worker_id', $post->worker_id)->value('id');
+                if ($channelId) {
+                    $post->channel_id = $channelId;
+                }
+            }
+        });
     }
 
     /** Bài video: sản phẩm lấy ảnh (null khi chủ shop chọn ảnh ngoài sản phẩm hoặc sản phẩm đã xoá). */

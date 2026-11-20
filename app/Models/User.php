@@ -70,7 +70,13 @@ class User extends Authenticatable
         return $this->hasMany(AiCreative::class, 'creator_id');
     }
 
-    /** Kho hashtag của shop (chủ shop quản lý): AI viết nội dung bài đăng chỉ chọn hashtag trong kho này. */
+    /** Các kênh của shop (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt). */
+    public function channels(): HasMany
+    {
+        return $this->hasMany(Channel::class);
+    }
+
+    /** CŨ - kho hashtag theo shop, chỉ còn để chép sang kênh đầu tiên (nay kho hashtag nằm ở từng kênh). */
     public function shopHashtags(): BelongsToMany
     {
         return $this->belongsToMany(Hashtag::class, 'shop_hashtag', 'owner_id')

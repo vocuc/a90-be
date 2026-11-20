@@ -4,6 +4,7 @@ namespace Tests;
 
 use App\Enums\CreativeStatus;
 use App\Models\AiCreative;
+use App\Models\Channel;
 use App\Models\AiModel;
 use App\Models\Generation;
 use App\Models\User;
@@ -32,6 +33,18 @@ abstract class TestCase extends BaseTestCase
         Storage::fake('media');
         Storage::disk('media')->buildTemporaryUrlsUsing(fn ($path) => "https://media.test/{$path}");
         Http::preventStrayRequests();
+    }
+
+    /** Kênh của $user (worker đăng bài $worker nếu có), cài đặt AI mặc định, ghi đè bằng $attrs. */
+    protected function channelFor(User $user, ?Worker $worker = null, array $attrs = []): Channel
+    {
+        return Channel::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Kênh '.Str::random(5),
+            'worker_id' => $worker?->id,
+            ...Channel::aiDefaults(),
+            ...$attrs,
+        ]);
     }
 
     protected function buyer(): User

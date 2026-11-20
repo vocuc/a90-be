@@ -7,7 +7,7 @@ use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
 use App\Jobs\WriteSocialPostContent;
 use App\Models\Hashtag;
-use App\Models\ShopAiSetting;
+use App\Models\Channel;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
 use App\Models\User;
@@ -120,9 +120,12 @@ class SocialContentJobService
     public function write(SocialPost $post): ?array
     {
         $post->loadMissing(['images.output', 'images.generation.creative.category']);
-        $ownerId = $post->user_id;
-        $pool = User::query()->find($ownerId)?->shopHashtags()->pluck('name')->all() ?? [];
-        $settings = ShopAiSetting::forOwner($ownerId);
+        // Cài đặt AI theo kênh của bài (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 5.2). Bài chưa giao worker
+        // (vừa tạo từ lô / ảnh có sẵn) chưa có kênh: dùng kênh đầu tiên của shop; shop chưa có kênh: mặc định, không hashtag.
+        $channel = $post->channel
+            ?? Channel::query()->where('user_id', $post->user_id)->orderBy('id')->first();
+        $settings = $channel?->aiSettings() ?? [...Channel::aiDefaults(), 'requirements' => '', 'hashtags' => []];
+        $pool = $settings['hashtags'];
         $titleMax = min($settings['title_max'], SocialPost::TITLE_MAX);
         $contentMax = min($settings['content_max'], self::AI_CONTENT_MAX);
         $maxHashtags = config('ai90.social.ai_max_hashtags');
@@ -152,8 +155,9 @@ class SocialContentJobService
         $result = $this->writer->write([
             'creatives' => $creatives->all(),
             'hashtags' => $pool,
-            'samples' => $settings['samples'],
-            'requirements' => $settings['requirements'],
+            // Bài viết mẫu (học giọng văn) đã bỏ: giọng văn nằm trong requirements của kênh
+            'samples' => [],
+            'requirements' => (string) $settings['requirements'],
             'limits' => ['title_max' => $titleMax, 'content_max' => $contentMax, 'hashtags_max' => $maxHashtags],
         ], $images);
         if (! $result) {

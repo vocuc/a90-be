@@ -187,10 +187,11 @@ class SocialPublishJobService
             'hashtags' => $hashtags,
             // Nội dung + dòng hashtag, điền thẳng vào ô nội dung của nền tảng
             'description' => SocialPost::description($post->content, $hashtags),
-            // Theo thứ tự, ảnh đầu là ảnh bìa. Ảnh người dùng đã tắt thì bỏ qua.
+            // Theo thứ tự, ảnh đầu là ảnh bìa. Ảnh người dùng đã tắt thì bỏ qua. Ảnh đã chèn chữ (bài kế hoạch của kênh)
+            // gửi bản đã chèn.
             'images' => $post->images
                 ->filter(fn ($image) => $image->isUsable())
-                ->map(fn ($image) => $this->media->url($image->imagePath()))
+                ->map(fn ($image) => $this->media->url($image->overlay_path ?: $image->imagePath()))
                 ->values()
                 ->all(),
             // Bài video: template để dựng video (khớp theo tên với template Remotion). Bài ảnh: null

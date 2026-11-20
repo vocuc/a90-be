@@ -24,6 +24,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin.session' => EnsureAdminSession::class,
             'creator' => EnsureCreatorProfile::class,
             'worker' => AuthenticateWorker::class,
+            'channel-plan' => \App\Http\Middleware\EnsureChannelPlanToken::class,
+            'full-token' => \App\Http\Middleware\EnsureFullAccessToken::class,
         ]);
 
         // API không chuyển hướng; trang quản trị chuyển về form đăng nhập admin.

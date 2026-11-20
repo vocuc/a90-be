@@ -83,10 +83,11 @@ class SocialPostTest extends TestCase
         return $this->actingAs($user)->getJson("/api/v1/social/posts/{$id}")->assertOk();
     }
 
-    /** @param  string[]  $hashtags */
+    /** Kho hashtag của kênh (kênh đầu tiên của shop, chưa có thì tạo). @param  string[]  $hashtags */
     private function setShopHashtags(User $owner, array $hashtags): void
     {
-        $owner->shopHashtags()->sync(Hashtag::syncPivot($hashtags));
+        $channel = $owner->channels()->orderBy('id')->first() ?? $this->channelFor($owner);
+        $channel->hashtags()->sync(Hashtag::syncPivot($hashtags));
     }
 
     /** Bài đang chờ duyệt từ 1 ảnh có sẵn (không bật AI). */
@@ -335,83 +336,16 @@ class SocialPostTest extends TestCase
             ->assertStatus(409)->assertJsonPath('code', 'AI_CONTENT_DISABLED');
     }
 
-    // ---- Kho hashtag của shop ----
-
-    private function aiSettings(User $owner, array $body): TestResponse
-    {
-        return $this->actingAs($owner)->putJson('/api/v1/creator/ai-content', array_merge([
-            'hashtags' => [],
-            'samples' => [],
-            'title_max' => 90,
-            'content_max' => 2000,
-        ], $body));
-    }
-
-    public function test_shop_owner_manages_ai_content_settings(): void
+    public function test_ai_follows_channel_settings_and_length_limits(): void
     {
         $owner = $this->creator();
-        $this->actingAs($owner)->post('/api/v1/creator/products', [
-            'hashtags' => ['giay', 'ThoiTrang'],
-            'images' => [['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'product_image']],
-        ], ['Accept' => 'application/json'])->assertCreated();
-
-        // Chưa lưu: mặc định
-        $this->actingAs($owner)->getJson('/api/v1/creator/ai-content')
-            ->assertOk()
-            ->assertJsonPath('data.hashtags', [])
-            ->assertJsonPath('data.samples', [])
-            ->assertJsonPath('data.requirements', '')
-            ->assertJsonPath('data.limits.requirements', 1000)
-            ->assertJsonPath('data.title_max', 90)
-            ->assertJsonPath('data.content_max', 2000)
-            ->assertJsonPath('data.product_hashtags', ['giay', 'ThoiTrang'])
-            ->assertJsonPath('data.limits.ai_hashtags', 5);
-
-        $this->aiSettings($owner, [
-            'hashtags' => ['#xuhuong', 'giay', 'GIAY'],
-            'samples' => [['title' => ' Giày mới về ', 'content' => "Siêu êm 👟\nInbox ngay!"], ['content' => 'Mẫu không tiêu đề']],
-            'requirements' => "  Luôn xưng shop\nCuối bài mời theo dõi  ",
-            'title_max' => 40,
-            'content_max' => 300,
-        ])->assertOk()
-            ->assertJsonPath('data.hashtags', ['xuhuong', 'giay'])
-            ->assertJsonPath('data.requirements', "Luôn xưng shop\nCuối bài mời theo dõi")
-            ->assertJsonPath('data.samples.0', ['title' => 'Giày mới về', 'content' => "Siêu êm 👟\nInbox ngay!"])
-            ->assertJsonPath('data.samples.1.title', '')
-            ->assertJsonPath('data.title_max', 40)
-            ->assertJsonPath('data.content_max', 300);
-
-        $this->aiSettings($owner, [
-            'hashtags' => ['có khoảng trắng'],
-            'samples' => [['title' => 'x']],
-            'title_max' => 91,
-            'content_max' => 49,
-        ])->assertStatus(422)->assertJsonValidationErrors(['hashtags.0', 'samples.0.content', 'title_max', 'content_max']);
-        $this->aiSettings($owner, ['samples' => array_fill(0, 11, ['content' => 'x'])])
-            ->assertStatus(422)->assertJsonValidationErrors('samples');
-        $this->aiSettings($owner, ['requirements' => str_repeat('a', 1001)])
-            ->assertStatus(422)->assertJsonValidationErrors('requirements');
-        // Gửi rỗng = xoá yêu cầu
-        $this->aiSettings($owner, ['requirements' => ''])->assertOk()->assertJsonPath('data.requirements', '');
-
-        $this->actingAs($this->buyer())->getJson('/api/v1/creator/ai-content')->assertForbidden();
-    }
-
-    public function test_ai_follows_shop_samples_and_length_limits(): void
-    {
-        $owner = $this->creator();
-        $this->aiSettings($owner, [
-            'samples' => [['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']],
-            'requirements' => 'Luôn xưng shop',
-            'title_max' => 20,
-            'content_max' => 60,
-        ])->assertOk();
+        $this->channelFor($owner, null, ['requirements' => 'Luôn xưng shop', 'title_max' => 20, 'content_max' => 60]);
         $this->aiResult = ['title' => str_repeat('Tiêu đề rất dài ', 5), 'content' => str_repeat('Nội dung dài. ', 20), 'hashtags' => []];
 
         $id = $this->fromImages($owner, [$this->completedImage($owner)], ['ai_content' => true])->json('data.id');
 
         $request = $this->aiCalls[0]['request'];
-        $this->assertSame([['title' => 'Giày mới về', 'content' => 'Siêu êm, inbox ngay!']], $request['samples']);
+        $this->assertSame([], $request['samples'], 'Bài viết mẫu cũ đã bỏ');
         $this->assertSame('Luôn xưng shop', $request['requirements']);
         $this->assertSame(20, $request['limits']['title_max']);
         $this->assertSame(60, $request['limits']['content_max']);
@@ -435,6 +369,8 @@ class SocialPostTest extends TestCase
     {
         [$worker, $token] = Worker::register($name.'-'.Str::random(4), Worker::TYPE_PUBLISH);
         $worker->users()->attach($user->id);
+        // Mọi bài thuộc 1 kênh: worker đăng bài phải thuộc 1 kênh của shop
+        $this->channelFor($user, $worker);
 
         return [$worker, $token];
     }

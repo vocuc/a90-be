@@ -74,6 +74,8 @@ class VideoPostTest extends TestCase
         [$worker, $token] = Worker::register('may-'.Str::random(5), Worker::TYPE_PUBLISH);
         if ($assigned) {
             $worker->users()->attach($shop->id);
+            // Mọi bài thuộc 1 kênh: worker đăng bài phải thuộc 1 kênh của shop
+            $this->channelFor($shop, $worker);
         }
 
         return [$worker, $token];

@@ -6,6 +6,7 @@ use App\Enums\PlatformPublishStatus;
 use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
+use App\Models\Channel;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\Product;
@@ -224,8 +225,14 @@ class VideoPostService
     /** Worker đăng bài đang bật được gắn cho shop; không thì 422 (chọn worker ở trang bài / popup). */
     public function findWorker(User $user, int $workerId): Worker
     {
-        return Worker::query()->assignedTo($user->id, Worker::TYPE_PUBLISH)->find($workerId)
+        $worker = Worker::query()->assignedTo($user->id, Worker::TYPE_PUBLISH)->find($workerId)
             ?? throw ValidationException::withMessages(['worker_id' => 'Worker đăng bài không được gắn cho shop hoặc đang tắt.']);
+        // Mọi bài thuộc 1 kênh (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 5.2): worker phải thuộc 1 kênh của shop
+        if (! Channel::query()->where('user_id', $user->id)->where('worker_id', $worker->id)->exists()) {
+            throw ValidationException::withMessages(['worker_id' => 'Worker "'.$worker->name.'" chưa thuộc kênh nào. Vào Kênh TikTok tạo kênh cho worker này trước.']);
+        }
+
+        return $worker;
     }
 
     /**

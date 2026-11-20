@@ -2,7 +2,9 @@
 
 use App\Http\Controllers\Api\V1\AiModelController;
 use App\Http\Controllers\Api\V1\AuthController;
-use App\Http\Controllers\Api\V1\Creator\AiContentSettingController;
+use App\Http\Controllers\Api\V1\ChannelPlanApiController;
+use App\Http\Controllers\Api\V1\Creator\ChannelContentController;
+use App\Http\Controllers\Api\V1\Creator\ChannelController;
 use App\Http\Controllers\Api\V1\Creator\CreativeAssetController;
 use App\Http\Controllers\Api\V1\Creator\CreativeController;
 use App\Http\Controllers\Api\V1\Creator\CreativeGroupController;
@@ -33,7 +35,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
         Route::post('register', [AuthController::class, 'register'])->middleware('throttle:auth');
         Route::post('login', [AuthController::class, 'login'])->middleware('throttle:auth');
         Route::post('google', [AuthController::class, 'google'])->middleware('throttle:auth');
-        Route::middleware(['auth:sanctum', 'active'])->group(function () {
+        Route::middleware(['auth:sanctum', 'active', 'full-token'])->group(function () {
             Route::post('logout', [AuthController::class, 'logout']);
             Route::get('me', [AuthController::class, 'me']);
         });
@@ -47,7 +49,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     Route::get('creatives/{slug}', [MarketplaceController::class, 'creative']);
     Route::get('creators/{username}', [MarketplaceController::class, 'creator']);
 
-    Route::middleware(['auth:sanctum', 'active'])->group(function () {
+    Route::middleware(['auth:sanctum', 'active', 'full-token'])->group(function () {
 
         // Tạo ảnh
         Route::post('generations', [GenerationController::class, 'store'])->middleware('throttle:generations');
@@ -112,9 +114,33 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('creative-groups/{group}', [CreativeGroupController::class, 'update'])->whereNumber('group');
             Route::delete('creative-groups/{group}', [CreativeGroupController::class, 'destroy'])->whereNumber('group');
 
-            // Trang "AI viết nội dung": kho hashtag, bài viết mẫu, số ký tự tối đa (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend)
-            Route::get('ai-content', [AiContentSettingController::class, 'show']);
-            Route::put('ai-content', [AiContentSettingController::class, 'update']);
+            // Kênh (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt): thay trang "AI viết nội dung" theo shop cũ
+            Route::get('channels', [ChannelController::class, 'index']);
+            Route::post('channels', [ChannelController::class, 'store']);
+            Route::get('channels/post-samples', [ChannelController::class, 'postSamples']);
+            Route::get('channels/{channel}', [ChannelController::class, 'show'])->whereNumber('channel');
+            Route::put('channels/{channel}', [ChannelController::class, 'update'])->whereNumber('channel');
+            Route::delete('channels/{channel}', [ChannelController::class, 'destroy'])->whereNumber('channel');
+            Route::get('channel-workers', [ChannelController::class, 'workers']);
+            // Nội dung kênh: chủ shop xem / duyệt (lệnh /lap-ke-hoach soạn qua /api/v1/channel-plan)
+            Route::get('channels/{channel}/lineups', [ChannelContentController::class, 'lineups'])->whereNumber('channel');
+            Route::put('channels/{channel}/lineups/{lineup}', [ChannelContentController::class, 'updateLineup'])->whereNumber(['channel', 'lineup']);
+            Route::post('channels/{channel}/lineups/{lineup}/{decision}', [ChannelContentController::class, 'decideLineup'])
+                ->whereNumber(['channel', 'lineup'])->whereIn('decision', ['approve', 'reject']);
+            Route::get('channels/{channel}/text-templates', [ChannelContentController::class, 'textTemplates'])->whereNumber('channel');
+            Route::put('channels/{channel}/text-templates/{template}', [ChannelContentController::class, 'updateTextTemplate'])->whereNumber(['channel', 'template']);
+            Route::post('channels/{channel}/text-templates/{template}/{decision}', [ChannelContentController::class, 'decideTextTemplate'])
+                ->whereNumber(['channel', 'template'])->whereIn('decision', ['approve', 'reject']);
+            Route::get('channels/{channel}/plans', [ChannelContentController::class, 'plans'])->whereNumber('channel');
+            Route::get('channels/{channel}/plans/{plan}', [ChannelContentController::class, 'plan'])->whereNumber(['channel', 'plan']);
+            Route::post('channels/{channel}/plans/{plan}/{decision}', [ChannelContentController::class, 'decidePlan'])
+                ->whereNumber(['channel', 'plan'])->whereIn('decision', ['approve', 'cancel']);
+            Route::put('channels/{channel}/plans/{plan}/items/{item}', [ChannelContentController::class, 'updateItem'])->whereNumber(['channel', 'plan', 'item']);
+            Route::post('channels/{channel}/plans/{plan}/items/{item}/cancel', [ChannelContentController::class, 'cancelItem'])->whereNumber(['channel', 'plan', 'item']);
+            Route::get('channels/{channel}/calendar', [ChannelContentController::class, 'calendar'])->whereNumber('channel');
+            Route::put('channel-posts/{post}/overlays', [ChannelContentController::class, 'updateOverlays'])->whereNumber('post');
+            Route::post('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');
+            Route::delete('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');
 
             // Quản lý video template (note/quan-ly-video-template.txt ở repo frontend)
             Route::get('video-templates', [VideoTemplateController::class, 'index']);
@@ -207,6 +233,8 @@ Route::prefix('v1/jobs')->middleware('worker')->group(function () {
 // (note/gop-luong-dang-bai.txt ở repo frontend)
 Route::prefix('v1/post-jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerPostJobController::class, 'next']);
+    // Job chèn chữ (type overlay, a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 5.11)
+    Route::post('overlay/{id}', [WorkerPostJobController::class, 'submitOverlay'])->whereNumber('id');
     Route::post('{id}', [WorkerPostJobController::class, 'submit'])->whereNumber('id');
 });
 
@@ -215,3 +243,14 @@ Route::get('v1/video-images', [WorkerVideoImageController::class, 'index'])->mid
 
 // Máy làm template (D:ideo-tmp, npm run sync-templates) đồng bộ danh sách template vào shop worker được gắn (tài khoản tạo video)
 Route::put('v1/video-templates/sync', [WorkerVideoTemplateController::class, 'sync'])->middleware('worker');
+
+// Lệnh /lap-ke-hoach (skill FlowKit): token admin ability channel-plan, đọc / ghi kênh mọi shop
+// (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 6.2)
+Route::prefix('v1/channel-plan')->middleware(['throttle:api', 'auth:sanctum', 'active', 'channel-plan'])->group(function () {
+    Route::get('channels/{channel}/context', [ChannelPlanApiController::class, 'context'])->whereNumber('channel');
+    Route::put('channels/{channel}/persona', [ChannelPlanApiController::class, 'persona'])->whereNumber('channel');
+    Route::post('channels/{channel}/lineups', [ChannelPlanApiController::class, 'lineup'])->whereNumber('channel');
+    Route::post('channels/{channel}/text-templates', [ChannelPlanApiController::class, 'textTemplates'])->whereNumber('channel');
+    Route::post('channels/{channel}/plans/{plan}/items', [ChannelPlanApiController::class, 'submitPlan'])->whereNumber(['channel', 'plan']);
+    Route::post('posts/{post}/redo', [ChannelPlanApiController::class, 'redo'])->whereNumber('post');
+});
