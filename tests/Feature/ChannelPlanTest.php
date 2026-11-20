@@ -310,6 +310,35 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(0, SocialPost::query()->where('channel_id', $this->channel->id)->count());
     }
 
+    public function test_rejecting_template_in_use_moves_posts_to_another_approved_template(): void
+    {
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$this->item(0, $refs)]])->assertOk();
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
+        $used = $this->channel->textTemplates()->firstOrFail();
+
+        // Không còn template đã duyệt nào khác: chặn, bài giữ nguyên
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$used->id}/reject")
+            ->assertStatus(409)->assertJsonPath('code', 'TEXT_TEMPLATE_IN_USE');
+        $this->assertSame('approved', $used->fresh()->status);
+
+        // Có template khác đã duyệt: bỏ được, bài chuyển sang template đó và chèn chữ lại
+        $other = $this->channel->textTemplates()->create(['name' => 'Khác', 'status' => 'approved', 'style' => $used->style]);
+        $oldJob = TextOverlayJob::query()->where('social_post_id', $post->id)->latest('id')->firstOrFail();
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$used->id}/reject")
+            ->assertOk()->assertJsonPath('data.status', 'rejected')->assertJsonPath('data.moved_posts', 1);
+
+        $this->assertSame($other->id, $post->images()->whereNotNull('overlay_text')->value('text_template_id'));
+        $this->assertSame(TextOverlayJob::SUPERSEDED, $oldJob->fresh()->status);
+        $this->assertSame(SocialPostStatus::Generating, $post->fresh()->status);
+        $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')
+            ->assertJsonPath('data.type', 'overlay')
+            ->assertJsonPath('data.request.images.0.text', 'Đập hộp đi chúc Tết 🧧');
+    }
+
     public function test_slots_spread_video_and_skip_past_times(): void
     {
         $this->channel->update(['plan_days' => 1, 'posts_per_day' => 4, 'video_percent' => 50]);

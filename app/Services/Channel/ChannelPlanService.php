@@ -824,6 +824,49 @@ class ChannelPlanService
         });
     }
 
+    /**
+     * Chủ shop bỏ (từ chối) 1 template chữ: bài chưa được worker nhận đang dùng template đó chuyển sang template đã duyệt
+     * khác của kênh rồi chèn chữ lại; bài kế hoạch chưa duyệt cũng đổi template. Không còn template đã duyệt nào khác mà
+     * template đang được dùng -> 409 (để bài không mất kiểu chữ). Trả số bài đăng đã chuyển.
+     */
+    public function retireTemplate(Channel $channel, ChannelTextTemplate $template): int
+    {
+        return DB::transaction(function () use ($channel, $template) {
+            $postIds = SocialPostImage::query()
+                ->where('text_template_id', $template->id)
+                ->whereNotNull('overlay_text')
+                ->whereHas('post', fn ($q) => $q->where('channel_id', $channel->id)
+                    ->whereIn('status', [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued]))
+                ->distinct()->pluck('social_post_id');
+            $items = ContentPlanItem::query()->where('text_template_id', $template->id)->where('status', ContentPlanItem::DRAFT)
+                ->whereHas('plan', fn ($q) => $q->where('channel_id', $channel->id));
+            $replacement = $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED)
+                ->whereKeyNot($template->id)->orderBy('id')->value('id');
+
+            if (($postIds->isNotEmpty() || (clone $items)->exists()) && ! $replacement) {
+                throw new BusinessException('TEXT_TEMPLATE_IN_USE',
+                    'Template này đang được '.$postIds->count().' bài chưa đăng dùng. Duyệt thêm 1 template khác trước khi bỏ template này.', 409);
+            }
+
+            $template->update(['status' => ChannelTextTemplate::REJECTED]);
+            if (! $replacement) {
+                return 0;
+            }
+            $items->update(['text_template_id' => $replacement]);
+            foreach ($postIds as $postId) {
+                $post = SocialPost::query()->lockForUpdate()->find($postId);
+                if (! $post) {
+                    continue;
+                }
+                $post->images()->where('text_template_id', $template->id)->update(['text_template_id' => $replacement]);
+                $this->overlays->queueForPost($post);
+            }
+            $this->audit->log('channel_text_template.retire', $template, ['moved_posts' => $postIds->count(), 'replacement' => $replacement]);
+
+            return $postIds->count();
+        });
+    }
+
     /** Chủ shop sửa chữ trên ảnh / template chữ của bài -> chèn lại (mục 5.10). */
     public function updateOverlays(SocialPost $post, array $rows): SocialPost
     {

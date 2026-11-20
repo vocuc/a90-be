@@ -102,10 +102,17 @@ class ChannelContentController extends Controller
 
     public function decideTextTemplate(Request $request, int $channel, int $template, string $decision): JsonResponse
     {
-        $model = $this->channel($request, $channel)->textTemplates()->findOrFail($template);
-        $model->update(['status' => $decision === 'approve' ? ChannelTextTemplate::APPROVED : ChannelTextTemplate::REJECTED]);
+        $channelModel = $this->channel($request, $channel);
+        $model = $channelModel->textTemplates()->findOrFail($template);
+        $moved = 0;
+        if ($decision === 'approve') {
+            $model->update(['status' => ChannelTextTemplate::APPROVED]);
+        } else {
+            // Bài đang dùng template này chuyển sang template đã duyệt khác + chèn chữ lại (không để bài mất chữ hook)
+            $moved = $this->plans->retireTemplate($channelModel, $model);
+        }
 
-        return response()->json(['data' => $this->template($model)]);
+        return response()->json(['data' => [...$this->template($model->fresh()), 'moved_posts' => $moved]]);
     }
 
     // ---- Kỳ kế hoạch ----
