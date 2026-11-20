@@ -139,9 +139,11 @@ class ImageBatchService
             $old = DB::transaction(function () use ($user, $batch, $image, $file, $path, $thumbPath) {
                 $image = $batch->images()->lockForUpdate()->findOrFail($image->id);
                 $output = GenerationOutput::query()->lockForUpdate()->findOrFail($image->output_id);
-                if ($output->status !== OutputStatus::Completed) {
-                    throw new BusinessException('IMAGE_NOT_READY', 'Chỉ cắt được ảnh đã tạo xong.', 409);
+                if (! $output->status->isFinal()) {
+                    throw new BusinessException('IMAGE_NOT_READY', 'Ảnh đang được tạo, vui lòng chờ xong rồi cắt / tải ảnh lên.', 409);
                 }
+                // Ảnh tạo lỗi: người dùng tự tải ảnh lên thay thì coi như ảnh đã tạo xong
+                $this->finalizer->recoverFailed($output);
 
                 $old = [$output->image_path, $output->thumb_path];
                 $output->update([

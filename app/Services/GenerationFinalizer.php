@@ -82,6 +82,30 @@ class GenerationFinalizer
         });
     }
 
+    /**
+     * Người dùng tự tải ảnh lên thay cho ảnh tạo lỗi: output thất bại thành hoàn tất, đếm lại generation.
+     * Không tính lượt sử dụng (ảnh không do AI tạo). Gọi trong transaction đã khoá output FOR UPDATE.
+     */
+    public function recoverFailed(GenerationOutput $output): void
+    {
+        if ($output->status !== OutputStatus::Failed) {
+            return;
+        }
+
+        $generation = Generation::query()->lockForUpdate()->findOrFail($output->generation_id);
+
+        $output->update([
+            'status' => OutputStatus::Completed,
+            'error_code' => null,
+            'error_message' => null,
+            'finished_at' => now(),
+        ]);
+
+        $generation->failed_count = max(0, $generation->failed_count - 1);
+        $generation->success_count++;
+        $this->settle($generation);
+    }
+
     private function settle(Generation $generation): void
     {
         if ($generation->success_count + $generation->failed_count >= $generation->quantity) {

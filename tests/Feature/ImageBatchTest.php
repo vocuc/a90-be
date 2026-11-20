@@ -283,6 +283,27 @@ class ImageBatchTest extends TestCase
         $this->assertNull($image->output()->first()->disabled_at);
     }
 
+    public function test_uploading_image_replaces_failed_image(): void
+    {
+        $user = $this->buyer();
+        $id = $this->createBatch($user, [[$this->publishedCreative($this->creator()), 1]])->assertCreated()->json('data.id');
+        $batch = ImageBatch::query()->findOrFail($id);
+        $image = $batch->images()->first();
+        app(\App\Services\GenerationFinalizer::class)->fail($image->output_id, 'MODEL_ERROR', 'Lỗi tạo ảnh');
+
+        $this->actingAs($user)->post("/api/v1/image-batches/{$batch->id}/images/{$image->id}/crop", [
+            'image' => UploadedFile::fake()->image('new.jpg', 300, 400),
+        ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'completed');
+
+        $generation = Generation::query()->findOrFail($image->generation_id);
+        $this->assertSame(1, $generation->success_count);
+        $this->assertSame(0, $generation->failed_count);
+        $this->assertSame('completed', $generation->status->value);
+        $this->assertNull($image->output()->first()->error_code);
+    }
+
     public function test_crop_rejects_busy_image_and_other_users(): void
     {
         $user = $this->buyer();
