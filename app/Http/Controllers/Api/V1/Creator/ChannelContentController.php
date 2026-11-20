@@ -83,6 +83,25 @@ class ChannelContentController extends Controller
         ]);
     }
 
+    /** Chủ shop tự thêm template chữ: được duyệt luôn (do chính chủ shop tạo). */
+    public function storeTextTemplate(Request $request, int $channel): JsonResponse
+    {
+        $channelModel = $this->channel($request, $channel);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'sample_text' => ['nullable', 'string', 'max:150'],
+            ...ChannelTextTemplate::styleRules('style'),
+        ], ['name.required' => 'Đặt tên cho template.']);
+        $model = $channelModel->textTemplates()->create([
+            'name' => trim($data['name']),
+            'sample_text' => isset($data['sample_text']) ? trim($data['sample_text']) : null,
+            'style' => ChannelTextTemplate::cleanStyle($data['style']),
+            'status' => ChannelTextTemplate::APPROVED,
+        ]);
+
+        return response()->json(['data' => $this->template($model)], 201);
+    }
+
     public function updateTextTemplate(Request $request, int $channel, int $template): JsonResponse
     {
         $model = $this->channel($request, $channel)->textTemplates()->findOrFail($template);

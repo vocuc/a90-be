@@ -339,6 +339,20 @@ class ChannelPlanTest extends TestCase
             ->assertJsonPath('data.request.images.0.text', 'Đập hộp đi chúc Tết 🧧');
     }
 
+    public function test_owner_adds_text_template_approved_right_away(): void
+    {
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates", $this->templateBody())
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'approved')
+            ->assertJsonPath('data.style.box_color', '#FFFFFF');
+        $bad = $this->templateBody();
+        $bad['style']['size'] = 50;
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates", $bad)
+            ->assertStatus(422)->assertJsonValidationErrors('style.size');
+        $this->actingAs($this->creator())->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates", $this->templateBody())
+            ->assertNotFound();
+    }
+
     public function test_slots_spread_video_and_skip_past_times(): void
     {
         $this->channel->update(['plan_days' => 1, 'posts_per_day' => 4, 'video_percent' => 50]);

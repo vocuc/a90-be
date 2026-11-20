@@ -128,6 +128,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('channels/{channel}/lineups/{lineup}/{decision}', [ChannelContentController::class, 'decideLineup'])
                 ->whereNumber(['channel', 'lineup'])->whereIn('decision', ['approve', 'reject']);
             Route::get('channels/{channel}/text-templates', [ChannelContentController::class, 'textTemplates'])->whereNumber('channel');
+            Route::post('channels/{channel}/text-templates', [ChannelContentController::class, 'storeTextTemplate'])->whereNumber('channel');
             Route::put('channels/{channel}/text-templates/{template}', [ChannelContentController::class, 'updateTextTemplate'])->whereNumber(['channel', 'template']);
             Route::post('channels/{channel}/text-templates/{template}/{decision}', [ChannelContentController::class, 'decideTextTemplate'])
                 ->whereNumber(['channel', 'template'])->whereIn('decision', ['approve', 'reject']);
