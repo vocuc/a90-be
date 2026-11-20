@@ -353,6 +353,61 @@ class ChannelPlanTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_lookbook_creates_outfit_batch_and_post_waits_for_images(): void
+    {
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'lookbook', 'percent' => 100]]])->assertCreated();
+        $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
+        $this->api('POST', "channels/{$this->channel->id}/text-templates", ['templates' => [$this->templateBody()]])->assertCreated();
+        $this->channel->textTemplates()->update(['status' => 'approved']);
+        $planId = $this->context()['plan']['id'];
+        $lookbook = ['slot_index' => 0, 'sample_key' => 'lookbook', 'hook' => '5 outfit đi chơi Tết',
+            'outfit' => ['count' => 5, 'tags' => ['Đi chơi', 'tet', 'tet']],
+            'title' => 'Bạn chọn outfit số mấy?', 'hashtags' => ['tet2027']];
+
+        // Chưa gắn worker phối đồ / số ảnh sai: từ chối
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $lookbook, [...$lookbook, 'slot_index' => 1, 'hook' => 'khác', 'outfit' => ['count' => 20]],
+            [...$lookbook, 'slot_index' => 2, 'hook' => 'khác nữa', 'outfit' => ['count' => 5]],
+        ]])->json('data.rejected');
+        $this->assertStringContainsString('outfit.tags', implode(' ', $rejected[2]['errors']), 'Thiếu hashtag chủ đề');
+        $this->assertStringContainsString('worker phối đồ', implode(' ', $rejected[0]['errors']));
+        $this->assertStringContainsString('outfit.count', implode(' ', $rejected[1]['errors']));
+
+        [$outfitWorker] = Worker::register('phoi-do-'.Str::random(4), Worker::TYPE_OUTFIT);
+        $outfitWorker->users()->attach($this->shop->id);
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$lookbook]])
+            ->assertOk()->assertJsonPath('data.accepted', [0]);
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+
+        $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
+        $this->assertSame(SocialPostStatus::Generating, $post->status, 'Chờ lô phối đồ tạo ảnh');
+        $this->assertNotNull($post->image_batch_id);
+        $this->assertSame(5, $post->images()->count());
+        $kinds = Generation::query()->whereIn('id', $post->images()->pluck('generation_id'))->orderBy('id')->pluck('kind')->all();
+        $this->assertSame([Generation::KIND_OUTFIT_COVER, ...array_fill(0, 4, Generation::KIND_OUTFIT)], $kinds);
+        $this->assertSame(0, TextOverlayJob::query()->count(), 'Không chèn chữ: bìa đã có hook do worker phối đồ in');
+
+        // Lô có sẵn hook (chủ đề của bài) + hashtag chủ đề, khoá không cho worker đổi
+        $batch = \App\Models\ImageBatch::query()->findOrFail($post->image_batch_id);
+        $this->assertSame('5 outfit đi chơi Tết', $batch->title);
+        $this->assertTrue($batch->hook_locked);
+        $this->assertSame(['dichoi', 'tet'], $batch->outfit_tags);
+
+        // Worker phối đồ nhận job: thấy hook cố định + hashtag; gửi title khác thì A51 giữ nguyên hook
+        $outfitToken = $outfitWorker->regenerateToken();
+        $job = $this->withToken($outfitToken)->getJson('/api/v1/jobs')->assertOk()->json('data');
+        $this->assertTrue($job['batch']['hook_locked']);
+        $this->assertSame('5 outfit đi chơi Tết', $job['batch']['title']);
+        $this->assertSame(['dichoi', 'tet'], $job['batch']['outfit_tags']);
+        $this->withToken($outfitToken)->post("/api/v1/jobs/{$job['id']}", [
+            'status' => 'completed', 'title' => 'Hook khác do worker tự đặt',
+            'image' => UploadedFile::fake()->image('o.png', 32, 32),
+        ], ['Accept' => 'application/json'])->assertOk();
+        $this->assertSame('5 outfit đi chơi Tết', $batch->fresh()->title);
+        // Worker đăng bài chưa nhận được gì cho tới khi ảnh xong
+        $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')->assertNoContent();
+    }
+
     public function test_slots_spread_video_and_skip_past_times(): void
     {
         $this->channel->update(['plan_days' => 1, 'posts_per_day' => 4, 'video_percent' => 50]);

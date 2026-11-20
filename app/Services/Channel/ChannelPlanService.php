@@ -13,12 +13,15 @@ use App\Models\ContentPlanItem;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\Hashtag;
+use App\Models\ImageBatch;
 use App\Models\Product;
 use App\Models\SocialPost;
 use App\Models\SocialPostImage;
 use App\Models\VideoTemplate;
+use App\Models\Worker;
 use App\Services\AuditLogger;
 use App\Services\MediaStorage;
+use App\Services\OutfitBatchService;
 use App\Services\Social\VideoPostService;
 use App\Support\PostSamples;
 use App\Support\VietnamHolidays;
@@ -55,6 +58,7 @@ class ChannelPlanService
         private MediaStorage $media,
         private AuditLogger $audit,
         private TextOverlayService $overlays,
+        private OutfitBatchService $outfitBatches,
     ) {}
 
     // ------------------------------------------------------------------ Context cho lệnh /lap-ke-hoach
@@ -92,6 +96,8 @@ class ChannelPlanService
                     'plan' => $channel->auto_approve_plan,
                 ],
                 'ai' => [...$channel->aiSettings(), 'hashtags_max' => (int) config('ai90.social.ai_max_hashtags')],
+                // Bài viết mẫu lấy ảnh bằng lô phối đồ (vd lookbook) cần worker phối đồ được gắn cho shop
+                'outfit_worker' => Worker::query()->assignedTo($channel->user_id, Worker::TYPE_OUTFIT)->exists(),
             ],
             'missing' => $missing,
             'persona' => $channel->persona ?? (object) [],
@@ -475,6 +481,30 @@ class ChannelPlanService
             $errors[] = 'hook bắt buộc, tối đa 200 ký tự.';
         }
 
+        // Bài viết mẫu lấy ảnh bằng LÔ PHỐI ĐỒ mới (vd lookbook): không chọn ảnh có sẵn, chỉ ghi số ảnh + sản phẩm
+        if (($sample['image_source'] ?? PostSamples::SOURCE_LIBRARY) === PostSamples::SOURCE_OUTFIT_BATCH) {
+            $outfit = $this->validateOutfit($channel, $sample, $raw, $format, $errors);
+            $signature = self::signature($sampleKey, $hook, []);
+            if (in_array($signature, $signatures, true)) {
+                $errors[] = 'Trùng hook với bài lookbook khác của kênh. Đổi hook.';
+            }
+            if ($errors) {
+                return [[], $errors];
+            }
+
+            return [[
+                'sample_key' => $sampleKey,
+                'hook' => $hook,
+                'format' => $format,
+                'video_template_id' => null,
+                'images' => [],
+                'outfit' => $outfit,
+                'text_template_id' => null,
+                ...$this->caption($channel, $raw),
+                '_signature' => $signature,
+            ], []];
+        }
+
         // Ảnh
         $images = array_values(is_array($raw['images'] ?? null) ? $raw['images'] : []);
         $parsed = [];
@@ -563,24 +593,77 @@ class ChannelPlanService
             return [[], $errors];
         }
 
-        // Caption theo cài đặt AI của kênh
-        $pool = collect($channel->hashtags()->pluck('name'))->keyBy(fn ($n) => Hashtag::slugFor($n));
-        $hashtags = collect(SocialPost::normalizeHashtags(is_array($raw['hashtags'] ?? null) ? $raw['hashtags'] : []))
-            ->map(fn ($n) => $pool->get(Hashtag::slugFor($n)))
-            ->filter()->unique()->take((int) config('ai90.social.ai_max_hashtags'))->values()->all();
-
         return [[
             'sample_key' => $sampleKey,
             'hook' => $hook,
             'format' => $format,
             'video_template_id' => $template?->id,
             'images' => $parsed,
+            'outfit' => null,
             'text_template_id' => $textTemplateId,
+            ...$this->caption($channel, $raw),
+            '_signature' => $signature,
+        ], []];
+    }
+
+    /** Caption theo cài đặt AI của kênh: tiêu đề / nội dung cắt theo giới hạn, hashtag chỉ giữ cái trong kho (tối đa N). */
+    private function caption(Channel $channel, array $raw): array
+    {
+        $pool = collect($channel->hashtags()->pluck('name'))->keyBy(fn ($n) => Hashtag::slugFor($n));
+        $hashtags = collect(SocialPost::normalizeHashtags(is_array($raw['hashtags'] ?? null) ? $raw['hashtags'] : []))
+            ->map(fn ($n) => $pool->get(Hashtag::slugFor($n)))
+            ->filter()->unique()->take((int) config('ai90.social.ai_max_hashtags'))->values()->all();
+
+        return [
             'title' => Str::limit(trim(preg_replace('/\s+/u', ' ', (string) ($raw['title'] ?? ''))), min((int) $channel->title_max, SocialPost::TITLE_MAX), ''),
             'content' => Str::limit(trim((string) ($raw['content'] ?? '')), (int) $channel->content_max, ''),
             'hashtags' => $hashtags,
-            '_signature' => $signature,
-        ], []];
+        ];
+    }
+
+    /**
+     * Bài lấy ảnh bằng lô phối đồ: outfit.count = tổng số ảnh của lô (gồm 1 bìa), trong khoảng slide của bài viết mẫu và
+     * giới hạn lô phối đồ; outfit.product_id (không bắt buộc) = sản phẩm đang hoạt động có ảnh của shop. Shop phải được
+     * gắn worker phối đồ. Chỉ bài ảnh, không chèn chữ (bìa đã có hook do worker đặt).
+     *
+     * @return array{count: int, product_id: ?int}
+     */
+    private function validateOutfit(Channel $channel, array $sample, array $raw, string $format, array &$errors): array
+    {
+        if ($format !== ContentPlanItem::FORMAT_PHOTO) {
+            $errors[] = 'Bài lô phối đồ chỉ dùng cho slot ảnh.';
+        }
+        $min = max($sample['slides']['min'], OutfitBatchService::MIN_IMAGES);
+        $max = min($sample['slides']['max'], OutfitBatchService::MAX_IMAGES);
+        $count = (int) ($raw['outfit']['count'] ?? 0);
+        if ($count < $min || $count > $max) {
+            $errors[] = "outfit.count (số ảnh của lô phối đồ, gồm 1 bìa) phải từ {$min} đến {$max}.";
+        }
+        $productId = isset($raw['outfit']['product_id']) ? (int) $raw['outfit']['product_id'] : null;
+        if ($productId && ! Product::query()->where('user_id', $channel->user_id)->active()->whereHas('images')->whereKey($productId)->exists()) {
+            $errors[] = "outfit.product_id {$productId} không phải sản phẩm đang hoạt động (có ảnh) của shop.";
+        }
+        if (! Worker::query()->assignedTo($channel->user_id, Worker::TYPE_OUTFIT)->exists()) {
+            $errors[] = 'Shop chưa được gắn worker phối đồ, không tạo được lô phối đồ.';
+        }
+        // Hashtag chủ đề: worker phối đồ tìm outfit trên OOTD theo các hashtag này (dạng OOTD: không dấu, liền, thường)
+        $tags = collect(is_array($raw['outfit']['tags'] ?? null) ? $raw['outfit']['tags'] : [])
+            ->map(fn ($t) => self::ootdTag((string) $t))->filter()->unique()->values()->all();
+        if (! $tags || count($tags) > self::OUTFIT_TAGS_MAX) {
+            $errors[] = 'outfit.tags (hashtag chủ đề để tìm outfit) cần 1-'.self::OUTFIT_TAGS_MAX.' hashtag.';
+        }
+
+        return ['count' => $count, 'product_id' => $productId ?: null, 'tags' => $tags];
+    }
+
+    public const OUTFIT_TAGS_MAX = 5;
+
+    /** Như Hashtag::normalize của OOTD: "Đi tiệc" -> "ditiec". */
+    public static function ootdTag(string $tag): string
+    {
+        $t = Str::ascii(str_replace(['đ', 'Đ'], 'd', mb_strtolower($tag)));
+
+        return preg_replace('/[^a-z0-9]/', '', $t);
     }
 
     public static function signature(string $sampleKey, string $hook, array $outputIds): string
@@ -676,11 +759,43 @@ class ChannelPlanService
         ]);
         $post->queuePlatforms();
         $post->syncStatus();
+        if ($item->outfit) {
+            // Ảnh tạo bằng lô phối đồ mới: bài chờ ảnh xong (SocialPostService::advanceIfReady) rồi vào hàng chờ đăng
+            $batch = $this->createOutfitBatch($channel, $item->outfit, 'plan-item-'.$item->id, $item->hook);
+            $post->status = SocialPostStatus::Generating;
+            $post->image_batch_id = $batch->id;
+            $post->save();
+            $this->syncImages($post, $this->batchImages($batch), null);
+
+            return $post;
+        }
         $post->save();
         $this->syncImages($post, $item->images, $item->text_template_id);
         $this->overlays->queueForPost($post);
 
         return $post;
+    }
+
+    /** Tạo 1 lô phối đồ cho bài (worker phối đồ đầu tiên được gắn cho shop, chèn logo nếu shop có logo). */
+    private function createOutfitBatch(Channel $channel, array $outfit, string $key, string $hook): ImageBatch
+    {
+        $user = $channel->user()->firstOrFail();
+        $workerId = Worker::query()->assignedTo($user->id, Worker::TYPE_OUTFIT)->orderBy('id')->value('id')
+            ?? throw new BusinessException('OUTFIT_WORKER_REQUIRED', 'Shop chưa được gắn worker phối đồ.', 409);
+        // Có product_id: lô gắn sản phẩm đó (bìa dùng ảnh giày của sản phẩm); không có: lô không gắn sản phẩm
+        // (công tắc "Dùng ảnh sản phẩm" tắt ở luồng tạo lô phối đồ hiện tại)
+        $productId = ! empty($outfit['product_id']) ? (int) $outfit['product_id'] : null;
+        $batches = $this->outfitBatches->create($user, 1, (int) $outfit['count'], (bool) $user->logoPath(), $key, $workerId,
+            $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? []);
+
+        return $batches[0] ?? throw new BusinessException('OUTFIT_NO_PRODUCT', 'Không tạo được lô phối đồ.', 422);
+    }
+
+    /** Ảnh của lô theo thứ tự (bìa trước) dạng [{generation_id, output_id, text}]. */
+    private function batchImages(ImageBatch $batch): array
+    {
+        return $batch->images()->orderBy('position')->get()
+            ->map(fn ($i) => ['generation_id' => $i->generation_id, 'output_id' => $i->output_id, 'text' => null])->all();
     }
 
     /** Ghi lại ảnh của bài theo thứ tự (kèm chữ + template chữ). */
@@ -794,8 +909,14 @@ class ChannelPlanService
             throw ValidationException::withMessages(['item' => $errors]);
         }
 
-        return DB::transaction(function () use ($post, $data) {
+        return DB::transaction(function () use ($post, $data, $channel) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            if ($data['outfit']) {
+                // Làm lại bài lô phối đồ: tạo lô phối đồ MỚI, bài chờ ảnh xong rồi vào hàng chờ đăng
+                $batch = $this->createOutfitBatch($channel, $data['outfit'], 'redo-post-'.$post->id.'-'.now()->timestamp, $data['hook']);
+                $data['images'] = $this->batchImages($batch);
+                $post->image_batch_id = $batch->id;
+            }
             $template = $data['video_template_id'] ? VideoTemplate::query()->find($data['video_template_id']) : null;
             $post->fill([
                 'sample_key' => $data['sample_key'],
@@ -811,9 +932,14 @@ class ChannelPlanService
             $post->syncStatus();
             $post->save();
             $this->syncImages($post, $data['images'], $data['text_template_id']);
-            $this->overlays->queueForPost($post);
+            if ($data['outfit']) {
+                $post->update(['status' => SocialPostStatus::Generating]);
+            } else {
+                $this->overlays->queueForPost($post);
+            }
             if ($post->plan_item_id) {
                 ContentPlanItem::query()->whereKey($post->plan_item_id)->update([
+                    'outfit' => $data['outfit'] ? json_encode($data['outfit']) : null,
                     'sample_key' => $data['sample_key'], 'hook' => $data['hook'], 'images' => json_encode($data['images']),
                     'title' => $data['title'], 'content' => $data['content'], 'hashtags' => json_encode($data['hashtags']),
                 ]);

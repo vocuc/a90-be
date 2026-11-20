@@ -74,8 +74,12 @@ class OutfitBatchService
      * tạo đúng $count lô; worker vẽ outfit theo ảnh gốc outfit OOTD + người mẫu, ảnh bìa dựng từ ảnh outfit đã vẽ của lô
      * (WorkerJobService::claim chỉ giao job bìa khi lô đã có ảnh outfit xong hoặc không còn ảnh outfit nào chờ).
      */
+    /**
+     * $lockedHook / $outfitTags (bài kế hoạch lookbook, 2026-11-21): lô có sẵn tiêu đề = hook, hook_locked = true, worker
+     * không tạo hook mới và tìm outfit theo $outfitTags.
+     */
     public function create(User $user, int $count, int $images, bool $insertLogo, string $idempotencyKey, int $workerId,
-        ?array $productIds = null, bool $useProduct = true): array
+        ?array $productIds = null, bool $useProduct = true, ?string $lockedHook = null, array $outfitTags = []): array
     {
         $lock = Cache::lock("outfit-batch:{$user->id}", 120);
         $lock->block(30);
@@ -96,11 +100,12 @@ class OutfitBatchService
             $creative = $this->systemCreative($user);
             $created = [];
             foreach ($products->values() as $n => $product) {
-                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n) {
+                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags) {
                     $batch = ImageBatch::query()->create([
                         'user_id' => $user->id,
                         'idempotency_key' => "outfit:{$idempotencyKey}:{$n}",
                         'source' => ImageBatch::SOURCE_OUTFIT,
+                        ...($lockedHook !== null ? ['title' => $lockedHook, 'hook_locked' => true, 'outfit_tags' => array_values($outfitTags)] : []),
                     ]);
                     $paths = $product ? $product->images->pluck('path', 'field_key')->all() : [];
                     for ($pos = 1; $pos <= $images; $pos++) {

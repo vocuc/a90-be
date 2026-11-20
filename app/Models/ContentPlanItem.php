@@ -26,6 +26,7 @@ class ContentPlanItem extends Model
         return [
             'scheduled_at' => 'datetime',
             'images' => 'array',
+            'outfit' => 'array',
             'hashtags' => 'array',
         ];
     }

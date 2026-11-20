@@ -122,7 +122,8 @@ class WorkerJobController extends Controller
         }
         $firstOutfit = $generation->kind === Generation::KIND_OUTFIT && $image->position === 2 && (int) $generation->product_id === 0;
         if ($generation->kind === Generation::KIND_OUTFIT_COVER || $firstOutfit) {
-            ImageBatch::query()->whereKey($image->image_batch_id)->update(['title' => $title]);
+            // Lô có hook cố định (bài kế hoạch lookbook): giữ nguyên tiêu đề, không để worker ghi đè
+            ImageBatch::query()->whereKey($image->image_batch_id)->where('hook_locked', false)->update(['title' => $title]);
         }
     }
 
@@ -158,9 +159,15 @@ class WorkerJobController extends Controller
 
     private function batchInfo(ImageBatchImage $image): array
     {
+        $batch = ImageBatch::query()->find($image->image_batch_id, ['id', 'title', 'hook_locked', 'outfit_tags']);
+
         return [
             'id' => $image->image_batch_id,
-            'title' => ImageBatch::query()->whereKey($image->image_batch_id)->value('title'),
+            'title' => $batch?->title,
+            // true: lô có sẵn hook (bài kế hoạch lookbook) -> worker KHÔNG tạo hook, dùng title làm hook bìa;
+            // outfit_tags: hashtag chủ đề để tìm outfit trên OOTD (a90-fe note/xay-kenh-tiktok/bai-viet-mau/lookbook.txt)
+            'hook_locked' => (bool) $batch?->hook_locked,
+            'outfit_tags' => $batch?->outfit_tags ?? [],
             'position' => $image->position,
             'total' => ImageBatchImage::query()->where('image_batch_id', $image->image_batch_id)->count(),
         ];

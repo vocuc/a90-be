@@ -169,8 +169,11 @@ class ChannelContentController extends Controller
             'sample_key' => ['required', 'string'],
             'hook' => ['required', 'string', 'max:200'],
             'video_template_id' => ['nullable', 'integer'],
-            'images' => ['required', 'array', 'min:1', 'max:'.SocialPost::MAX_IMAGES],
+            'images' => ['nullable', 'array', 'max:'.SocialPost::MAX_IMAGES],
             'images.*.ref' => ['required', 'string'],
+            'outfit' => ['nullable', 'array'],
+            'outfit.count' => ['nullable', 'integer'],
+            'outfit.product_id' => ['nullable', 'integer'],
             'images.*.text' => ['nullable', 'string', 'max:150'],
             'text_template_id' => ['nullable', 'integer'],
             'title' => ['nullable', 'string', 'max:'.SocialPost::TITLE_MAX],
@@ -301,6 +304,8 @@ class ChannelContentController extends Controller
             'format' => $i->format,
             'video_template_id' => $i->video_template_id,
             'text_template_id' => $i->text_template_id,
+            // Bài lô phối đồ: ảnh tạo khi duyệt kỳ { count, product_id }
+            'outfit' => $i->outfit,
             'images' => collect($i->images)->map(fn ($img) => [
                 'ref' => ChannelPlanService::ref($img['generation_id'], $img['output_id']),
                 'text' => $img['text'] ?? null,

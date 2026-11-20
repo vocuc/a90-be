@@ -22,6 +22,11 @@ class ImageBatch extends Model
 
     protected $guarded = ['id'];
 
+    protected function casts(): array
+    {
+        return ['hook_locked' => 'boolean', 'outfit_tags' => 'array'];
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

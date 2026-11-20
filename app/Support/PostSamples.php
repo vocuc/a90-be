@@ -59,10 +59,16 @@ final class PostSamples
         return $rules->firstWhere('at', $at) ?? $rules->firstWhere('at', 'each') ?? ['at' => 'each', 'image' => 'any', 'text' => false];
     }
 
+    /** Nguồn ảnh: library = chọn ảnh có sẵn của shop; outfit_batch = tạo lô phối đồ mới khi duyệt kỳ. */
+    public const SOURCE_LIBRARY = 'library';
+
+    public const SOURCE_OUTFIT_BATCH = 'outfit_batch';
+
     private static function sample(string $key, string $name, string $group, string $goal, array $formats, int $min, int $max,
-        array $slideRules, bool $sameProduct, string $guide): array
+        array $slideRules, bool $sameProduct, string $guide, string $imageSource = self::SOURCE_LIBRARY): array
     {
         return [
+            'image_source' => $imageSource,
             'key' => $key,
             'name' => $name,
             'group' => $group,
@@ -120,10 +126,12 @@ final class PostSamples
             ], false, 'Gắn giày với phong cách / tính cách. Người xem tag bạn bè, comment nhóm của mình.'),
 
             // ---- Phối đồ ----
-            self::sample('lookbook', 'Lookbook N outfit', 'outfit', 'save', $both, 3, 9, [
-                self::rule('first', 'outfit', true, 'Hook "N outfit ... "'),
-                self::rule('each', 'outfit', true, 'Chữ ngắn cho từng outfit hoặc để trống (ảnh phối đồ đã có "Outfit N")'),
-            ], false, 'Chuỗi ảnh phối đồ. Kết bằng câu hỏi "Bạn chọn outfit số mấy?".'),
+            // Ảnh lấy bằng LÔ PHỐI ĐỒ mới (người dùng chốt 2026-11-21): bài kế hoạch ghi số ảnh, duyệt kỳ -> tạo lô phối đồ,
+            // worker phối đồ chạy như luồng hiện tại (ảnh 1 = bìa có hook do worker đặt, ảnh 2..N = outfit có "Outfit N")
+            self::sample('lookbook', 'Phối đồ', 'outfit', 'save', $photo, 3, 9, [
+                self::rule('first', 'outfit', false, 'Ảnh bìa lô phối đồ: worker in đúng hook (chủ đề) của bài lên bìa'),
+                self::rule('each', 'outfit', false, 'Ảnh outfit của lô, đã in sẵn "Outfit N"'),
+            ], false, 'Không chọn ảnh có sẵn. Gửi hook = CHỦ ĐỀ cả lô (in lên bìa, worker không tạo hook khác), outfit.tags = 1-5 hashtag chủ đề để worker tìm outfit trên OOTD (vd henho, sangchanh, tet), outfit.count = tổng số ảnh lô (gồm 1 bìa), outfit.product_id nếu muốn lô gắn 1 sản phẩm. Caption: kết bằng câu hỏi "Bạn chọn outfit số mấy?".', 'outfit_batch'),
             self::sample('one_shoe_many_looks', '1 đôi N cách phối', 'outfit', 'save', $photo, 3, 6, [
                 self::rule('first', 'product', true, 'Ảnh đôi giày + hook "1 đôi ... phối N kiểu"'),
                 self::rule('each', 'outfit', true, 'Mỗi outfit có đôi giày cùng kiểu, chữ = dịp / phong cách'),
