@@ -18,6 +18,7 @@ use Illuminate\Http\JsonResponse;
 use App\Services\OutfitBatchService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class CreativeController extends Controller
@@ -34,6 +35,8 @@ class CreativeController extends Controller
             'q' => ['nullable', 'string', 'max:100'],
             'visibility' => ['nullable', Rule::in(['public', 'private'])],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+            // group: creative cùng nhóm liền nhau (trang Quản lý Creative); mặc định: sửa gần nhất trước
+            'sort' => ['nullable', Rule::in(['group'])],
         ]);
 
         $creatives = AiCreative::query()
@@ -60,7 +63,18 @@ class CreativeController extends Controller
                 ->selectRaw('COALESCE(generation_outputs.thumb_path, generation_outputs.image_path)')
                 ->orderByDesc('generation_outputs.id')
                 ->limit(1)])
+            // Mỗi creative thuộc tối đa 1 nhóm. Nhóm theo thứ tự tạo (như trang Nhóm creative), trong nhóm theo vị trí
+            // đã xếp, chưa có nhóm xếp cuối. Sắp ở SQL để phân trang không làm một nhóm bị tách lẫn với nhóm khác.
+            ->when(($filters['sort'] ?? null) === 'group', fn ($q) => $q
+                ->addSelect([
+                    'sort_group_id' => DB::table('creative_group_items')->selectRaw('MIN(creative_group_id)')->whereColumn('creative_id', 'ai_creatives.id'),
+                    'sort_group_position' => DB::table('creative_group_items')->selectRaw('MIN(position)')->whereColumn('creative_id', 'ai_creatives.id'),
+                ])
+                ->orderByRaw('sort_group_id IS NULL')
+                ->orderBy('sort_group_id')
+                ->orderBy('sort_group_position'))
             ->latest('updated_at')
+            ->orderByDesc('id') // updated_at trùng nhau vẫn giữ thứ tự cố định giữa các trang
             ->paginate($filters['per_page'] ?? 20);
 
         return CreatorCreativeResource::collection($creatives);
