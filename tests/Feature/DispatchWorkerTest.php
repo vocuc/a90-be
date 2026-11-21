@@ -54,14 +54,14 @@ class DispatchWorkerTest extends TestCase
     public function test_one_dispatcher_token_takes_topic_and_tag_jobs_by_requested_types(): void
     {
         [$worker, $token] = $this->dispatcher();
-        $this->assertSame(['content', 'topic', 'tag'], $worker->jobTypes());
+        $this->assertSame(['content', 'topic', 'tag', 'plan'], $worker->jobTypes());
         $p = $this->taggableProduct();
 
         // Shop có worker điều phối = có worker lập chủ đề / gắn tag / dựng nội dung
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topic-jobs", ['count' => 3])->assertCreated();
         $this->actingAs($this->shop)->postJson('/api/v1/creator/products/tag-jobs', ['product_ids' => [$p->id]])->assertCreated();
         $this->actingAs($this->shop)->getJson('/api/v1/creator/workers')->assertOk()
-            ->assertJsonPath('data.0.functions', ['content', 'topic', 'tag']);
+            ->assertJsonPath('data.0.functions', ['content', 'topic', 'tag', 'plan']);
 
         // Chỉ hỏi loại còn chỗ: ?types=tag -> việc gắn tag; ?types=image (không làm được) -> không có việc
         $this->worker($token, 'GET', '?types=image')->assertNoContent();

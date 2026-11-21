@@ -28,7 +28,10 @@ class WorkerJob extends Model
     /** Gắn tag bằng AI cho các sản phẩm chủ shop chọn (worker gắn tag). */
     public const TYPE_TAG = 'tag';
 
-    public const TYPES = [self::TYPE_IMAGE, self::TYPE_OUTFIT, self::TYPE_CONTENT, self::TYPE_PUBLISH, self::TYPE_TOPIC, self::TYPE_TAG];
+    /** Lập kỳ kế hoạch mới cho 1 kênh (chủ shop bấm ở tab Kế hoạch, worker chạy skill /lap-ke-hoach). */
+    public const TYPE_PLAN = 'plan';
+
+    public const TYPES = [self::TYPE_IMAGE, self::TYPE_OUTFIT, self::TYPE_CONTENT, self::TYPE_PUBLISH, self::TYPE_TOPIC, self::TYPE_TAG, self::TYPE_PLAN];
 
     public const QUEUED = 'queued';
 

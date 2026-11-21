@@ -11,10 +11,12 @@ use App\Models\ChannelTopic;
 use App\Models\ContentPlan;
 use App\Models\ContentPlanItem;
 use App\Models\GenerationOutput;
+use App\Models\PlanJob;
 use App\Models\SocialPost;
 use App\Models\TopicJob;
 use App\Services\Channel\ChannelPlanService;
 use App\Services\Channel\ChannelTopicService;
+use App\Services\Channel\PlanJobService;
 use App\Services\Channel\TopicJobService;
 use App\Services\MediaStorage;
 use App\Support\PostSamples;
@@ -36,7 +38,49 @@ class ChannelContentController extends Controller
         private MediaStorage $media,
         private ChannelTopicService $topics,
         private TopicJobService $topicJobs,
+        private PlanJobService $planJobs,
     ) {}
+
+    // ---- Lập kế hoạch mới bằng worker (a90-fe note/xay-kenh-tiktok/worker-lap-ke-hoach.txt) ----
+
+    /** -> { plan_worker (shop có worker điều phối lập kế hoạch), job (lượt gần nhất | null), note_max } */
+    public function planJob(Request $request, int $channel): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+
+        return response()->json(['data' => [
+            'plan_worker' => PlanJobService::hasWorker($channel->user_id),
+            'job' => $this->planJobData($this->planJobs->latest($channel)),
+            'note_max' => PlanJob::NOTE_MAX,
+        ]]);
+    }
+
+    /**
+     * Lập kế hoạch mới: { note? } -> 201 { data: job }. 409 PLAN_WORKER_REQUIRED | CHANNEL_NOT_READY | TOPICS_REQUIRED |
+     * PLAN_DRAFT_PENDING (kỳ trước chờ duyệt) | PLAN_JOB_RUNNING.
+     */
+    public function startPlanJob(Request $request, int $channel): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+        $data = $request->validate(['note' => ['nullable', 'string', 'max:'.PlanJob::NOTE_MAX]]);
+
+        return response()->json(['data' => $this->planJobData($this->planJobs->create($channel, $data['note'] ?? null))], 201);
+    }
+
+    private function planJobData(?PlanJob $job): ?array
+    {
+        return $job ? [
+            'id' => $job->id,
+            // queued | processing | completed | failed
+            'status' => $job->status,
+            'note' => $job->payload['note'] ?? null,
+            // { summary, plan_id, plan_status } khi xong
+            'result' => $job->result,
+            'error_message' => $job->error_message,
+            'created_at' => $job->created_at,
+            'finished_at' => $job->finished_at,
+        ] : null;
+    }
 
     // ---- Tuyến nội dung ----
 

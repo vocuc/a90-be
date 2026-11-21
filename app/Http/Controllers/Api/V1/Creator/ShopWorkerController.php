@@ -81,7 +81,7 @@ class ShopWorkerController extends Controller
         return [
             'id' => $worker->id,
             'name' => $worker->name,
-            // image | publish | outfit | content | topic | tag | dispatch (điều phối: content + topic + tag)
+            // image | publish | outfit | content | topic | tag | dispatch (điều phối: content + topic + tag + plan)
             'type' => $worker->type,
             'functions' => match ($worker->type) {
                 Worker::TYPE_IMAGE => ['image'],

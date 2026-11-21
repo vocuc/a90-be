@@ -12,6 +12,7 @@ use App\Models\ImageBatch;
 use App\Models\ContentJob;
 use App\Models\ImageBatchImage;
 use App\Models\ImageJob;
+use App\Models\PlanJob;
 use App\Models\Product;
 use App\Models\SocialPublishJob;
 use App\Models\TagJob;
@@ -19,6 +20,7 @@ use App\Models\TopicJob;
 use App\Models\Worker;
 use App\Models\WorkerJob;
 use App\Services\Channel\ContentJobService;
+use App\Services\Channel\PlanJobService;
 use App\Services\Channel\TagJobService;
 use App\Services\Channel\TopicJobService;
 use App\Services\MediaStorage;
@@ -44,6 +46,7 @@ class WorkerJobController extends Controller
         private SocialPublishJobService $publish,
         private TopicJobService $topics,
         private TagJobService $tags,
+        private PlanJobService $plans,
     ) {}
 
     /**
@@ -57,6 +60,7 @@ class WorkerJobController extends Controller
      *              product_tags } } (worker lập chủ đề, skill Claude /lap-chu-de)
      *   tag:     { request: { products: [{ id, name, prompt_note, cover: { image_id, thumb_url }, ai_label, tags,
      *              tag_sources }], tag_options, label_max } } (worker gắn tag, skill Claude /gan-tag-san-pham)
+     *   plan:    { request: { channel_id, channel_name, note } } (điều phối chạy skill Claude /lap-ke-hoach <id kênh>)
      */
     public function next(Request $request, MediaStorage $media): JsonResponse|Response
     {
@@ -87,6 +91,8 @@ class WorkerJobController extends Controller
                 ? ['id' => $job->id, 'type' => WorkerJob::TYPE_TOPIC, 'request' => $this->topics->request($job)] : null,
             Worker::TYPE_TAG => ($job = $this->tags->claim($worker))
                 ? ['id' => $job->id, 'type' => WorkerJob::TYPE_TAG, 'request' => $this->tags->request($job)] : null,
+            Worker::TYPE_PLAN => ($job = $this->plans->claim($worker))
+                ? ['id' => $job->id, 'type' => WorkerJob::TYPE_PLAN, 'request' => $this->plans->request($job)] : null,
             default => throw new BusinessException('WRONG_WORKER_TYPE', 'Loại worker không nhận việc.', 403),
         };
     }
@@ -121,6 +127,7 @@ class WorkerJobController extends Controller
      *   publish: post_url
      *   topic: topics [{ name, tags }] -> data.result { created, skipped, errors }
      *   tag: items [{ id, image_id, ai_label, tags }] -> data.result { updated, skipped (trường chủ shop giữ), errors }
+     *   plan: summary (báo cáo cuối của Claude) -> data.result { summary, plan_id, plan_status }
      * 409 JOB_NOT_ASSIGNED: việc không còn của worker (quá hạn, bị thay, sai loại).
      */
     public function submit(Request $request, int $id): JsonResponse
@@ -136,7 +143,15 @@ class WorkerJobController extends Controller
             'error_message' => ['nullable', 'string', 'max:490'],
         ];
 
-        if ($job->type === WorkerJob::TYPE_TAG) {
+        if ($job->type === WorkerJob::TYPE_PLAN) {
+            $data = $request->validate([...$base, 'summary' => ['nullable', 'string', 'max:20000']]);
+            if ($data['status'] === 'completed') {
+                $result = $this->plans->complete($worker, $id, $data['summary'] ?? null);
+
+                return response()->json(['data' => ['id' => $id, 'type' => $job->type, 'status' => WorkerJob::COMPLETED, 'result' => $result]]);
+            }
+            $this->plans->fail($worker, $id, $data['error_code'], $data['error_message'] ?? null);
+        } elseif ($job->type === WorkerJob::TYPE_TAG) {
             $data = $request->validate([...$base, 'items' => ['nullable', 'array', 'max:'.TagJob::MAX_PRODUCTS]]);
             if ($data['status'] === 'completed') {
                 $result = $this->tags->complete($worker, $id, $data['items'] ?? []);
@@ -218,6 +233,7 @@ class WorkerJobController extends Controller
                     WorkerJob::TYPE_CONTENT => ContentJob::LEASE_MINUTES,
                     WorkerJob::TYPE_TOPIC => TopicJob::LEASE_MINUTES,
                     WorkerJob::TYPE_TAG => TagJob::LEASE_MINUTES,
+                    WorkerJob::TYPE_PLAN => PlanJob::LEASE_MINUTES,
                     default => null,
                 };
                 if ($minutes) {

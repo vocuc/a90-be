@@ -37,7 +37,7 @@
                                             \App\Models\Worker::TYPE_CONTENT => '— dựng ảnh bài kế hoạch kênh (in chữ, ghép bìa) cho các tài khoản được gắn',
                                             \App\Models\Worker::TYPE_TOPIC => '— lập chủ đề kênh TikTok (skill Claude /lap-chu-de) khi tài khoản được gắn bấm "Xây dựng chủ đề tự động"',
                                             \App\Models\Worker::TYPE_TAG => '— gắn tag sản phẩm bằng AI (skill Claude /gan-tag-san-pham) khi tài khoản được gắn bấm "Gắn tag bằng AI"',
-                                            \App\Models\Worker::TYPE_DISPATCH => '— 1 token / máy: dựng nội dung bài kênh, lập chủ đề, gắn tag sản phẩm cho các tài khoản được gắn (chương trình D:\FlowKit\dieu-phoi, số việc song song đặt ở .env máy)',
+                                            \App\Models\Worker::TYPE_DISPATCH => '— 1 token / máy: dựng nội dung bài kênh, lập chủ đề, gắn tag sản phẩm, lập kế hoạch kênh cho các tài khoản được gắn (chương trình D:\FlowKit\dieu-phoi, số việc song song đặt ở .env máy)',
                                             default => '— shop được gắn chọn worker ở trang bài đăng để đăng bài ảnh / video',
                                         } }}
                                     </span>

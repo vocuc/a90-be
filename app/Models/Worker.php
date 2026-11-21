@@ -46,8 +46,12 @@ class Worker extends Model
      * (a90-fe note/worker-dieu-phoi.txt). Thay cho worker riêng từng loại dựng nội dung / lập chủ đề / gắn tag. */
     public const TYPE_DISPATCH = 'dispatch';
 
-    /** Loại việc worker điều phối làm được (đợt 1, người dùng chốt 2026-11-21). */
-    public const DISPATCH_TYPES = [self::TYPE_CONTENT, self::TYPE_TOPIC, self::TYPE_TAG];
+    /** Lập kế hoạch kênh (skill Claude /lap-ke-hoach) khi chủ shop bấm "Lập kế hoạch mới" (a90-fe
+     * note/xay-kenh-tiktok/worker-lap-ke-hoach.txt). Chỉ worker điều phối làm, không tạo worker riêng loại này. */
+    public const TYPE_PLAN = 'plan';
+
+    /** Loại việc worker điều phối làm được (đợt 1, người dùng chốt 2026-11-21; thêm plan cùng ngày). */
+    public const DISPATCH_TYPES = [self::TYPE_CONTENT, self::TYPE_TOPIC, self::TYPE_TAG, self::TYPE_PLAN];
 
     public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH, self::TYPE_OUTFIT, self::TYPE_CONTENT, self::TYPE_TOPIC, self::TYPE_TAG, self::TYPE_DISPATCH];
 
@@ -112,6 +116,7 @@ class Worker extends Model
             self::TYPE_CONTENT => 'Dựng nội dung',
             self::TYPE_TOPIC => 'Lập chủ đề',
             self::TYPE_TAG => 'Gắn tag sản phẩm',
+            self::TYPE_PLAN => 'Lập kế hoạch',
             self::TYPE_DISPATCH => 'Điều phối',
             default => 'Đăng bài',
         };
