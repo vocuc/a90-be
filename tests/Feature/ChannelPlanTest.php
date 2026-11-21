@@ -340,6 +340,30 @@ class ChannelPlanTest extends TestCase
         $this->assertStringContainsString('qua giờ', implode(' ', $late[0]['errors']));
     }
 
+    public function test_dispatcher_of_shop_takes_content_job_pinned_to_old_worker(): void
+    {
+        // Việc dựng gắn worker "Dựng nội dung" cũ (máy đã tắt): worker điều phối của shop vẫn nhận, việc chuyển sang nó
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$this->item(0, $refs)]])->assertOk();
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        $job = ContentJob::query()->firstOrFail();
+        [$dispatcher, $token] = Worker::register('dieu-phoi-'.Str::random(4), Worker::TYPE_DISPATCH);
+        $dispatcher->users()->attach($this->shop->id);
+        $this->assertNotSame($dispatcher->id, $job->worker_id);
+
+        $this->app['auth']->forgetGuards();
+        $this->withToken($token)->getJson('/api/v1/worker-jobs?types=content')->assertOk()
+            ->assertJsonPath('data.id', $job->id)->assertJsonPath('data.type', 'content');
+        $this->assertSame($dispatcher->id, $job->fresh()->worker_id);
+        // Worker cũ không gửi kết quả được nữa
+        $this->app['auth']->forgetGuards();
+        $this->withToken($this->contentToken)->post("/api/v1/worker-jobs/{$job->id}", [
+            'status' => 'completed', 'files' => [UploadedFile::fake()->image('o.jpg', 8, 8), UploadedFile::fake()->image('p.jpg', 8, 8)],
+        ], ['Accept' => 'application/json'])->assertStatus(409);
+    }
+
     public function test_edit_overlay_text_supersedes_old_job(): void
     {
         $refs = $this->images(2);

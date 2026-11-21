@@ -139,4 +139,34 @@ class ChannelTopicService
             ];
         })->values()->all();
     }
+
+    /** Số hook gần nhất mỗi chủ đề trả cho tab Chủ đề. */
+    public const HOOKS_PER_TOPIC = 50;
+
+    /**
+     * Hook đã viết theo từng chủ đề (tab Chủ đề, người dùng yêu cầu 2026-11-21), mới trước: bài đăng của kênh + bài kế hoạch
+     * chờ duyệt. KHÔNG gửi trong context /lap-ke-hoach (tối ưu token; lệnh đã có recent_posts).
+     *
+     * @return array<int, array<int, array{hook: string, sample_key: ?string, at: ?string, kind: string, status: ?string}>>  topic_id => hooks
+     */
+    public function hooksFor(Channel $channel): array
+    {
+        $posts = DB::table('social_posts')->where('channel_id', $channel->id)->whereNotNull('topic_id')->whereNotNull('hook')
+            ->get(['topic_id', 'hook', 'sample_key', 'scheduled_at as at', 'status'])
+            ->map(fn ($r) => [...(array) $r, 'kind' => 'post']);
+        $items = DB::table('content_plan_items')->join('content_plans', 'content_plans.id', '=', 'content_plan_items.plan_id')
+            ->where('content_plans.channel_id', $channel->id)->where('content_plan_items.status', ContentPlanItem::DRAFT)
+            ->whereNotNull('content_plan_items.topic_id')
+            ->get(['content_plan_items.topic_id', 'content_plan_items.hook', 'content_plan_items.sample_key', 'content_plan_items.scheduled_at as at'])
+            ->map(fn ($r) => [...(array) $r, 'kind' => 'draft', 'status' => null]);
+
+        return $posts->concat($items)->groupBy('topic_id')
+            ->map(fn ($rows) => $rows->sortByDesc('at')->take(self::HOOKS_PER_TOPIC)
+                ->map(fn ($r) => ['hook' => $r['hook'], 'sample_key' => $r['sample_key'],
+                    // Cột DB lưu theo múi giờ app: trả ISO có múi giờ như các API khác
+                    'at' => $r['at'] ? \Carbon\CarbonImmutable::parse($r['at'], config('app.timezone'))->toIso8601String() : null,
+                    'kind' => $r['kind'], 'status' => $r['status']])
+                ->values()->all())
+            ->all();
+    }
 }

@@ -211,6 +211,13 @@ class ProductTagTopicTest extends TestCase
         $this->assertSame(2, SocialPost::query()->where('topic_id', $topic->id)->count());
         $topics = $this->api('GET', "channels/{$this->channel->id}/context")->json('data.topics');
         $this->assertSame(['closeup' => 1, 'this_or_that' => 1], $topics[0]['posts']);
+        // Tab Chủ đề: hook đã viết theo chủ đề (bài đăng), mới trước; context lệnh không có hooks (tối ưu token)
+        $this->assertArrayNotHasKey('hooks', $topics[0]);
+        $tab = $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/topics")->assertOk()->json('data.topics');
+        $withHooks = collect($tab)->firstWhere('id', $topics[0]['id']);
+        $this->assertCount(2, $withHooks['hooks']);
+        $this->assertSame('post', $withHooks['hooks'][0]['kind']);
+        $this->assertNotEmpty($withHooks['hooks'][0]['hook']);
 
         // Chủ shop xem / sửa / tạm tắt chủ đề
         $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/topics")->assertOk()

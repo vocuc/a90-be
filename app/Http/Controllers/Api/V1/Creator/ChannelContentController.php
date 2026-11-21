@@ -328,8 +328,11 @@ class ChannelContentController extends Controller
     {
         $channel = $this->channel($request, $channel);
 
+        // Mỗi chủ đề kèm hooks: hook đã viết theo chủ đề (bài đăng + bài kế hoạch chờ duyệt), mới trước
+        $hooks = $this->topics->hooksFor($channel);
+
         return response()->json(['data' => [
-            'topics' => $this->topics->listFor($channel),
+            'topics' => array_map(fn ($t) => [...$t, 'hooks' => $hooks[$t['id']] ?? []], $this->topics->listFor($channel)),
             'tag_options' => ProductTags::options(),
             'topic_worker' => TopicJobService::hasWorker($channel->user_id),
             'job' => $this->topicJob($this->topicJobs->latest($channel)),

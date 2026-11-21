@@ -65,7 +65,9 @@ class ContentJobService
             return false;
         }
 
-        $workerId = Worker::query()->assignedTo($post->user_id, Worker::TYPE_CONTENT)->orderBy('id')->value('id');
+        // Worker dựng (content / điều phối) của shop hoạt động gần nhất; worker khác của shop vẫn nhận được (claim)
+        $workerId = Worker::query()->assignedTo($post->user_id, Worker::TYPE_CONTENT)
+            ->orderByRaw('last_seen_at IS NULL')->orderByDesc('last_seen_at')->orderBy('id')->value('id');
         if (! $workerId) {
             $post->status = SocialPostStatus::PendingReview;
             $post->last_error = ['code' => self::NO_WORKER_CODE, 'message' => 'Shop chưa được gắn worker dựng nội dung.'];
@@ -81,12 +83,17 @@ class ContentJobService
         return true;
     }
 
-    /** Worker nhận 1 job của mình (cũ nhất trước). Job nhận rồi im lặng quá LEASE_MINUTES được giao lại. */
+    /**
+     * Worker nhận 1 job (cũ nhất trước): job giao cho mình, hoặc job của shop được gắn cho mình (worker dựng nào của shop
+     * cũng nhận được - job từng gắn cứng worker cũ đã tắt / máy không chạy thì kẹt "Đang chuẩn bị", sửa 2026-11-21).
+     * Nhận rồi job chuyển sang worker này. Job nhận rồi im lặng quá LEASE_MINUTES được giao lại.
+     */
     public function claim(Worker $worker): ?ContentJob
     {
         return DB::transaction(function () use ($worker) {
             $job = ContentJob::query()
-                ->where('worker_id', $worker->id)
+                ->where(fn ($q) => $q->where('worker_id', $worker->id)
+                    ->orWhereIn('user_id', DB::table('worker_user')->select('user_id')->where('worker_id', $worker->id)))
                 ->where(fn ($q) => $q->where('status', ContentJob::QUEUED)
                     ->orWhere(fn ($q) => $q->where('status', ContentJob::PROCESSING)
                         ->where('claimed_at', '<', now()->subMinutes(ContentJob::LEASE_MINUTES))))
@@ -96,7 +103,7 @@ class ContentJobService
             if (! $job) {
                 return null;
             }
-            $job->update(['status' => ContentJob::PROCESSING, 'claimed_at' => now(), 'attempts' => $job->attempts + 1,
+            $job->update(['status' => ContentJob::PROCESSING, 'worker_id' => $worker->id, 'claimed_at' => now(), 'attempts' => $job->attempts + 1,
                 'lease_expires_at' => now()->addMinutes(ContentJob::LEASE_MINUTES)]);
 
             return $job;
