@@ -81,9 +81,14 @@ class ShopWorkerController extends Controller
         return [
             'id' => $worker->id,
             'name' => $worker->name,
-            // image | publish
+            // image | publish | outfit | content
             'type' => $worker->type,
-            'functions' => $worker->isImage() ? ['image'] : ['publish', 'video'],
+            'functions' => match ($worker->type) {
+                Worker::TYPE_IMAGE => ['image'],
+                Worker::TYPE_OUTFIT => ['outfit'],
+                Worker::TYPE_CONTENT => ['content'],
+                default => ['publish', 'video'],
+            },
             'online' => (bool) $worker->last_seen_at?->greaterThanOrEqualTo(now()->subMinutes(self::ONLINE_MINUTES)),
             'last_seen_at' => $worker->last_seen_at,
             // Chủ shop tự chạy máy worker nên được xem token; null với worker tạo trước khi lưu token mã hoá
