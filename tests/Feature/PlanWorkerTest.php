@@ -133,7 +133,7 @@ class PlanWorkerTest extends TestCase
         $this->assertSame($draft->id, $res['result']['plan_id']);
 
         // Kỳ hết slot thiếu (slot đã qua giờ) -> PLAN_FULL; kỳ đã huỷ -> PLAN_CLOSED
-        $draft->update(['slots' => [['index' => 0, 'at' => '2026-11-21T08:10:00+07:00', 'format' => 'photo']]]);
+        $draft->update(['start_date' => '2026-11-20', 'days' => 1, 'slots' => [['index' => 0, 'at' => '2026-11-20T12:00:00+00:00', 'format' => 'photo']]]);
         $this->actingAs($this->shop)->postJson($url, ['plan_id' => $draft->id])->assertStatus(409)->assertJsonPath('code', 'PLAN_FULL');
         $draft->update(['status' => ContentPlan::CANCELLED]);
         $this->actingAs($this->shop)->postJson($url, ['plan_id' => $draft->id])->assertStatus(409)->assertJsonPath('code', 'PLAN_CLOSED');

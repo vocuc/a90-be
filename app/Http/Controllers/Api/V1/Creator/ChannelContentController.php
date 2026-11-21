@@ -271,10 +271,11 @@ class ChannelContentController extends Controller
 
     public function cancelItem(Request $request, int $channel, int $plan, int $item): JsonResponse
     {
+        // Nút X: xoá hẳn bài khỏi kỳ (kèm bài đăng chưa được worker nhận). 409 ITEM_PUBLISHING
         $model = $this->channel($request, $channel)->plans()->findOrFail($plan)->items()->findOrFail($item);
-        $this->plans->cancelItem($model);
+        $this->plans->deleteItem($model);
 
-        return response()->json(['data' => $this->item($model->fresh())]);
+        return response()->json(['data' => ['deleted' => true]]);
     }
 
     // ---- Lịch đăng ----

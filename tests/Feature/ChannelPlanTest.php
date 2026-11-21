@@ -288,7 +288,12 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(2, $plans[0]['missing_slots']);
         // Chủ shop huỷ 1 bài -> slot đó cũng thiếu
         $cancelId = ContentPlanItem::query()->where('plan_id', $planId)->where('slot_index', 1)->value('id');
-        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/items/{$cancelId}/cancel")->assertOk();
+        $cancelPost = ContentPlanItem::query()->find($cancelId)->social_post_id;
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/items/{$cancelId}/cancel")
+            ->assertOk()->assertJsonPath('data.deleted', true);
+        // Nút X xoá hẳn bài khỏi kỳ + bài đăng của nó
+        $this->assertNull(ContentPlanItem::query()->find($cancelId));
+        $this->assertNull(SocialPost::query()->find($cancelPost));
         $this->app['auth']->forgetGuards();
 
         // Context chế độ bổ sung: chỉ slot thiếu + bài đang có của kỳ, không tạo kỳ preparing
@@ -312,6 +317,21 @@ class ChannelPlanTest extends TestCase
         $this->assertSame([0, 1, 2], $items->pluck('slot_index')->all());
         $this->assertSame(['posted', 'posted', 'posted'], $items->pluck('status')->all());
         $this->assertSame(3, SocialPost::query()->where('channel_id', $this->channel->id)->count());
+
+        // Chủ shop sửa cấu hình 2 -> 3 bài / ngày: mỗi ngày của kỳ thiếu thêm 1 giờ đăng mới (trong khung giờ, cách bài khác)
+        $this->channel->update(['posts_per_day' => 3]);
+        $missing = $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/plans")->json('data.0.missing_slots');
+        $this->assertSame(3, $missing); // slot 3 cũ + 2 giờ mới
+        $this->app['auth']->forgetGuards();
+        $fill2 = $this->api('GET', "channels/{$this->channel->id}/context?fill_plan={$planId}")->assertOk()->json('data.plan');
+        $this->assertCount(3, $fill2['slots']);
+        $new = collect($fill2['slots'])->where('index', '>', 3)->values();
+        $this->assertCount(2, $new);
+        $res2 = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->item($new[0]['index'], $refs, ['hook' => 'Hook giờ mới', 'topic' => ['name' => 'Đi chơi Tết']]),
+        ]])->assertOk()->json('data');
+        $this->assertSame([$new[0]['index']], $res2['accepted']);
+        $this->channel->update(['posts_per_day' => 2]);
 
         // Slot đã qua giờ không bổ sung được
         $this->travelTo(CarbonImmutable::parse($fill['slots'][2]['at'])->addMinute());

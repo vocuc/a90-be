@@ -78,7 +78,8 @@ class ChannelPlanService
             if (! in_array($fill->status, [ContentPlan::DRAFT, ContentPlan::APPROVED], true)) {
                 throw new BusinessException('PLAN_CLOSED', 'Chỉ bổ sung được kỳ chờ duyệt hoặc đã duyệt.', 409);
             }
-            $plan = $fill;
+            // Tính lại slot theo cấu hình hiện tại (đã đổi số bài / khung giờ) rồi lưu để gửi bài đúng index
+            $plan = $this->refitSlots($fill);
         } elseif (! $draft && ! array_intersect($missing, ['worker', 'time_slots', 'lineup', 'text_templates'])) {
             $plan = $this->preparingPlan($channel);
         }
@@ -140,7 +141,7 @@ class ChannelPlanService
                 'start_date' => $plan->start_date->toDateString(),
                 'days' => $plan->days,
                 // Bổ sung: chỉ slot còn thiếu bài (giờ đăng chưa qua)
-                'slots' => $fill ? $this->missingSlots($fill) : $plan->slots,
+                'slots' => $fill ? $this->missingSlots($plan) : $plan->slots,
                 'expires_at' => $fill ? null : $plan->created_at->addHours(ContentPlan::SLOT_HOLD_HOURS),
                 'fill' => (bool) $fill,
                 'status' => $plan->status,
@@ -157,19 +158,109 @@ class ChannelPlanService
     }
 
     /**
-     * Slot của kỳ còn THIẾU bài: giờ đăng còn sau LEAD_MINUTES và chưa có bài đang dùng (chưa có bài / bài đã huỷ / bài
-     * đăng của slot đã bị xoá). Nút "Tạo bổ sung" giao worker lập kế hoạch soạn bài cho đúng các slot này.
+     * Slot của kỳ còn THIẾU bài, tính theo CẤU HÌNH HIỆN TẠI của kênh (người dùng sửa cấu hình rồi bấm "Tạo bổ sung"):
+     * mỗi ngày của kỳ cần posts_per_day bài; bài đang dùng giữ nguyên giờ; ngày còn thiếu thì dùng lại giờ trống cũ của kỳ
+     * rồi thêm giờ mới trong khung giờ hiện tại (cách bài khác >= MIN_GAP_MINUTES, sau LEAD_MINUTES). Cấu hình giảm số bài
+     * thì giờ trống thừa bị bỏ. Không lưu (đếm cho nút); refitSlots() lưu lại khi worker lấy context bổ sung.
      *
      * @return array<int, array{index: int, at: string, format: string}>
      */
     public function missingSlots(ContentPlan $plan): array
     {
-        $active = $this->activeSlotIndexes($plan);
-        $after = now()->addMinutes(self::LEAD_MINUTES);
+        return $this->fillPlanSlots($plan)['missing'];
+    }
 
-        return collect($plan->slots ?? [])
-            ->filter(fn ($s) => ! in_array((int) $s['index'], $active, true) && CarbonImmutable::parse($s['at'])->gt($after))
-            ->values()->all();
+    /** Lưu lại slot của kỳ = slot có bài + slot thiếu (missingSlots) để gửi bài bổ sung đúng index. */
+    public function refitSlots(ContentPlan $plan): ContentPlan
+    {
+        $fit = $this->fillPlanSlots($plan);
+        $plan->update(['slots' => collect([...$fit['active'], ...$fit['missing']])->sortBy('at')->values()->all()]);
+
+        return $plan;
+    }
+
+    /** @return array{active: array, missing: array} */
+    private function fillPlanSlots(ContentPlan $plan): array
+    {
+        $channel = $plan->channel()->firstOrFail();
+        $activeIdx = $this->activeSlotIndexes($plan);
+        $slots = collect($plan->slots ?? []);
+        $active = $slots->filter(fn ($s) => in_array((int) $s['index'], $activeIdx, true))->values();
+        $tz = config('app.timezone');
+        $dayOf = fn ($s) => CarbonImmutable::parse($s['at'])->setTimezone($tz)->toDateString();
+        $after = now()->addMinutes(self::LEAD_MINUTES);
+        $nextIndex = max([-1, ...$slots->pluck('index')->map(fn ($i) => (int) $i)->all(),
+            ...$plan->items()->pluck('slot_index')->map(fn ($i) => (int) $i)->all()]) + 1;
+        $windows = collect($channel->time_slots ?? [])->sortBy('start')->values();
+        $perDay = (int) $channel->posts_per_day;
+        $missing = [];
+        $start = CarbonImmutable::parse($plan->start_date->toDateString(), $tz);
+        for ($d = 0; $d < $plan->days; $d++) {
+            $day = $start->addDays($d);
+            $date = $day->toDateString();
+            $taken = $active->filter(fn ($s) => $dayOf($s) === $date)->map(fn ($s) => CarbonImmutable::parse($s['at']))->values()->all();
+            $need = $perDay - count($taken);
+            if ($need <= 0) {
+                continue;
+            }
+            $fits = function (CarbonImmutable $at) use (&$taken, $after): bool {
+                if ($at->lte($after)) {
+                    return false;
+                }
+                foreach ($taken as $t) {
+                    if (abs($t->diffInMinutes($at, false)) < self::MIN_GAP_MINUTES) {
+                        return false;
+                    }
+                }
+
+                return true;
+            };
+            // 1. Giờ trống cũ của kỳ trong ngày (giữ giờ đã cấp)
+            foreach ($slots->filter(fn ($s) => ! in_array((int) $s['index'], $activeIdx, true) && $dayOf($s) === $date)->sortBy('at') as $s) {
+                $at = CarbonImmutable::parse($s['at']);
+                if ($need > 0 && $fits($at)) {
+                    $missing[] = $s;
+                    $taken[] = $at;
+                    $need--;
+                }
+            }
+            // 2. Giờ mới: giữa mỗi phần của khung giờ hiện tại (chia posts_per_day vào các khung như computeSlots)
+            if ($need > 0 && $windows->isNotEmpty()) {
+                $per = array_fill(0, $windows->count(), intdiv($perDay, $windows->count()));
+                for ($i = 0; $i < $perDay % $windows->count(); $i++) {
+                    $per[$i]++;
+                }
+                foreach ($windows as $w => $window) {
+                    $from = $day->setTimeFromTimeString($window['start']);
+                    $to = $day->setTimeFromTimeString($window['end']);
+                    $count = max(1, $per[$w]);
+                    $segment = intdiv(max(0, (int) $from->diffInMinutes($to)), $count);
+                    for ($k = 0; $k < $count && $need > 0; $k++) {
+                        $at = $from->addMinutes($segment * $k + intdiv($segment, 2))->second(0);
+                        if ($fits($at)) {
+                            $missing[] = ['index' => $nextIndex++, 'at' => $at->toIso8601String(), 'format' => ContentPlanItem::FORMAT_PHOTO];
+                            $taken[] = $at;
+                            $need--;
+                        }
+                    }
+                }
+            }
+        }
+        // Tỉ lệ video theo cấu hình hiện tại: slot mới thành video cho đủ số video cả kỳ
+        $videos = (int) round(($active->count() + count($missing)) * $channel->video_percent / 100)
+            - $active->where('format', ContentPlanItem::FORMAT_VIDEO)->count()
+            - collect($missing)->where('format', ContentPlanItem::FORMAT_VIDEO)->count();
+        foreach ($missing as $i => $s) {
+            if ($videos <= 0) {
+                break;
+            }
+            if ($s['format'] !== ContentPlanItem::FORMAT_VIDEO && ! $slots->contains('index', $s['index'])) {
+                $missing[$i]['format'] = ContentPlanItem::FORMAT_VIDEO;
+                $videos--;
+            }
+        }
+
+        return ['active' => $active->all(), 'missing' => collect($missing)->sortBy('at')->values()->all()];
     }
 
     /** Slot đã có bài đang dùng: bài chờ duyệt, hoặc đã thành bài đăng mà bài đăng còn. */
@@ -1061,9 +1152,26 @@ class ChannelPlanService
         });
     }
 
-    public function cancelItem(ContentPlanItem $item): void
+    /**
+     * Nút X ở tab Kế hoạch (người dùng chốt 2026-11-21): XOÁ HẲN bài khỏi kỳ, kèm bài đăng của nó (chưa được worker nhận).
+     * Giờ đăng đó thành thiếu bài -> "Tạo bổ sung" soạn bài khác. Bài đăng worker đã nhận / đã đăng: 409, không xoá.
+     */
+    public function deleteItem(ContentPlanItem $item): void
     {
-        DB::transaction(fn () => $this->cancelItemInside($item));
+        DB::transaction(function () use ($item) {
+            $item = ContentPlanItem::query()->lockForUpdate()->findOrFail($item->id);
+            $post = $item->social_post_id ? SocialPost::query()->lockForUpdate()->find($item->social_post_id) : null;
+            if ($post && ! in_array($post->status, [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued], true)) {
+                throw new BusinessException('ITEM_PUBLISHING', 'Bài đã được worker nhận đăng / đã đăng, không xoá được.', 409);
+            }
+            $plan = $item->plan()->firstOrFail();
+            $post?->delete();
+            $this->audit->log('content_plan.delete_item', $plan, ['item_id' => $item->id, 'slot_index' => $item->slot_index, 'post_id' => $post?->id]);
+            $item->delete();
+            if ($plan->status === ContentPlan::DRAFT && ($lineup = $plan->channel()->firstOrFail()->approvedLineup())) {
+                $plan->update(['warnings' => $this->lineupWarnings($plan->fresh(), $lineup) ?: null]);
+            }
+        });
     }
 
     private function cancelItemInside(ContentPlanItem $item): void
