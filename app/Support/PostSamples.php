@@ -143,10 +143,10 @@ final class PostSamples
             ], false, '2 đôi khác kiểu cùng tầm giá / cùng màu để khó chọn. Hook theo tình huống (đi làm, hẹn hò, dịp lễ).'),
             // Bìa GHÉP (người dùng chốt 2026-11-21): lệnh chỉ gửi N ảnh #1..#N, CONTENT-WORKER dựng thêm bìa ghép các ảnh
             // đó + in hook (A51 không dựng). a90-fe note/xay-kenh-tiktok/bai-viet-mau/top_n.txt
-            [...self::sample('top_n', 'Top N', 'compare', 'save', $photo, 4, 8, [
-                self::rule('first', 'product', true, 'Bìa GHÉP ảnh các slide #1..#N (content-worker dựng) + hook "Top N đôi ..."'),
+            [...self::sample('top_n', 'Top N', 'compare', 'save', $photo, 5, 8, [
+                self::rule('first', 'product', true, 'Bìa GHÉP 4 ảnh đầu (N = 4-5) hoặc 6 ảnh đầu (N >= 6), content-worker dựng + hook "Top N đôi ..."'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 mẫu, chữ "#1 ...", "#2 ..." + lý do ngắn'),
-            ], false, 'Danh sách xếp hạng theo 1 tiêu chí (đi chúc Tết, đi làm cả ngày, đi chơi...). Hook = "Top N đôi ..." với N = số ảnh gửi. CHỈ gửi N ảnh sản phẩm của N mẫu KHÁC NHAU (3-7, #1 trước), KHÔNG gửi ảnh bìa: content-worker tự dựng bìa ghép các ảnh đó + in hook. Chữ ảnh thứ k bắt đầu "#k " rồi kiểu giày + lý do 2-4 từ ("#1 Cao gót mũi nhọn, sang chảnh"). Không nêu giá nếu Yêu cầu kênh không có. Caption kiểu "Bạn chốt số mấy? Lưu lại để sắm".'),
+            ], false, 'Danh sách xếp hạng theo 1 tiêu chí (đi chúc Tết, đi làm cả ngày, đi chơi...). Hook = "Top N đôi ..." với N = số ảnh gửi. CHỈ gửi N ảnh sản phẩm của N mẫu KHÁC NHAU (4-7, #1 trước), KHÔNG gửi ảnh bìa: content-worker tự dựng bìa ghép 4 ảnh đầu (N = 4-5) hoặc 6 ảnh đầu (N >= 6) + in hook. Chữ ảnh thứ k bắt đầu "#k " rồi kiểu giày + lý do 2-4 từ ("#1 Cao gót mũi nhọn, sang chảnh"). Không nêu giá nếu Yêu cầu kênh không có. Caption kiểu "Bạn chốt số mấy? Lưu lại để sắm".'),
                 'cover_collage' => true],
             self::sample('which_suits_you', 'Bạn hợp đôi nào', 'compare', 'engagement', $photo, 3, 6, [
                 self::rule('first', 'any', true, 'Hook "Bạn hợp đôi nào theo ...?"'),

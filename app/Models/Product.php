@@ -18,7 +18,7 @@ class Product extends Model
     /** Độ dài tối đa của "Yêu cầu" (prompt_note), nối vào cuối prompt nên giữ ngắn so với prompt Creative. */
     public const PROMPT_NOTE_MAX = 2000;
 
-    protected $casts = ['is_active' => 'boolean'];
+    protected $casts = ['is_active' => 'boolean', 'tags' => 'array', 'tag_sources' => 'array', 'tagged_at' => 'datetime'];
 
     /**
      * Nối "Yêu cầu" của sản phẩm vào cuối prompt đã render. Ảnh không gắn sản phẩm (0 / null), sản phẩm đã xoá

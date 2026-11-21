@@ -7,16 +7,20 @@ use App\Http\Controllers\Controller;
 use App\Models\Channel;
 use App\Models\ChannelLineup;
 use App\Models\ChannelTextTemplate;
+use App\Models\ChannelTopic;
 use App\Models\ContentPlan;
 use App\Models\ContentPlanItem;
 use App\Models\GenerationOutput;
 use App\Models\SocialPost;
 use App\Services\Channel\ChannelPlanService;
+use App\Services\Channel\ChannelTopicService;
 use App\Services\MediaStorage;
 use App\Support\PostSamples;
+use App\Support\ProductTags;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Phần chủ shop xem / duyệt nội dung kênh trên A51 (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 6.1):
@@ -25,7 +29,7 @@ use Illuminate\Http\Request;
  */
 class ChannelContentController extends Controller
 {
-    public function __construct(private ChannelPlanService $plans, private MediaStorage $media) {}
+    public function __construct(private ChannelPlanService $plans, private MediaStorage $media, private ChannelTopicService $topics) {}
 
     // ---- Tuyến nội dung ----
 
@@ -213,7 +217,7 @@ class ChannelContentController extends Controller
         if ($from->diffInDays($to) > 62) {
             $to = $from->copy()->addDays(62)->endOfDay();
         }
-        $posts = $channel->posts()->with(['images.output'])->whereBetween('scheduled_at', [$from, $to])
+        $posts = $channel->posts()->with(['images.output', 'topic:id,name'])->whereBetween('scheduled_at', [$from, $to])
             ->orderBy('scheduled_at')->get();
 
         return response()->json(['data' => $posts->map(fn (SocialPost $p) => $this->calendarPost($p))]);
@@ -239,6 +243,58 @@ class ChannelContentController extends Controller
         $model = $this->plans->requestRedo($this->post($request, $post), $request->isMethod('post'));
 
         return response()->json(['data' => $this->calendarPost($model->load('images.output'))]);
+    }
+
+    // ---- Chủ đề kênh (a90-fe note/xay-kenh-tiktok/chu-de-va-tag-san-pham.txt mục 4) ----
+
+    /** Chủ đề kênh kèm số bài theo loại bài + lần dùng gần nhất. -> { topics, tag_options } */
+    public function topics(Request $request, int $channel): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+
+        return response()->json(['data' => [
+            'topics' => $this->topics->listFor($channel),
+            'tag_options' => ProductTags::options(),
+        ]]);
+    }
+
+    /** { name?, tags?: {kieu: [], got: [], ...}, status?: active|paused } Chủ shop sửa tên / tags -> nguồn owner. */
+    public function updateTopic(Request $request, int $channel, int $topic): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+        $model = $channel->topics()->findOrFail($topic);
+        $data = $request->validate([
+            'name' => ['sometimes', 'required', 'string', 'max:'.ChannelTopic::NAME_MAX],
+            'tags' => ['sometimes', 'nullable', 'array'],
+            'status' => ['sometimes', 'required', 'in:'.ChannelTopic::ACTIVE.','.ChannelTopic::PAUSED],
+        ]);
+        $changes = [];
+        if (array_key_exists('name', $data)) {
+            $name = ChannelTopic::cleanName($data['name']);
+            if ($name === '') {
+                throw ValidationException::withMessages(['name' => 'Tên chủ đề không được trống.']);
+            }
+            if ($channel->topics()->where('name', $name)->whereKeyNot($model->id)->exists()) {
+                throw ValidationException::withMessages(['name' => 'Kênh đã có chủ đề tên này.']);
+            }
+            $changes['name'] = $name;
+        }
+        if (array_key_exists('tags', $data)) {
+            [$tags, $errors] = ProductTags::cleanFilter($data['tags'] ?? []);
+            if ($errors) {
+                throw ValidationException::withMessages(['tags' => $errors]);
+            }
+            $changes['tags'] = $tags ?: null;
+        }
+        if ($changes) {
+            $changes['source'] = ProductTags::SOURCE_OWNER;
+        }
+        if (isset($data['status'])) {
+            $changes['status'] = $data['status'];
+        }
+        $model->update($changes);
+
+        return response()->json(['data' => collect($this->topics->listFor($channel))->firstWhere('id', $model->id)]);
     }
 
     // ---- Helpers ----
@@ -322,6 +378,7 @@ class ChannelContentController extends Controller
             'sample_key' => $i->sample_key,
             'sample_name' => PostSamples::get($i->sample_key)['name'] ?? $i->sample_key,
             'hook' => $i->hook,
+            'topic' => $i->topic_id ? ChannelTopic::query()->whereKey($i->topic_id)->value('name') : null,
             'format' => $i->format,
             'video_template_id' => $i->video_template_id,
             'text_template_id' => $i->text_template_id,
@@ -350,6 +407,7 @@ class ChannelContentController extends Controller
             'sample_key' => $p->sample_key,
             'sample_name' => $p->sample_key ? (PostSamples::get($p->sample_key)['name'] ?? $p->sample_key) : null,
             'hook' => $p->hook,
+            'topic' => $p->topic?->name,
             'title' => $p->title,
             'hashtags' => $p->hashtags ?? [],
             'redo_requested_at' => $p->redo_requested_at,

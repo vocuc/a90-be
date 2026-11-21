@@ -160,6 +160,12 @@ class Channel extends Model
         return $this->hasMany(ChannelTextTemplate::class);
     }
 
+    /** Chủ đề của kênh (a90-fe note/xay-kenh-tiktok/chu-de-va-tag-san-pham.txt mục 4). */
+    public function topics(): HasMany
+    {
+        return $this->hasMany(ChannelTopic::class);
+    }
+
     public function plans(): HasMany
     {
         return $this->hasMany(ContentPlan::class);

@@ -12,6 +12,7 @@ use App\Models\ProductImage;
 use App\Models\User;
 use App\Services\MediaStorage;
 use App\Services\SettingService;
+use App\Support\ProductTags;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -230,6 +231,31 @@ class ProductController extends Controller
         $product = $this->findProduct($request, $product);
         $data = $request->validate(['is_active' => ['required', 'boolean']]);
         $product->update(['is_active' => $data['is_active']]);
+
+        return $this->resource($request, $product->id);
+    }
+
+    /**
+     * { ai_label?: string|null, tags?: {kieu?, got?, mau?, phong_cach?, dip?} } Chủ shop sửa tag sản phẩm: trường gửi lên
+     * thành nguồn owner (skill AI không ghi đè); gửi null / rỗng = xoá, trả về cho AI gắn lại.
+     */
+    public function updateTags(Request $request, int $product): ProductResource
+    {
+        $product = $this->findProduct($request, $product);
+        $data = $request->validate([
+            'ai_label' => ['sometimes', 'nullable', 'string', 'max:'.ProductTags::LABEL_MAX],
+            'tags' => ['sometimes', 'array'],
+        ]);
+        [$tags, $errors] = ProductTags::clean($data['tags'] ?? []);
+        if ($errors) {
+            throw ValidationException::withMessages(['tags' => $errors]);
+        }
+        $values = $tags;
+        if (array_key_exists('ai_label', $data)) {
+            $values = ['ai_label' => ProductTags::cleanLabel($data['ai_label']), ...$values];
+        }
+        ProductTags::apply($product, $values, ProductTags::SOURCE_OWNER);
+        $product->save();
 
         return $this->resource($request, $product->id);
     }

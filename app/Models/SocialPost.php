@@ -281,6 +281,12 @@ class SocialPost extends Model
         return $this->belongsTo(Channel::class);
     }
 
+    /** Chủ đề của bài (bài kênh lập bằng /lap-ke-hoach; bài cũ null). */
+    public function topic(): BelongsTo
+    {
+        return $this->belongsTo(ChannelTopic::class, 'topic_id');
+    }
+
     public function planItem(): BelongsTo
     {
         return $this->belongsTo(ContentPlanItem::class, 'plan_item_id');

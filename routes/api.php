@@ -106,6 +106,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('products/{product}', [ProductController::class, 'update'])->whereNumber('product');
             Route::delete('products/{product}', [ProductController::class, 'destroy'])->whereNumber('product');
             Route::put('products/{product}/active', [ProductController::class, 'setActive'])->whereNumber('product');
+            // Chủ shop sửa tag sản phẩm (AI gắn bằng /gan-tag-san-pham; trường chủ shop sửa AI không ghi đè)
+            Route::put('products/{product}/tags', [ProductController::class, 'updateTags'])->whereNumber('product');
             Route::post('products/shares', [ProductController::class, 'bulkShare']);
             Route::get('products/{product}/shares', [ProductController::class, 'shares'])->whereNumber('product');
             Route::put('products/{product}/shares', [ProductController::class, 'updateShares'])->whereNumber('product');
@@ -140,6 +142,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('channels/{channel}/plans/{plan}/items/{item}', [ChannelContentController::class, 'updateItem'])->whereNumber(['channel', 'plan', 'item']);
             Route::post('channels/{channel}/plans/{plan}/items/{item}/cancel', [ChannelContentController::class, 'cancelItem'])->whereNumber(['channel', 'plan', 'item']);
             Route::get('channels/{channel}/calendar', [ChannelContentController::class, 'calendar'])->whereNumber('channel');
+            // Chủ đề kênh (AI tự tạo khi lập kế hoạch; chủ shop sửa tên / tags, tạm tắt)
+            Route::get('channels/{channel}/topics', [ChannelContentController::class, 'topics'])->whereNumber('channel');
+            Route::put('channels/{channel}/topics/{topic}', [ChannelContentController::class, 'updateTopic'])->whereNumber(['channel', 'topic']);
             Route::put('channel-posts/{post}/overlays', [ChannelContentController::class, 'updateOverlays'])->whereNumber('post');
             Route::post('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');
             Route::delete('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');
@@ -259,4 +264,8 @@ Route::prefix('v1/channel-plan')->middleware(['throttle:api', 'auth:sanctum', 'a
     Route::post('channels/{channel}/text-templates', [ChannelPlanApiController::class, 'textTemplates'])->whereNumber('channel');
     Route::post('channels/{channel}/plans/{plan}/items', [ChannelPlanApiController::class, 'submitPlan'])->whereNumber(['channel', 'plan']);
     Route::post('posts/{post}/redo', [ChannelPlanApiController::class, 'redo'])->whereNumber('post');
+    // Tag sản phẩm AI + sản phẩm lọc theo tag (a90-fe note/xay-kenh-tiktok/chu-de-va-tag-san-pham.txt mục 5, 6)
+    Route::get('channels/{channel}/products', [ChannelPlanApiController::class, 'products'])->whereNumber('channel');
+    Route::get('shops/{user}/products/untagged', [ChannelPlanApiController::class, 'untaggedProducts'])->whereNumber('user');
+    Route::put('shops/{user}/products/tags', [ChannelPlanApiController::class, 'saveProductTags'])->whereNumber('user');
 });

@@ -8,6 +8,7 @@ use App\Exceptions\BusinessException;
 use App\Models\Channel;
 use App\Models\ChannelLineup;
 use App\Models\ChannelTextTemplate;
+use App\Models\ChannelTopic;
 use App\Models\ContentPlan;
 use App\Models\ContentPlanItem;
 use App\Models\Generation;
@@ -20,7 +21,6 @@ use App\Models\SocialPostImage;
 use App\Models\VideoTemplate;
 use App\Models\Worker;
 use App\Services\AuditLogger;
-use App\Services\MediaStorage;
 use App\Services\OutfitBatchService;
 use App\Services\Social\VideoPostService;
 use App\Support\PostSamples;
@@ -39,9 +39,6 @@ use Illuminate\Validation\ValidationException;
  */
 class ChannelPlanService
 {
-    /** Số ảnh tối đa gửi trong context. */
-    public const CONTEXT_IMAGES = 400;
-
     /** Số bài gần nhất gửi kèm để tránh trùng. */
     public const RECENT_POSTS = 60;
 
@@ -55,10 +52,11 @@ class ChannelPlanService
     public const LINEUP_TOLERANCE = 15;
 
     public function __construct(
-        private MediaStorage $media,
         private AuditLogger $audit,
         private ContentJobService $contentJobs,
         private OutfitBatchService $outfitBatches,
+        private ChannelTopicService $topics,
+        private ProductTagService $productTags,
     ) {}
 
     // ------------------------------------------------------------------ Context cho lệnh /lap-ke-hoach
@@ -116,9 +114,12 @@ class ChannelPlanService
                 ->orderBy('id')->get(['id', 'name', 'status', 'style', 'sample_keys', 'sample_text']),
             'post_samples' => array_values(array_intersect_key(PostSamples::all(), array_flip($usedKeys))),
             'all_post_samples' => array_map(fn ($s) => ['key' => $s['key'], 'name' => $s['name'], 'group' => $s['group'], 'goal' => $s['goal'], 'formats' => $s['formats']], array_values(PostSamples::enabled())),
-            'products' => Product::query()->where('user_id', $channel->user_id)->active()->with('hashtags')->orderByDesc('id')->limit(100)->get()
-                ->map(fn (Product $p) => ['id' => $p->id, 'name' => $p->name, 'prompt_note' => $p->prompt_note, 'hashtags' => $p->hashtags->pluck('name')->all()]),
-            'images' => $this->imageCatalog($channel),
+            // Không gửi ảnh / sản phẩm (tối ưu token, chu-de-va-tag-san-pham.txt mục 5): lệnh lấy sản phẩm đã gắn tag
+            // qua GET channels/{id}/products?<tag>=...; product_tags nhắc chạy /gan-tag-san-pham khi còn sản phẩm chưa gắn
+            'product_tags' => $this->productTags->counts($channel->user),
+            // Chủ đề đang bật của kênh + số bài / lần dùng gần nhất theo loại bài (mọi bài cần chủ đề)
+            'topics' => $this->topics->listFor($channel, true),
+            'topic_repeat_days' => ChannelTopic::REPEAT_DAYS,
             'video_templates' => VideoTemplate::query()->where('user_id', $channel->user_id)->usable()->orderBy('name')
                 ->get(['id', 'name', 'image_count']),
             'recent_posts' => $this->recentPosts($channel),
@@ -231,51 +232,14 @@ class ChannelPlanService
         ])->all();
     }
 
-    /** Ảnh dùng được của shop (mới nhất trước), kèm loại, sản phẩm, số lần đã đăng ở kênh. */
-    private function imageCatalog(Channel $channel): Collection
-    {
-        $uses = DB::table('social_post_images')
-            ->join('social_posts', 'social_posts.id', '=', 'social_post_images.social_post_id')
-            ->where('social_posts.channel_id', $channel->id)
-            ->whereNotNull('social_post_images.output_id')
-            ->groupBy('social_post_images.output_id')
-            ->selectRaw('social_post_images.output_id, COUNT(*) AS total, MAX(social_posts.scheduled_at) AS last_at')
-            ->get()
-            ->keyBy('output_id');
-
-        $outputs = GenerationOutput::query()
-            ->usable()
-            ->whereHas('generation', fn ($q) => $q->where('user_id', $channel->user_id))
-            ->with(['generation.creative:id,title', 'generation.product:id,name'])
-            ->orderByDesc('id')
-            ->limit(self::CONTEXT_IMAGES)
-            ->get();
-
-        return $outputs->map(function (GenerationOutput $o) use ($uses) {
-            $g = $o->generation;
-            $use = $uses->get($o->id);
-
-            return [
-                'ref' => self::ref($o->generation_id, $o->id),
-                'thumb_url' => $this->media->url($o->thumbPathOrOriginal()),
-                'kind' => $g->isOutfit() ? 'outfit' : 'product',
-                'product' => $g->product?->name,
-                'product_id' => $g->product_id ?: null,
-                'creative' => $g->creative?->title,
-                'used_in_channel' => (int) ($use->total ?? 0),
-                'last_used_at' => $use->last_at ?? null,
-                'created_at' => $o->created_at?->toIso8601String(),
-            ];
-        })->values();
-    }
-
     private function recentPosts(Channel $channel): Collection
     {
-        return $channel->posts()->with('images')->orderByDesc('scheduled_at')->orderByDesc('id')->limit(self::RECENT_POSTS)->get()
+        return $channel->posts()->with('images', 'topic:id,name')->orderByDesc('scheduled_at')->orderByDesc('id')->limit(self::RECENT_POSTS)->get()
             ->map(fn (SocialPost $p) => [
                 'id' => $p->id,
                 'scheduled_at' => $p->scheduled_at?->toIso8601String(),
                 'sample_key' => $p->sample_key,
+                'topic' => $p->topic?->name,
                 'hook' => $p->hook,
                 'title' => $p->title,
                 'images' => $p->images->filter(fn ($i) => $i->output_id)->map(fn ($i) => self::ref($i->generation_id, $i->output_id))->values(),
@@ -435,16 +399,19 @@ class ChannelPlanService
 
                 continue;
             }
-            [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $slot['format'], $signatures);
+            $at = CarbonImmutable::parse($slot['at']);
+            [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $slot['format'], $signatures, $at);
             if ($errors) {
                 $rejected[] = ['slot_index' => $slotIndex, 'errors' => $errors];
 
                 continue;
             }
             $signature = $data['_signature'];
-            unset($data['_signature']);
+            $topicId = $this->topics->resolve($channel, $data['_topic']);
+            unset($data['_signature'], $data['_topic']);
             $plan->items()->create([
                 ...$data,
+                'topic_id' => $topicId,
                 'slot_index' => (int) $slotIndex,
                 'scheduled_at' => CarbonImmutable::parse($slot['at']),
                 'status' => ContentPlanItem::DRAFT,
@@ -472,7 +439,8 @@ class ChannelPlanService
      *
      * @return array{0: array, 1: string[]} [dữ liệu đã chuẩn hoá để lưu, lỗi]
      */
-    public function validateItem(Channel $channel, ChannelLineup $lineup, array $raw, string $format, array $signatures, ?int $ignorePostId = null): array
+    public function validateItem(Channel $channel, ChannelLineup $lineup, array $raw, string $format, array $signatures,
+        CarbonImmutable $at, ?int $exceptPostId = null, ?int $exceptItemId = null): array
     {
         $errors = [];
         $sampleKey = (string) ($raw['sample_key'] ?? '');
@@ -496,6 +464,8 @@ class ChannelPlanService
         if ($hook === '' || mb_strlen($hook) > 200) {
             $errors[] = 'hook bắt buộc, tối đa 200 ký tự.';
         }
+        // Chủ đề (mọi loại bài): cùng chủ đề + cùng loại bài không lặp trong ChannelTopic::REPEAT_DAYS ngày
+        $topic = $this->topics->check($channel, $raw, $sampleKey, $at, $errors, $exceptPostId, $exceptItemId);
 
         // Bài viết mẫu lấy ảnh bằng LÔ PHỐI ĐỒ mới (vd lookbook): không chọn ảnh có sẵn, chỉ ghi số ảnh + sản phẩm
         if (($sample['image_source'] ?? PostSamples::SOURCE_LIBRARY) === PostSamples::SOURCE_OUTFIT_BATCH) {
@@ -520,6 +490,7 @@ class ChannelPlanService
                 'text_template_id' => $textTemplateId,
                 ...$this->caption($channel, $raw),
                 '_signature' => $signature,
+                '_topic' => $topic,
             ], []];
         }
 
@@ -625,6 +596,7 @@ class ChannelPlanService
             'text_template_id' => $textTemplateId,
             ...$this->caption($channel, $raw),
             '_signature' => $signature,
+            '_topic' => $topic,
         ], []];
     }
 
@@ -840,6 +812,7 @@ class ChannelPlanService
             'plan_item_id' => $item->id,
             'sample_key' => $item->sample_key,
             'hook' => $item->hook,
+            'topic_id' => $item->topic_id,
             'source' => SocialPost::SOURCE_PLAN,
             'type' => $item->format === ContentPlanItem::FORMAT_VIDEO ? SocialPost::TYPE_VIDEO : SocialPost::TYPE_PHOTO,
             ...VideoPostService::templateSnapshot($template),
@@ -954,11 +927,17 @@ class ChannelPlanService
             $this->existingSignatures($channel, $plan),
             [self::signature($item->sample_key, $item->hook, array_column($item->images, 'output_id'))],
         ));
-        [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $item->format, $signatures);
+        // Chủ shop sửa trên A51 không gửi chủ đề: giữ chủ đề cũ
+        if (empty($raw['topic_id']) && empty($raw['topic']) && $item->topic_id) {
+            $raw['topic_id'] = $item->topic_id;
+        }
+        [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $item->format, $signatures,
+            CarbonImmutable::parse($item->scheduled_at), null, $item->id);
         if ($errors) {
             throw ValidationException::withMessages(['item' => $errors]);
         }
-        unset($data['_signature']);
+        $data['topic_id'] = $this->topics->resolve($channel, $data['_topic']);
+        unset($data['_signature'], $data['_topic']);
         $item->update($data);
 
         return $item;
@@ -998,13 +977,15 @@ class ChannelPlanService
         }
         $lineup = $channel->approvedLineup() ?? throw new BusinessException('LINEUP_REQUIRED', 'Kênh chưa có tuyến nội dung đã duyệt.', 409);
         $signatures = $this->existingSignatures($channel, null, $post->id);
-        [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $post->type, $signatures);
+        [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $post->type, $signatures,
+            CarbonImmutable::parse($post->scheduled_at), $post->id, $post->plan_item_id);
         if ($errors) {
             throw ValidationException::withMessages(['item' => $errors]);
         }
 
         return DB::transaction(function () use ($post, $data, $channel) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            $topicId = $this->topics->resolve($channel, $data['_topic']);
             if ($data['outfit']) {
                 // Làm lại bài lô phối đồ: tạo lô phối đồ MỚI, bài chờ ảnh xong rồi vào hàng chờ đăng
                 $batch = $this->createOutfitBatch($channel, $data['outfit'], 'redo-post-'.$post->id.'-'.now()->timestamp, $data['hook'],
@@ -1016,6 +997,7 @@ class ChannelPlanService
             $post->fill([
                 'sample_key' => $data['sample_key'],
                 'hook' => $data['hook'],
+                'topic_id' => $topicId,
                 ...($post->isVideo() ? VideoPostService::templateSnapshot($template) : []),
                 'title' => $data['title'],
                 'content' => $data['content'],
@@ -1035,7 +1017,7 @@ class ChannelPlanService
             if ($post->plan_item_id) {
                 ContentPlanItem::query()->whereKey($post->plan_item_id)->update([
                     'outfit' => $data['outfit'] ? json_encode($data['outfit']) : null,
-                    'sample_key' => $data['sample_key'], 'hook' => $data['hook'], 'images' => json_encode($data['images']),
+                    'sample_key' => $data['sample_key'], 'hook' => $data['hook'], 'topic_id' => $topicId, 'images' => json_encode($data['images']),
                     'text_template_id' => $data['text_template_id'],
                     'title' => $data['title'], 'content' => $data['content'], 'hashtags' => json_encode($data['hashtags']),
                 ]);

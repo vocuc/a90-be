@@ -7,9 +7,13 @@ use App\Http\Controllers\Controller;
 use App\Models\Channel;
 use App\Models\ChannelTextTemplate;
 use App\Models\SocialPost;
+use App\Models\User;
 use App\Services\Channel\ChannelPlanService;
+use App\Services\Channel\ProductTagService;
+use App\Support\ProductTags;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 /**
  * API cho lệnh /lap-ke-hoach (skill D:\FlowKit\.claude\skills\lap-ke-hoach), token Sanctum ability "channel-plan" của
@@ -17,7 +21,7 @@ use Illuminate\Http\Request;
  */
 class ChannelPlanApiController extends Controller
 {
-    public function __construct(private ChannelPlanService $plans) {}
+    public function __construct(private ChannelPlanService $plans, private ProductTagService $productTags) {}
 
     public function context(int $channel): JsonResponse
     {
@@ -85,6 +89,43 @@ class ChannelPlanApiController extends Controller
         $model = $this->plans->redo($model, $request->all());
 
         return response()->json(['data' => ['id' => $model->id, 'status' => $model->status]]);
+    }
+
+    /**
+     * Sản phẩm ĐÃ GẮN TAG lọc theo tag (chu-de-va-tag-san-pham.txt mục 5): ?kieu=&got=&mau=&phong_cach=&dip=&limit=
+     * (mỗi tham số nhiều giá trị cách dấu phẩy = HOẶC, giữa các tham số = VÀ). Mỗi sản phẩm 1 ref ngẫu nhiên trong 10 ảnh
+     * tạo gần nhất. -> { products: [{id, label, tags, used, last_used_at, ref}], total, untagged }
+     */
+    public function products(Request $request, int $channel): JsonResponse
+    {
+        $data = $request->validate(['limit' => ['nullable', 'integer', 'min:1', 'max:'.ProductTagService::LIST_MAX]]);
+        [$filter, $errors] = ProductTags::cleanFilter($request->only(ProductTags::tagFields()));
+        if ($errors) {
+            throw ValidationException::withMessages(['tags' => $errors]);
+        }
+
+        return response()->json(['data' => $this->productTags->catalog($this->channel($channel), $filter, (int) ($data['limit'] ?? 100))]);
+    }
+
+    /** Skill /gan-tag-san-pham: sản phẩm của shop cần gắn tag (?all=1: mọi sản phẩm có ảnh). */
+    public function untaggedProducts(Request $request, int $user): JsonResponse
+    {
+        $data = $request->validate(['all' => ['nullable', 'boolean']]);
+
+        return response()->json(['data' => $this->productTags->untagged($this->shop($user), (bool) ($data['all'] ?? false))]);
+    }
+
+    /** Skill /gan-tag-san-pham gửi tag: { items: [{ id, image_id, ai_label, tags: {kieu, got, mau, phong_cach, dip} }] } */
+    public function saveProductTags(Request $request, int $user): JsonResponse
+    {
+        $data = $request->validate(['items' => ['required', 'array', 'min:1', 'max:'.ProductTagService::LIST_MAX]]);
+
+        return response()->json(['data' => $this->productTags->saveAi($this->shop($user), $data['items'])]);
+    }
+
+    private function shop(int $id): User
+    {
+        return User::query()->find($id) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy shop.', 404);
     }
 
     private function channel(int $id): Channel

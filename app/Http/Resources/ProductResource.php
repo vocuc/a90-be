@@ -23,6 +23,11 @@ class ProductResource extends JsonResource
             'name' => $this->name,
             // "Yêu cầu" nối vào cuối prompt của mọi Creative khi tạo ảnh cho sản phẩm
             'prompt_note' => $this->prompt_note,
+            // Tag AI (skill /gan-tag-san-pham) + nguồn từng trường ai | owner (chu-de-va-tag-san-pham.txt mục 2)
+            'ai_label' => $this->ai_label,
+            'tags' => $this->tags,
+            'tag_sources' => $this->tag_sources,
+            'tagged_at' => $this->tagged_at,
             // Tắt thì không được tạo lô tự động
             'is_active' => (bool) ($this->is_active ?? true),
             'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),

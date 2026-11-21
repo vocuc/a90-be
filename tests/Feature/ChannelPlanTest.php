@@ -107,6 +107,8 @@ class ChannelPlanTest extends TestCase
         return array_merge([
             'slot_index' => $slot,
             'sample_key' => 'unboxing',
+            // Mọi bài cần chủ đề; mỗi slot 1 chủ đề để không vướng luật lặp 14 ngày
+            'topic' => ['name' => "Chủ đề slot {$slot}"],
             'hook' => 'Đập hộp đôi sandal đi chúc Tết',
             'images' => [['ref' => $refs[0], 'text' => 'Đập hộp đi chúc Tết 🧧'], ['ref' => $refs[1]]],
             'title' => 'Đập hộp sandal trắng',
@@ -316,7 +318,7 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(CarbonImmutable::parse($lastPost)->addDay()->toDateString(), $context['plan']['start_date'], 'Kỳ tiếp theo bắt đầu sau ngày cuối có bài');
 
         $this->api('POST', "posts/{$post->id}/redo", [
-            'sample_key' => 'this_or_that', 'hook' => 'Mùng 1 chọn A hay B?',
+            'sample_key' => 'this_or_that', 'topic' => ['name' => 'Mùng 1 đi chúc Tết'], 'hook' => 'Mùng 1 chọn A hay B?',
             'images' => [['ref' => $refs[1], 'text' => 'A hay B?'], ['ref' => $refs[0]]],
             'title' => 'A hay B', 'hashtags' => ['tet2027'],
         ])->assertOk();
@@ -428,7 +430,7 @@ class ChannelPlanTest extends TestCase
         $this->api('POST', "channels/{$this->channel->id}/text-templates", ['templates' => [$this->templateBody()]])->assertCreated();
         $this->channel->textTemplates()->update(['status' => 'approved']);
         $planId = $this->context()['plan']['id'];
-        $lookbook = ['slot_index' => 0, 'sample_key' => 'lookbook', 'hook' => '5 outfit đi chơi Tết',
+        $lookbook = ['slot_index' => 0, 'sample_key' => 'lookbook', 'topic' => ['name' => 'Đi chơi Tết'], 'hook' => '5 outfit đi chơi Tết',
             'outfit' => ['count' => 5, 'tags' => ['Đi chơi', 'tet', 'tet']],
             'title' => 'Bạn chọn outfit số mấy?', 'hashtags' => ['tet2027']];
 
@@ -491,7 +493,7 @@ class ChannelPlanTest extends TestCase
         [$outfitWorker] = Worker::register('phoi-do-'.Str::random(4), Worker::TYPE_OUTFIT);
         $outfitWorker->users()->attach($this->shop->id);
         $planId = $this->context()['plan']['id'];
-        $byDay = ['slot_index' => 0, 'sample_key' => 'outfit_by_day', 'hook' => '3 ngày Tết mặc gì cho xinh?',
+        $byDay = ['slot_index' => 0, 'sample_key' => 'outfit_by_day', 'topic' => ['name' => '3 ngày Tết'], 'hook' => '3 ngày Tết mặc gì cho xinh?',
             'outfit' => ['count' => 4, 'tags' => ['maudo'], 'labels' => ['Mùng 1: Áo dài đỏ 🧧', 'Mùng 2:  Váy len', 'Mùng 3: Đầm xoè']],
             'title' => 'Lưu lại kẻo Tết đứng trước tủ đồ', 'hashtags' => ['tet2027']];
 
@@ -540,51 +542,53 @@ class ChannelPlanTest extends TestCase
     public function test_top_n_gets_collage_cover_from_content_worker(): void
     {
         // Mỗi ảnh 1 mẫu khác nhau (creative khác nhau)
-        $refs = [...$this->images(1), ...$this->images(1), ...$this->images(1)];
+        $refs = [...$this->images(1), ...$this->images(1), ...$this->images(1), ...$this->images(1)];
         $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'top_n', 'percent' => 100]]])->assertCreated();
         $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
         $this->api('POST', "channels/{$this->channel->id}/text-templates", ['templates' => [[...$this->templateBody(), 'sample_keys' => ['top_n']]]])->assertCreated();
         $this->channel->textTemplates()->update(['status' => 'approved']);
         $planId = $this->context()['plan']['id'];
         $ranked = fn (array $texts) => array_map(fn ($r, $t) => ['ref' => $r, 'text' => $t], array_slice($refs, 0, count($texts)), $texts);
-        $top = ['slot_index' => 0, 'sample_key' => 'top_n', 'hook' => 'Top 3 đôi giày đi chúc Tết',
-            'images' => $ranked(['#1 Cao gót, sang', '#2 Búp bê, êm', '#3 Sandal, mát']), 'title' => 'Bạn chốt số mấy?', 'hashtags' => ['tet2027']];
+        $top = ['slot_index' => 0, 'sample_key' => 'top_n', 'topic' => ['name' => 'Đi chúc Tết'], 'hook' => 'Top 4 đôi giày đi chúc Tết',
+            'images' => $ranked(['#1 Cao gót, sang', '#2 Búp bê, êm', '#3 Sandal, mát', '#4 Sneaker, năng động']), 'title' => 'Bạn chốt số mấy?', 'hashtags' => ['tet2027']];
 
         $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
             [...$top, 'slot_index' => 1, 'hook' => 'Top 5 đôi'],
-            [...$top, 'slot_index' => 2, 'hook' => 'Top 3 khác', 'images' => $ranked(['#1 a', '3 b', '#2 c'])],
+            [...$top, 'slot_index' => 2, 'hook' => 'Top 4 khác', 'images' => $ranked(['#1 a', '3 b', '#2 c', '#4 d'])],
+            [...$top, 'slot_index' => 3, 'hook' => 'Top 3 đôi', 'images' => $ranked(['#1 a', '#2 b', '#3 c'])],
         ]])->json('data.rejected');
         $this->assertStringContainsString('Top 5', implode(' ', $rejected[0]['errors']));
         $this->assertStringContainsString('#2', implode(' ', $rejected[1]['errors']));
+        $this->assertStringContainsString('4-7 ảnh', implode(' ', $rejected[2]['errors']), 'Tối thiểu Top 4 (bìa ghép 4 ảnh)');
 
         $r = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$top]])->assertOk();
         $this->assertSame([0], $r->json('data.accepted'), json_encode($r->json('data.rejected'), JSON_UNESCAPED_UNICODE));
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
         $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
-        $this->assertSame(3, $post->images()->count(), 'A51 không thêm bìa');
+        $this->assertSame(4, $post->images()->count(), 'A51 không thêm bìa');
 
         $job = $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')->assertOk()
             ->assertJsonPath('data.request.cover_collage', true)
-            ->assertJsonPath('data.request.hook', 'Top 3 đôi giày đi chúc Tết')
+            ->assertJsonPath('data.request.hook', 'Top 4 đôi giày đi chúc Tết')
             ->json('data');
-        $this->assertCount(3, $job['request']['images']);
+        $this->assertCount(4, $job['request']['images']);
         // Thiếu bìa: từ chối; đủ 3 + 1 bìa: bìa thành slide 1
         $make = fn ($k) => array_map(fn ($i) => UploadedFile::fake()->image("t{$i}.jpg", 30, 40), range(1, $k));
-        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job['id']}", ['status' => 'completed', 'files' => $make(3)],
-            ['Accept' => 'application/json'])->assertStatus(422)->assertJsonPath('code', 'CONTENT_FILES_COUNT');
         $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job['id']}", ['status' => 'completed', 'files' => $make(4)],
+            ['Accept' => 'application/json'])->assertStatus(422)->assertJsonPath('code', 'CONTENT_FILES_COUNT');
+        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job['id']}", ['status' => 'completed', 'files' => $make(5)],
             ['Accept' => 'application/json'])->assertOk();
         $images = $post->images()->orderBy('position')->get();
-        $this->assertCount(4, $images);
+        $this->assertCount(5, $images);
         $this->assertTrue((bool) $images[0]->added_by_worker);
-        $this->assertSame([1, 2, 3, 4], $images->pluck('position')->all());
+        $this->assertSame([1, 2, 3, 4, 5], $images->pluck('position')->all());
         $this->assertSame(SocialPostStatus::Queued, $post->fresh()->status);
 
         // Sửa chữ -> bỏ bìa cũ, giao job mới với 3 ảnh nguyên liệu
         $this->actingAs($this->shop)->putJson("/api/v1/creator/channel-posts/{$post->id}/overlays", [
             'overlays' => [['image_id' => $images[1]->id, 'text' => '#1 Cao gót mới']],
         ])->assertOk();
-        $this->assertSame(3, $post->images()->count());
+        $this->assertSame(4, $post->images()->count());
         $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')->assertOk()
             ->assertJsonPath('data.request.images.0.text', '#1 Cao gót mới');
     }
