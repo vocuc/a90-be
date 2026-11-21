@@ -898,6 +898,22 @@ class ChannelPlanService
         });
     }
 
+    /**
+     * Xoá hẳn kỳ ĐÃ HUỶ (chủ shop bấm xoá ở tab Kế hoạch -> Đã huỷ). Bài trong kỳ xoá theo (cascade); bài đăng đã đăng
+     * / đang đăng mà kỳ huỷ còn giữ lại thì vẫn giữ, chỉ bỏ liên kết (plan_item_id null).
+     */
+    public function delete(ContentPlan $plan): void
+    {
+        DB::transaction(function () use ($plan) {
+            $plan = ContentPlan::query()->lockForUpdate()->findOrFail($plan->id);
+            if ($plan->status !== ContentPlan::CANCELLED) {
+                throw new BusinessException('PLAN_NOT_CANCELLED', 'Chỉ xoá được kỳ đã huỷ. Huỷ kỳ trước rồi xoá.', 409);
+            }
+            $this->audit->log('content_plan.delete', $plan, ['items' => $plan->items()->count()]);
+            $plan->delete();
+        });
+    }
+
     public function cancelItem(ContentPlanItem $item): void
     {
         DB::transaction(fn () => $this->cancelItemInside($item));

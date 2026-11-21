@@ -222,6 +222,14 @@ class ChannelContentController extends Controller
         return response()->json(['data' => $this->planDetail($model->fresh())]);
     }
 
+    /** Xoá hẳn kỳ đã huỷ. 409 PLAN_NOT_CANCELLED. */
+    public function deletePlan(Request $request, int $channel, int $plan): JsonResponse
+    {
+        $this->plans->delete($this->channel($request, $channel)->plans()->findOrFail($plan));
+
+        return response()->json(['data' => ['deleted' => true]]);
+    }
+
     public function updateItem(Request $request, int $channel, int $plan, int $item): JsonResponse
     {
         $channel = $this->channel($request, $channel);

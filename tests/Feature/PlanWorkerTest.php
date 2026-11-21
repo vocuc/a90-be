@@ -103,4 +103,16 @@ class PlanWorkerTest extends TestCase
         $this->assertSame('failed', PlanJob::query()->find($job['id'])->status);
         $this->start()->assertCreated();
     }
+
+    public function test_delete_only_cancelled_plan(): void
+    {
+        $draft = $this->plan(ContentPlan::DRAFT);
+        $url = "/api/v1/creator/channels/{$this->channel->id}/plans/{$draft->id}";
+        $this->actingAs($this->shop)->deleteJson($url)->assertStatus(409)->assertJsonPath('code', 'PLAN_NOT_CANCELLED');
+        $this->actingAs($this->creator())->deleteJson($url)->assertNotFound();
+
+        $draft->update(['status' => ContentPlan::CANCELLED]);
+        $this->actingAs($this->shop)->deleteJson($url)->assertOk()->assertJsonPath('data.deleted', true);
+        $this->assertNull(ContentPlan::query()->find($draft->id));
+    }
 }

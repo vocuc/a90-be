@@ -140,6 +140,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('channels/{channel}/plan-job', [ChannelContentController::class, 'planJob'])->whereNumber('channel');
             Route::post('channels/{channel}/plan-jobs', [ChannelContentController::class, 'startPlanJob'])->whereNumber('channel');
             Route::get('channels/{channel}/plans/{plan}', [ChannelContentController::class, 'plan'])->whereNumber(['channel', 'plan']);
+            Route::delete('channels/{channel}/plans/{plan}', [ChannelContentController::class, 'deletePlan'])->whereNumber(['channel', 'plan']);
             Route::post('channels/{channel}/plans/{plan}/{decision}', [ChannelContentController::class, 'decidePlan'])
                 ->whereNumber(['channel', 'plan'])->whereIn('decision', ['approve', 'cancel']);
             Route::put('channels/{channel}/plans/{plan}/items/{item}', [ChannelContentController::class, 'updateItem'])->whereNumber(['channel', 'plan', 'item']);
