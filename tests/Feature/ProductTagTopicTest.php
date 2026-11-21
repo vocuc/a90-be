@@ -94,7 +94,7 @@ class ProductTagTopicTest extends TestCase
 
     private function unboxing(int $slot, array $refs, array $topic): array
     {
-        return ['slot_index' => $slot, 'sample_key' => 'unboxing', ...$topic, 'hook' => "Đập hộp đi chúc Tết {$slot}",
+        return ['slot_index' => $slot, 'sample_key' => 'closeup', ...$topic, 'hook' => "Đập hộp đi chúc Tết {$slot}",
             'images' => [['ref' => $refs[0], 'text' => 'Đập hộp'], ['ref' => $refs[1]]], 'title' => 'Đập hộp', 'hashtags' => []];
     }
 
@@ -177,7 +177,7 @@ class ProductTagTopicTest extends TestCase
 
     public function test_every_item_needs_topic_and_topic_repeat_is_blocked_for_14_days(): void
     {
-        $this->approveLineup(['unboxing', 'this_or_that']);
+        $this->approveLineup(['closeup', 'this_or_that']);
         $refs = $this->images(null, 4);
         $context = $this->api('GET', "channels/{$this->channel->id}/context")->assertOk()->json('data');
         $this->assertArrayNotHasKey('images', $context);
@@ -210,7 +210,7 @@ class ProductTagTopicTest extends TestCase
         // Kỳ được tự duyệt -> bài đăng có topic_id; context đếm bài theo loại bài
         $this->assertSame(2, SocialPost::query()->where('topic_id', $topic->id)->count());
         $topics = $this->api('GET', "channels/{$this->channel->id}/context")->json('data.topics');
-        $this->assertSame(['unboxing' => 1, 'this_or_that' => 1], $topics[0]['posts']);
+        $this->assertSame(['closeup' => 1, 'this_or_that' => 1], $topics[0]['posts']);
 
         // Chủ shop xem / sửa / tạm tắt chủ đề
         $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/topics")->assertOk()
@@ -223,11 +223,11 @@ class ProductTagTopicTest extends TestCase
 
     public function test_topic_can_repeat_after_14_days(): void
     {
-        $this->approveLineup(['unboxing']);
+        $this->approveLineup(['closeup']);
         $refs = $this->images(null, 4);
         $topic = $this->channel->topics()->create(['name' => 'Đi làm', 'source' => 'ai', 'status' => 'active']);
         $old = SocialPost::query()->create([
-            'user_id' => $this->shop->id, 'channel_id' => $this->channel->id, 'sample_key' => 'unboxing', 'topic_id' => $topic->id,
+            'user_id' => $this->shop->id, 'channel_id' => $this->channel->id, 'sample_key' => 'closeup', 'topic_id' => $topic->id,
             'hook' => 'cũ', 'type' => 'photo', 'status' => 'published', 'source' => SocialPost::SOURCE_PLAN, 'scheduled_at' => now()->subDays(20),
             'title' => 'cũ', 'content' => '', 'hashtags' => [], 'platforms' => ['tiktok'], 'idempotency_key' => 'old-1',
         ]);
@@ -240,6 +240,6 @@ class ProductTagTopicTest extends TestCase
 
         $old->update(['scheduled_at' => now()->subDays(5)]);
         $this->assertTrue(app(\App\Services\Channel\ChannelTopicService::class)
-            ->repeated($this->channel, $topic->id, 'unboxing', CarbonImmutable::now()->addDays(3)));
+            ->repeated($this->channel, $topic->id, 'closeup', CarbonImmutable::now()->addDays(3)));
     }
 }

@@ -56,7 +56,10 @@ class ChannelTextTemplate extends Model
     /** Loại bài gắn được template: bài viết mẫu ĐÃ LÀM XONG có dạng ảnh. */
     public static function sampleKeyOptions(): array
     {
-        return collect(PostSamples::enabled())->filter(fn ($s) => in_array('photo', $s['formats'], true))->keys()->values()->all();
+        // Bài lô ảnh sản phẩm (unboxing): ảnh không chữ -> không gắn template chữ
+        return collect(PostSamples::enabled())
+            ->filter(fn ($s) => in_array('photo', $s['formats'], true) && $s['image_source'] !== PostSamples::SOURCE_PRODUCT_BATCH)
+            ->keys()->values()->all();
     }
 
     /** Luật kiểm tra sample_keys (không bắt buộc: rỗng = template chưa dùng được). */

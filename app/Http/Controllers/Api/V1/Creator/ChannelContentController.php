@@ -247,6 +247,8 @@ class ChannelContentController extends Controller
             'outfit.tags.*' => ['string', 'max:50'],
             'outfit.labels' => ['nullable', 'array'],
             'outfit.labels.*' => ['nullable', 'string', 'max:100'],
+            'product_batch' => ['nullable', 'array'],
+            'product_batch.product_id' => ['nullable', 'integer'],
             'images.*.text' => ['nullable', 'string', 'max:150'],
             'text_template_id' => ['nullable', 'integer'],
             'title' => ['nullable', 'string', 'max:'.SocialPost::TITLE_MAX],
@@ -505,6 +507,11 @@ class ChannelContentController extends Controller
             'text_template_id' => $i->text_template_id,
             // Bài lô phối đồ: ảnh tạo khi duyệt kỳ { count, product_id }
             'outfit' => $i->outfit,
+            // Bài lô ảnh sản phẩm (unboxing): duyệt kỳ mới tạo lô tự động cho sản phẩm này
+            'product_batch' => $i->product_batch ? [
+                'product_id' => $i->product_batch['product_id'] ?? null,
+                'product_name' => \App\Models\Product::query()->whereKey($i->product_batch['product_id'] ?? 0)->value('name'),
+            ] : null,
             'images' => collect($i->images)->map(fn ($img) => [
                 'ref' => ChannelPlanService::ref($img['generation_id'], $img['output_id']),
                 'text' => $img['text'] ?? null,

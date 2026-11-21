@@ -83,8 +83,9 @@ class ChannelPlanApiController extends Controller
     /** Nội dung làm lại cho bài chủ shop đã bấm "Làm lại". */
     public function redo(Request $request, int $post): JsonResponse
     {
-        // images: bài lô phối đồ (vd lookbook) không gửi ảnh mà gửi outfit { count, product_id }
-        $request->validate(['images' => ['nullable', 'array'], 'outfit' => ['nullable', 'array'], 'sample_key' => ['required', 'string'], 'hook' => ['required', 'string']]);
+        // images: bài lô phối đồ (vd lookbook) không gửi ảnh mà gửi outfit { count, product_id }; bài lô ảnh sản phẩm
+        // (unboxing) gửi product_batch { product_id }
+        $request->validate(['images' => ['nullable', 'array'], 'outfit' => ['nullable', 'array'], 'product_batch' => ['nullable', 'array'], 'sample_key' => ['required', 'string'], 'hook' => ['required', 'string']]);
         $model = SocialPost::query()->find($post) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy bài đăng.', 404);
         $model = $this->plans->redo($model, $request->all());
 

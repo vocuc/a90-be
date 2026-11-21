@@ -21,6 +21,7 @@ use App\Models\SocialPostImage;
 use App\Models\VideoTemplate;
 use App\Models\Worker;
 use App\Services\AuditLogger;
+use App\Services\AutoBatchService;
 use App\Services\OutfitBatchService;
 use App\Services\Social\VideoPostService;
 use App\Support\PostSamples;
@@ -57,6 +58,7 @@ class ChannelPlanService
         private OutfitBatchService $outfitBatches,
         private ChannelTopicService $topics,
         private ProductTagService $productTags,
+        private AutoBatchService $autoBatches,
     ) {}
 
     // ------------------------------------------------------------------ Context cho lệnh /lap-ke-hoach
@@ -99,6 +101,8 @@ class ChannelPlanService
                 'outfit_worker' => Worker::query()->assignedTo($channel->user_id, Worker::TYPE_OUTFIT)->exists(),
                 // Bài ảnh có chữ / bìa ghép cần content-worker của shop dựng (a90-fe note/xay-kenh-tiktok/worker-content.txt)
                 'content_worker' => ContentJobService::hasWorker($channel->user_id),
+                // Bài viết mẫu lấy ảnh bằng lô tự động mới (unboxing) cần worker tạo ảnh được gắn cho shop
+                'image_worker' => Worker::query()->assignedTo($channel->user_id, Worker::TYPE_IMAGE)->exists(),
             ],
             'missing' => $missing,
             'persona' => $channel->persona ?? (object) [],
@@ -467,6 +471,32 @@ class ChannelPlanService
         // Chủ đề (mọi loại bài): cùng chủ đề + cùng loại bài không lặp trong ChannelTopic::REPEAT_DAYS ngày
         $topic = $this->topics->check($channel, $raw, $sampleKey, $at, $errors, $exceptPostId, $exceptItemId);
 
+        // Bài viết mẫu lấy ảnh bằng LÔ TỰ ĐỘNG mới (unboxing): không chọn ảnh, chỉ ghi 1 sản phẩm; ảnh không chữ
+        if (($sample['image_source'] ?? PostSamples::SOURCE_LIBRARY) === PostSamples::SOURCE_PRODUCT_BATCH) {
+            $productBatch = $this->validateProductBatch($channel, $raw, $format, $errors);
+            $signature = self::signature($sampleKey, $hook, ['p'.$productBatch['product_id']]);
+            if (in_array($signature, $signatures, true)) {
+                $errors[] = 'Trùng hook + sản phẩm với bài khác của kênh. Đổi hook hoặc sản phẩm.';
+            }
+            if ($errors) {
+                return [[], $errors];
+            }
+
+            return [[
+                'sample_key' => $sampleKey,
+                'hook' => $hook,
+                'format' => $format,
+                'video_template_id' => null,
+                'images' => [],
+                'outfit' => null,
+                'product_batch' => $productBatch,
+                'text_template_id' => null,
+                ...$this->caption($channel, $raw),
+                '_signature' => $signature,
+                '_topic' => $topic,
+            ], []];
+        }
+
         // Bài viết mẫu lấy ảnh bằng LÔ PHỐI ĐỒ mới (vd lookbook): không chọn ảnh có sẵn, chỉ ghi số ảnh + sản phẩm
         if (($sample['image_source'] ?? PostSamples::SOURCE_LIBRARY) === PostSamples::SOURCE_OUTFIT_BATCH) {
             $outfit = $this->validateOutfit($channel, $sample, $raw, $format, $errors);
@@ -487,6 +517,7 @@ class ChannelPlanService
                 'video_template_id' => null,
                 'images' => [],
                 'outfit' => $outfit,
+                'product_batch' => null,
                 'text_template_id' => $textTemplateId,
                 ...$this->caption($channel, $raw),
                 '_signature' => $signature,
@@ -593,6 +624,7 @@ class ChannelPlanService
             'video_template_id' => $template?->id,
             'images' => $parsed,
             'outfit' => null,
+            'product_batch' => null,
             'text_template_id' => $textTemplateId,
             ...$this->caption($channel, $raw),
             '_signature' => $signature,
@@ -681,6 +713,39 @@ class ChannelPlanService
         return $outfit;
     }
 
+    /**
+     * Bài lấy ảnh bằng lô tự động mới (unboxing): product_batch.product_id = sản phẩm đang bật của shop ghép được với ít
+     * nhất 1 nhóm Creative (cùng luật "Tạo tự động" ở trang lô). Shop phải được gắn worker tạo ảnh. Chỉ bài ảnh.
+     *
+     * @return array{product_id: int}
+     */
+    private function validateProductBatch(Channel $channel, array $raw, string $format, array &$errors): array
+    {
+        if ($format !== ContentPlanItem::FORMAT_PHOTO) {
+            $errors[] = 'Bài lô ảnh sản phẩm chỉ dùng cho slot ảnh.';
+        }
+        if (! empty($raw['images'])) {
+            $errors[] = 'Bài viết mẫu này không chọn ảnh có sẵn (bỏ images): duyệt kỳ A51 tạo lô ảnh mới cho sản phẩm.';
+        }
+        $productId = (int) ($raw['product_batch']['product_id'] ?? 0);
+        if (! $productId) {
+            $errors[] = 'product_batch.product_id (sản phẩm để tạo lô ảnh) bắt buộc.';
+
+            return ['product_id' => 0];
+        }
+        if (! Worker::query()->assignedTo($channel->user_id, Worker::TYPE_IMAGE)->exists()) {
+            $errors[] = 'Shop chưa được gắn worker tạo ảnh, không tạo được lô ảnh sản phẩm.';
+        }
+        $user = $channel->user()->firstOrFail();
+        if (! Product::query()->accessibleBy($user)->active()->whereKey($productId)->exists()) {
+            $errors[] = "product_batch.product_id {$productId} không phải sản phẩm đang bật của shop.";
+        } elseif (! $this->autoBatches->preview($user, 1, 1, [$productId])['plans']) {
+            $errors[] = "Sản phẩm {$productId} không ghép được với nhóm Creative nào đang bán (thiếu ảnh đúng trường nguyên liệu). Chọn sản phẩm khác.";
+        }
+
+        return ['product_id' => $productId];
+    }
+
     /** Bài Top N: N trong hook "Top N" = số ảnh; ảnh thứ k có chữ bắt đầu "#k"; N mẫu khác nhau (chỉ kiểm tra dữ liệu). */
     private function validateRanking(string $hook, array $parsed, array $groupKeys, array &$errors): void
     {
@@ -737,6 +802,14 @@ class ChannelPlanService
         return $sampleKey.'|'.mb_strtolower(trim($hook)).'|'.implode(',', $outputIds);
     }
 
+    /** Chữ ký 1 bài kế hoạch: bài lô ảnh sản phẩm (chưa có ảnh) tính theo sản phẩm, còn lại theo bộ ảnh. */
+    private static function itemSignature(ContentPlanItem $item): string
+    {
+        return self::signature($item->sample_key, $item->hook, $item->product_batch
+            ? ['p'.($item->product_batch['product_id'] ?? 0)]
+            : array_column($item->images ?? [], 'output_id'));
+    }
+
     /** Chữ ký các bài đã có của kênh + các bài trong kỳ (để chặn trùng y hệt). */
     private function existingSignatures(Channel $channel, ?ContentPlan $plan, ?int $exceptPostId = null): array
     {
@@ -746,7 +819,7 @@ class ChannelPlanService
             ->map(fn (SocialPost $p) => self::signature($p->sample_key, (string) $p->hook, $p->images->pluck('output_id')->filter()->values()->all()));
         $items = $plan
             ? $plan->items()->where('status', ContentPlanItem::DRAFT)->get()
-                ->map(fn (ContentPlanItem $i) => self::signature($i->sample_key, $i->hook, array_column($i->images, 'output_id')))
+                ->map(fn (ContentPlanItem $i) => self::itemSignature($i))
             : collect();
 
         return [...$posts->all(), ...$items->all()];
@@ -836,11 +909,30 @@ class ChannelPlanService
 
             return $post;
         }
+        if ($item->product_batch) {
+            // Ảnh tạo bằng lô tự động mới (unboxing): bài chờ ảnh xong rồi vào hàng chờ đăng, ảnh không chữ
+            $batch = $this->createProductBatch($channel, $item->product_batch, 'plan-item-'.$item->id);
+            $post->status = SocialPostStatus::Generating;
+            $post->image_batch_id = $batch->id;
+            $post->save();
+            $this->syncImages($post, $this->batchImages($batch), null);
+
+            return $post;
+        }
         $post->save();
         $this->syncImages($post, $item->images, $item->text_template_id);
         $this->contentJobs->queueForPost($post);
 
         return $post;
+    }
+
+    /** Tạo 1 lô tự động cho sản phẩm (planner chọn nhóm Creative ít lượt tạo nhất với sản phẩm), chèn logo nếu shop có logo. */
+    private function createProductBatch(Channel $channel, array $spec, string $key): ImageBatch
+    {
+        $user = $channel->user()->firstOrFail();
+        $result = $this->autoBatches->create($user, 1, (bool) $user->logoPath(), $key, null, null, [(int) $spec['product_id']]);
+
+        return $result['batches'][0] ?? throw new BusinessException('AUTO_NOTHING_TO_CREATE', 'Không tạo được lô ảnh cho sản phẩm.', 422);
     }
 
     /** Tạo 1 lô phối đồ cho bài (worker phối đồ đầu tiên được gắn cho shop, chèn logo nếu shop có logo). */
@@ -941,8 +1033,12 @@ class ChannelPlanService
         $plan = $item->plan;
         $signatures = array_values(array_diff(
             $this->existingSignatures($channel, $plan),
-            [self::signature($item->sample_key, $item->hook, array_column($item->images, 'output_id'))],
+            [self::itemSignature($item)],
         ));
+        // Bài lô ảnh sản phẩm: chủ shop sửa chữ / caption không gửi sản phẩm -> giữ sản phẩm cũ
+        if (empty($raw['product_batch']) && $item->product_batch) {
+            $raw['product_batch'] = $item->product_batch;
+        }
         // Chủ shop sửa trên A51 không gửi chủ đề: giữ chủ đề cũ
         if (empty($raw['topic_id']) && empty($raw['topic']) && $item->topic_id) {
             $raw['topic_id'] = $item->topic_id;
@@ -1008,6 +1104,11 @@ class ChannelPlanService
                     $data['text_template_id']);
                 $data['images'] = $this->batchImages($batch);
                 $post->image_batch_id = $batch->id;
+            } elseif ($data['product_batch']) {
+                // Làm lại bài lô ảnh sản phẩm: tạo lô tự động MỚI
+                $batch = $this->createProductBatch($channel, $data['product_batch'], 'redo-post-'.$post->id.'-'.now()->timestamp);
+                $data['images'] = $this->batchImages($batch);
+                $post->image_batch_id = $batch->id;
             }
             $template = $data['video_template_id'] ? VideoTemplate::query()->find($data['video_template_id']) : null;
             $post->fill([
@@ -1025,7 +1126,7 @@ class ChannelPlanService
             $post->syncStatus();
             $post->save();
             $this->syncImages($post, $data['images'], $data['text_template_id']);
-            if ($data['outfit']) {
+            if ($data['outfit'] || $data['product_batch']) {
                 $post->update(['status' => SocialPostStatus::Generating]);
             } else {
                 $this->contentJobs->queueForPost($post);
@@ -1033,6 +1134,7 @@ class ChannelPlanService
             if ($post->plan_item_id) {
                 ContentPlanItem::query()->whereKey($post->plan_item_id)->update([
                     'outfit' => $data['outfit'] ? json_encode($data['outfit']) : null,
+                    'product_batch' => $data['product_batch'] ? json_encode($data['product_batch']) : null,
                     'sample_key' => $data['sample_key'], 'hook' => $data['hook'], 'topic_id' => $topicId, 'images' => json_encode($data['images']),
                     'text_template_id' => $data['text_template_id'],
                     'title' => $data['title'], 'content' => $data['content'], 'hashtags' => json_encode($data['hashtags']),

@@ -34,7 +34,7 @@ final class PostSamples
      * Làm xong 1 bài (a90-fe note/xay-kenh-tiktok/bai-viet-mau/<key>.txt "ĐÃ LÀM") thì thêm key vào đây.
      * config ai90.post_samples_enabled ghi đè (vd test: ['*'] = bật hết).
      */
-    public const READY = ['top_n', 'lookbook', 'outfit_by_day'];
+    public const READY = ['top_n', 'lookbook', 'outfit_by_day', 'unboxing'];
 
     /** @return array<string, array> key => bài viết mẫu (cả bài chưa bật), có cờ enabled */
     public static function all(): array
@@ -81,10 +81,13 @@ final class PostSamples
         return $rules->firstWhere('at', $at) ?? $rules->firstWhere('at', 'each') ?? ['at' => 'each', 'image' => 'any', 'text' => false];
     }
 
-    /** Nguồn ảnh: library = chọn ảnh có sẵn của shop; outfit_batch = tạo lô phối đồ mới khi duyệt kỳ. */
+    /** Nguồn ảnh: library = chọn ảnh có sẵn của shop; outfit_batch = tạo lô phối đồ mới khi duyệt kỳ; product_batch = tạo
+     * lô tự động mới (1 sản phẩm x 1 nhóm Creative, mỗi Creative 1 ảnh) khi duyệt kỳ. */
     public const SOURCE_LIBRARY = 'library';
 
     public const SOURCE_OUTFIT_BATCH = 'outfit_batch';
+
+    public const SOURCE_PRODUCT_BATCH = 'product_batch';
 
     /** Độ dài tối đa 1 nhãn ngày in lên ảnh outfit (bài có 'outfit_labels' => true, vd outfit_by_day). */
     public const LABEL_MAX = 30;
@@ -118,11 +121,12 @@ final class PostSamples
 
         return [
             // ---- Trưng bày hàng ----
-            self::sample('unboxing', 'Đập hộp', 'showcase', 'sale', $both, 2, 5, [
-                self::rule('first', 'product', true, 'Ảnh tay cầm giày / mở hộp, chữ hook'),
-                self::rule('middle', 'product', false, 'Các góc khác của CÙNG mẫu'),
-                self::rule('last', 'product', true, 'Chốt: mã / kêu gọi inbox'),
-            ], true, 'Đập hộp 1 mẫu. Hook gợi tò mò ("Đập hộp đôi ... đi chúc Tết"). Slide cuối kêu gọi hành động ngắn.'),
+            // Kiểu bài ảnh chủ shop hay đăng (người dùng chốt 2026-11-21, giữ key unboxing): KHÔNG chọn ảnh có sẵn; bài kế
+            // hoạch chỉ ghi 1 sản phẩm, duyệt kỳ -> A51 tạo LÔ TỰ ĐỘNG mới (sản phẩm x 1 nhóm Creative, mỗi Creative 1 ảnh)
+            // làm ảnh của bài, ảnh KHÔNG chữ. a90-fe note/xay-kenh-tiktok/bai-viet-mau/unboxing.txt
+            self::sample('unboxing', 'Đập hộp', 'showcase', 'sale', $photo, 1, \App\Models\SocialPost::MAX_IMAGES, [
+                self::rule('each', 'product', false, 'Ảnh lô tự động của sản phẩm (mỗi Creative trong nhóm 1 ảnh), không chữ'),
+            ], true, 'Không chọn ảnh có sẵn, không chữ trên ảnh. Chọn 1 sản phẩm hợp chủ đề (kehoach.py products theo tag chủ đề, ưu tiên used thấp / lâu chưa dùng) -> product_batch.product_id; duyệt kỳ A51 tạo lô tự động (sản phẩm x 1 nhóm Creative) làm ảnh. Hook = ý chính của bài theo chủ đề (không in lên ảnh, dùng để viết tiêu đề, không trùng hook bài khác). Tiêu đề nêu dịp / tình huống của chủ đề + điểm nổi bật của đôi giày (theo nhãn + tag), giọng chân dung khách hàng.', self::SOURCE_PRODUCT_BATCH),
             self::sample('closeup', 'Soi cận cảnh', 'showcase', 'trust', $photo, 2, 4, [
                 self::rule('first', 'product', true, 'Toàn cảnh + hook "Soi kỹ trước khi mua"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 chi tiết: đường may, đế, lót, logo'),

@@ -8,12 +8,15 @@ use App\Enums\SocialPlatform;
 use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
 use App\Models\GenerationOutput;
+use App\Models\ContentJob;
 use App\Models\ImageBatch;
+use App\Models\ImageBatchImage;
 use App\Models\SocialPost;
 use App\Models\SocialPostImage;
 use App\Models\User;
 use App\Models\Worker;
 use App\Services\AuditLogger;
+use App\Services\Channel\ContentJobService;
 use Carbon\CarbonInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
@@ -26,6 +29,9 @@ use Illuminate\Validation\ValidationException;
  */
 class SocialPostService
 {
+    /** Bài kế hoạch đi theo lô mà lô còn ảnh lỗi (bài chờ duyệt, không tự đăng). */
+    public const BATCH_FAILED_CODE = 'BATCH_IMAGES_FAILED';
+
     public function __construct(
         private AuditLogger $audit,
         private SocialContentJobService $contentJobs,
@@ -162,6 +168,10 @@ class SocialPostService
             if (! $post || $post->status !== SocialPostStatus::Generating) {
                 return;
             }
+            // Bài đang chờ content-worker dựng (chèn chữ / bìa ghép): content-worker xong mới sang bước sau
+            if ($post->contentJobs()->whereIn('status', [ContentJob::QUEUED, ContentJob::PROCESSING])->exists()) {
+                return;
+            }
 
             $pending = $post->images()
                 ->whereHas('output', fn ($q) => $q->whereIn('status', [OutputStatus::Queued, OutputStatus::Processing]))
@@ -179,18 +189,64 @@ class SocialPostService
      */
     private function imagesReady(SocialPost $post): void
     {
-        if ($post->ai_content) {
+        // AI viết khi bài chưa có nội dung (ảnh tạo lại của bài đã có nội dung: giữ nội dung)
+        if ($post->ai_content && ! $post->hasManualContent()) {
             $this->contentJobs->queue($post);
 
             return;
         }
 
         $manual = $post->hasManualContent();
+        // Bài kế hoạch đi theo lô (unboxing / lô phối đồ): lô còn ảnh lỗi thì chưa đăng, chờ chủ shop tạo lại ở trang lô
+        $failed = $this->followsBatch($post)
+            ? $post->images()->whereHas('output', fn ($q) => $q->where('status', OutputStatus::Failed))->count() : 0;
 
         $post->update([
             ...($manual ? [] : $post->defaultContent()),
-            'status' => $post->readyStatus(),
+            'status' => $failed ? SocialPostStatus::PendingReview : $post->readyStatus(),
+            'last_error' => $failed ? ['code' => self::BATCH_FAILED_CODE,
+                'message' => "Lô ảnh còn {$failed} ảnh lỗi: tạo lại ở trang Lô ảnh, lô xong bài tự vào hàng chờ đăng."] : $post->last_error,
         ]);
+        if ($failed) {
+            return;
+        }
+        // Bài kế hoạch có chữ / bìa ghép (vd ảnh vừa tạo lại): giao content-worker dựng lại trên ảnh mới
+        if ($post->sample_key && $post->platforms) {
+            app(ContentJobService::class)->queueForPost($post);
+        }
+    }
+
+    /** Bài kế hoạch có ảnh lấy từ lô (unboxing / lô phối đồ): ảnh bài luôn theo ảnh của lô, tới khi worker nhận đăng. */
+    public function followsBatch(SocialPost $post): bool
+    {
+        return $post->source === SocialPost::SOURCE_PLAN && $post->image_batch_id !== null;
+    }
+
+    /**
+     * Lô vừa đổi ảnh ở trang Lô ảnh (tạo lại, sửa nguyên liệu, cắt / tải ảnh, xoá ảnh): bài kế hoạch đi theo lô (chưa được
+     * worker nhận đăng) chép lại ảnh của lô theo thứ tự rồi về "Đang chuẩn bị"; lô xong hết (không ảnh lỗi) thì bài tự vào
+     * hàng chờ đăng (advanceIfReady). Gọi trong transaction của thao tác trên lô.
+     */
+    public function followBatch(int $batchId): void
+    {
+        $posts = SocialPost::query()->where('image_batch_id', $batchId)->where('source', SocialPost::SOURCE_PLAN)
+            ->whereIn('status', [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued])
+            ->lockForUpdate()->get();
+        if ($posts->isEmpty()) {
+            return;
+        }
+        $images = ImageBatchImage::query()->where('image_batch_id', $batchId)->orderBy('position')->get();
+        foreach ($posts as $post) {
+            $post->images()->delete();
+            foreach ($images->values() as $i => $image) {
+                $post->images()->create(['generation_id' => $image->generation_id, 'output_id' => $image->output_id, 'position' => $i + 1]);
+            }
+            $post->contentJobs()->whereIn('status', [ContentJob::QUEUED, ContentJob::PROCESSING])
+                ->update(['status' => ContentJob::SUPERSEDED, 'finished_at' => now()]);
+            $post->update(['status' => SocialPostStatus::Generating, 'last_error' => null]);
+            $this->audit->log('social_post.follow_batch', $post, ['image_batch_id' => $batchId, 'images' => $images->count()]);
+            $this->advanceIfReady($post->id);
+        }
     }
 
     /** @param  array{title?: ?string, content?: ?string, hashtags?: ?array}  $content */

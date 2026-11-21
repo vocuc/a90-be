@@ -27,6 +27,8 @@ class ContentPlanItem extends Model
             'scheduled_at' => 'datetime',
             'images' => 'array',
             'outfit' => 'array',
+            // Bài lấy ảnh bằng lô tự động mới (unboxing): { product_id }
+            'product_batch' => 'array',
             'hashtags' => 'array',
         ];
     }

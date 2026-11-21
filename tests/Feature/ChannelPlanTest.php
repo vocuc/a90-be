@@ -36,7 +36,7 @@ class ChannelPlanTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // Test luồng chung với cả bài viết mẫu chưa làm xong (unboxing, this_or_that...): bật hết
+        // Test luồng chung với cả bài viết mẫu chưa làm xong (closeup, this_or_that...): bật hết
         config(['ai90.post_samples_enabled' => ['*']]);
         $admin = User::factory()->create(['role' => 'admin']);
         $this->planToken = $admin->createToken('plan:test', ['channel-plan'])->plainTextToken;
@@ -84,7 +84,7 @@ class ChannelPlanTest extends TestCase
     private function approveSetup(): void
     {
         $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [
-            ['sample_key' => 'unboxing', 'percent' => 60, 'reason' => 'bán hàng'],
+            ['sample_key' => 'closeup', 'percent' => 60, 'reason' => 'bán hàng'],
             ['sample_key' => 'this_or_that', 'percent' => 40],
         ]])->assertCreated()->assertJsonPath('data.status', 'pending');
         $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
@@ -95,7 +95,7 @@ class ChannelPlanTest extends TestCase
     private function templateBody(): array
     {
         return ['name' => 'Ô trắng giữa', 'sample_text' => 'Đập hộp đi chúc Tết',
-            'sample_keys' => ['unboxing', 'this_or_that', 'lookbook'], 'style' => [
+            'sample_keys' => ['closeup', 'this_or_that', 'lookbook'], 'style' => [
             'position' => 'top', 'font' => 'Be Vietnam Pro', 'weight' => 800, 'size' => 6, 'color' => '#111111',
             'stroke' => null, 'background' => 'box', 'box_color' => '#ffffff', 'box_radius' => 8, 'align' => 'center', 'max_lines' => 3,
         ]];
@@ -110,7 +110,7 @@ class ChannelPlanTest extends TestCase
     {
         return array_merge([
             'slot_index' => $slot,
-            'sample_key' => 'unboxing',
+            'sample_key' => 'closeup',
             // Mọi bài cần chủ đề; mỗi slot 1 chủ đề để không vướng luật lặp 14 ngày
             'topic' => ['name' => "Chủ đề slot {$slot}"],
             'hook' => 'Đập hộp đôi sandal đi chúc Tết',
@@ -158,21 +158,21 @@ class ChannelPlanTest extends TestCase
             $this->assertTrue(($time >= '11:00' && $time <= '13:00') || ($time >= '19:00' && $time <= '22:00'), "Slot {$time} nằm trong khung giờ");
         }
         $this->assertSame($plan['id'], $this->context()['plan']['id'], 'Gọi lại dùng lại kỳ đang giữ slot');
-        $this->assertContains('unboxing', array_column($context['post_samples'], 'key'));
+        $this->assertContains('closeup', array_column($context['post_samples'], 'key'));
         $this->assertNotContains('top_n', array_column($context['post_samples'], 'key'), 'Chỉ gửi đủ chi tiết bài viết mẫu của tuyến');
     }
 
     public function test_lineup_normalized_and_auto_approve_switches(): void
     {
         $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [
-            ['sample_key' => 'unboxing', 'percent' => 1],
+            ['sample_key' => 'closeup', 'percent' => 1],
             ['sample_key' => 'top_n', 'percent' => 1],
             ['sample_key' => 'khong_co', 'percent' => 5],
             ['sample_key' => 'top_n', 'percent' => 9],
         ]])->assertCreated()
             ->assertJsonPath('data.status', 'pending')
             ->assertJsonPath('data.items', [
-                ['sample_key' => 'unboxing', 'percent' => 50, 'reason' => null],
+                ['sample_key' => 'closeup', 'percent' => 50, 'reason' => null],
                 ['sample_key' => 'top_n', 'percent' => 50, 'reason' => null],
             ]);
 
@@ -227,7 +227,7 @@ class ChannelPlanTest extends TestCase
         $this->assertCount(2, $posts);
         $post = $posts[0];
         $this->assertSame(SocialPostStatus::Generating, $post->status, 'Chờ content-worker dựng');
-        $this->assertSame('unboxing', $post->sample_key);
+        $this->assertSame('closeup', $post->sample_key);
         $this->assertSame(['giaytet2027'], $post->hashtags, 'Hashtag ngoài kho bị bỏ');
         $this->assertSame(SocialPost::SOURCE_PLAN, $post->source);
 
@@ -235,7 +235,7 @@ class ChannelPlanTest extends TestCase
         $this->withToken($this->workerToken)->getJson('/api/v1/worker-jobs')->assertNoContent();
         $job = $this->withToken($this->contentToken)->getJson('/api/v1/worker-jobs')->assertOk()
             ->assertJsonPath('data.request.post_id', $post->id)
-            ->assertJsonPath('data.request.sample_key', 'unboxing')
+            ->assertJsonPath('data.request.sample_key', 'closeup')
             ->assertJsonPath('data.request.cover_collage', false)
             ->assertJsonPath('data.request.images.0.text', 'Đập hộp đi chúc Tết 🧧')
             ->assertJsonPath('data.request.images.0.kind', 'product')
@@ -351,14 +351,14 @@ class ChannelPlanTest extends TestCase
             ->assertStatus(409)->assertJsonPath('code', 'TEXT_TEMPLATE_IN_USE');
         $this->assertSame('approved', $used->fresh()->status);
 
-        // Template khác đã duyệt nhưng KHÔNG gắn loại bài của bài (unboxing): vẫn chặn
+        // Template khác đã duyệt nhưng KHÔNG gắn loại bài của bài (closeup): vẫn chặn
         $other = $this->channel->textTemplates()->create(['name' => 'Khác', 'status' => 'approved', 'style' => $used->style,
             'sample_keys' => ['this_or_that']]);
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$used->id}/reject")
             ->assertStatus(409)->assertJsonPath('code', 'TEXT_TEMPLATE_IN_USE');
 
         // Có template khác đã duyệt gắn cùng loại bài: bỏ được, bài chuyển sang template đó và chèn chữ lại
-        $other->update(['sample_keys' => ['this_or_that', 'unboxing']]);
+        $other->update(['sample_keys' => ['this_or_that', 'closeup']]);
         $oldJob = ContentJob::query()->where('social_post_id', $post->id)->latest('id')->firstOrFail();
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$used->id}/reject")
             ->assertOk()->assertJsonPath('data.status', 'rejected')->assertJsonPath('data.moved_posts', 1);
@@ -374,7 +374,7 @@ class ChannelPlanTest extends TestCase
     {
         $refs = $this->images(2);
         $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [
-            ['sample_key' => 'unboxing', 'percent' => 60], ['sample_key' => 'this_or_that', 'percent' => 40],
+            ['sample_key' => 'closeup', 'percent' => 60], ['sample_key' => 'this_or_that', 'percent' => 40],
         ]])->assertCreated();
         $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
         $template = $this->channel->textTemplates()->create(['name' => 'Chưa gắn', 'status' => 'approved',
@@ -383,7 +383,7 @@ class ChannelPlanTest extends TestCase
         // Template đã duyệt nhưng chưa gắn loại bài nào: coi như kênh chưa có template
         $this->assertContains('text_templates', $this->context()['missing']);
 
-        // Gắn loại bài khác (this_or_that): bài unboxing có chữ vẫn bị từ chối, gửi thẳng id cũng bị từ chối
+        // Gắn loại bài khác (this_or_that): bài closeup có chữ vẫn bị từ chối, gửi thẳng id cũng bị từ chối
         $template->update(['sample_keys' => ['this_or_that']]);
         $context = $this->context();
         $this->assertSame([], $context['missing']);
@@ -392,15 +392,15 @@ class ChannelPlanTest extends TestCase
         $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
             $this->item(0, $refs), $this->item(1, $refs, ['hook' => 'Hook khác', 'text_template_id' => $template->id]),
         ]])->assertOk()->json('data.rejected');
-        $this->assertStringContainsString('gắn với bài viết mẫu "unboxing"', implode(' ', $rejected[0]['errors']));
+        $this->assertStringContainsString('gắn với bài viết mẫu "closeup"', implode(' ', $rejected[0]['errors']));
         $this->assertStringContainsString("text_template_id {$template->id}", implode(' ', $rejected[1]['errors']));
 
-        // Chủ shop gắn thêm unboxing ở tab Template chữ: bài được nhận với template đó
+        // Chủ shop gắn thêm closeup ở tab Template chữ: bài được nhận với template đó
         $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$template->id}",
             ['sample_keys' => ['khong_co']])->assertStatus(422)->assertJsonValidationErrors('sample_keys.0');
         $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$template->id}",
-            ['sample_keys' => ['this_or_that', 'unboxing', 'unboxing']])->assertOk()
-            ->assertJsonPath('data.sample_keys', ['this_or_that', 'unboxing']);
+            ['sample_keys' => ['this_or_that', 'closeup', 'closeup']])->assertOk()
+            ->assertJsonPath('data.sample_keys', ['this_or_that', 'closeup']);
         $this->app['auth']->forgetGuards();
         $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$this->item(0, $refs)]])
             ->assertOk()->assertJsonPath('data.accepted', [0]);
@@ -529,18 +529,108 @@ class ChannelPlanTest extends TestCase
     {
         config(['ai90.post_samples_enabled' => null]); // mặc định: PostSamples::READY
         $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [
-            ['sample_key' => 'lookbook', 'percent' => 50], ['sample_key' => 'unboxing', 'percent' => 50],
+            ['sample_key' => 'lookbook', 'percent' => 50], ['sample_key' => 'closeup', 'percent' => 50],
         ]])->assertStatus(422)->assertJsonPath('code', 'SAMPLE_NOT_READY');
 
         // Tuyến cũ (đã duyệt trước khi chặn) chỉ có bài chưa xong -> coi như thiếu tuyến
-        $this->channel->lineups()->create(['items' => [['sample_key' => 'unboxing', 'percent' => 100, 'reason' => null]],
+        $this->channel->lineups()->create(['items' => [['sample_key' => 'closeup', 'percent' => 100, 'reason' => null]],
             'status' => 'approved', 'approved_at' => now()]);
         $this->assertContains('lineup', $this->channel->fresh()->missing());
 
         $samples = collect($this->actingAs($this->shop)->getJson('/api/v1/creator/channels/post-samples')->assertOk()->json('data'))->keyBy('key');
         $this->assertTrue($samples['lookbook']['enabled']);
-        $this->assertFalse($samples['unboxing']['enabled']);
+        $this->assertFalse($samples['closeup']['enabled']);
         $this->assertSame(['top_n', 'lookbook', 'outfit_by_day'], \App\Models\ChannelTextTemplate::sampleKeyOptions());
+    }
+
+    public function test_unboxing_creates_auto_batch_on_approve(): void
+    {
+        // Kiểu bài chủ shop hay đăng: bài kế hoạch chỉ ghi sản phẩm, duyệt kỳ -> lô tự động (sản phẩm x 1 nhóm Creative)
+        $creative = $this->publishedCreative($this->shop);
+        $creative->hashtags()->sync(Hashtag::syncPivot(['giay']));
+        $productId = $this->actingAs($this->shop)->post('/api/v1/creator/products', [
+            'name' => 'Cao gót đỏ', 'hashtags' => ['giay'],
+            'images' => [['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'product_image']],
+        ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
+        $lonely = $this->actingAs($this->shop)->post('/api/v1/creator/products', [
+            'name' => 'Không ghép được', 'hashtags' => ['giay'],
+            'images' => [['file' => UploadedFile::fake()->image('q.png', 32, 32), 'field_key' => 'khac']],
+        ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
+        $this->actingAs($this->shop)->postJson('/api/v1/creator/creative-groups', ['name' => 'Studio', 'creative_ids' => [$creative->id]])->assertCreated();
+        $this->app['auth']->forgetGuards();
+
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'unboxing', 'percent' => 100]]])->assertCreated();
+        $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
+        // Tuyến chỉ có bài không chữ: không cần template chữ; unboxing không gắn được template chữ
+        $context = $this->context();
+        $this->assertNotContains('text_templates', $context['missing']);
+        $this->assertFalse($context['channel']['image_worker']);
+        $this->assertNotContains('unboxing', \App\Models\ChannelTextTemplate::sampleKeyOptions());
+        $planId = $context['plan']['id'];
+        $base = ['sample_key' => 'unboxing', 'topic' => ['name' => 'Đi chúc Tết'], 'hook' => 'Đôi cao gót đỏ đi chúc Tết',
+            'title' => 'Tết này diện đôi đỏ là chuẩn', 'hashtags' => ['tet2027']];
+
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$base, 'slot_index' => 0, 'product_batch' => ['product_id' => $productId]],
+        ]])->assertOk()->json('data.rejected');
+        $this->assertStringContainsString('worker tạo ảnh', implode(' ', $rejected[0]['errors']));
+        [$imageWorker] = Worker::register('anh-'.Str::random(4), Worker::TYPE_IMAGE);
+        $imageWorker->users()->attach($this->shop->id);
+
+        $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$base, 'slot_index' => 0, 'product_batch' => ['product_id' => $productId]],
+            [...$base, 'slot_index' => 1, 'hook' => 'Hook khác', 'product_batch' => ['product_id' => $lonely]],
+            [...$base, 'slot_index' => 2, 'hook' => 'Hook khác 2'],
+            [...$base, 'slot_index' => 3, 'hook' => 'Hook khác 3', 'product_batch' => ['product_id' => $productId], 'images' => [['ref' => 'g1-o1']]],
+        ]])->assertOk()->json('data');
+        $this->assertSame([0], $res['accepted']);
+        $errors = collect($res['rejected'])->keyBy('slot_index')->map(fn ($r) => implode(' ', $r['errors']));
+        $this->assertStringContainsString('không ghép được với nhóm Creative', $errors[1]);
+        $this->assertStringContainsString('product_batch.product_id', $errors[2]);
+        $this->assertStringContainsString('không chọn ảnh có sẵn', $errors[3]);
+
+        $item = $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}")->assertOk()->json('data.items.0');
+        $this->assertSame('Cao gót đỏ', $item['product_batch']['product_name']);
+        // Chủ shop sửa caption không gửi sản phẩm: giữ sản phẩm, không báo trùng với chính nó
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/items/{$item['id']}", [
+            'sample_key' => 'unboxing', 'hook' => $item['hook'], 'title' => 'Tiêu đề mới', 'hashtags' => ['tet2027'],
+        ])->assertOk()->assertJsonPath('data.product_batch.product_id', $productId);
+
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        $post = SocialPost::query()->where('plan_item_id', $item['id'])->firstOrFail();
+        $this->assertSame(SocialPostStatus::Generating, $post->status);
+        $this->assertNotNull($post->image_batch_id);
+        $this->assertSame('auto', \App\Models\ImageBatch::query()->find($post->image_batch_id)->source);
+        $this->assertSame(1, $post->images()->count());
+        $this->assertNull($post->images()->first()->overlay_text);
+        $this->assertSame('Tiêu đề mới', $post->title);
+
+        // Lô xong -> bài sẵn sàng đăng (vào hàng chờ)
+        $this->runWorker([null]);
+        $this->assertSame(SocialPostStatus::Queued, $post->fresh()->status);
+
+        // Chủ shop bấm "Tạo lại" ảnh ở trang Lô ảnh -> bài về chờ, ảnh của bài theo ảnh mới của lô
+        $batchImage = \App\Models\ImageBatchImage::query()->where('image_batch_id', $post->image_batch_id)->firstOrFail();
+        $regen = fn (string $key) => $this->actingAs($this->shop)
+            ->postJson("/api/v1/image-batches/{$post->image_batch_id}/images/{$batchImage->id}/regenerate", ['idempotency_key' => $key]);
+        $regen('r1')->assertStatus(202);
+        $post->refresh();
+        $this->assertSame(SocialPostStatus::Generating, $post->status);
+        $this->assertSame($batchImage->fresh()->output_id, $post->images()->value('output_id'));
+
+        // Ảnh mới lỗi -> bài chưa đăng, chờ duyệt kèm lý do
+        $this->runWorker(['MODEL_ERROR']);
+        $post->refresh();
+        $this->assertSame(SocialPostStatus::PendingReview, $post->status);
+        $this->assertSame('BATCH_IMAGES_FAILED', $post->last_error['code']);
+
+        // Tạo lại lần nữa thành công -> bài lại vào hàng chờ đăng
+        $regen('r2')->assertStatus(202);
+        $this->runWorker([null]);
+        $post->refresh();
+        $this->assertSame(SocialPostStatus::Queued, $post->status);
+        $this->assertNull($post->last_error);
+        $this->assertSame('Tiêu đề mới', $post->title);
     }
 
     public function test_top_n_gets_collage_cover_from_content_worker(): void

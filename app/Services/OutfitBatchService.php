@@ -148,6 +148,8 @@ class OutfitBatchService
                     $original->product_id, $original->worker_id, (bool) $original->insert_logo, $idempotencyKey, $original);
             $image->update(['generation_id' => $generation->id, 'output_id' => $generation->outputs()->first()->id]);
             $this->audit->log('image_batch.regenerate', $batch, ['image_id' => $image->id, 'generation_id' => $generation->id], $user->id);
+            // Bài kế hoạch lấy ảnh từ lô phối đồ: bài về chờ, ảnh mới xong thì bài lại sẵn sàng đăng
+            app(\App\Services\Social\SocialPostService::class)->followBatch($batch->id);
 
             return $image;
         });

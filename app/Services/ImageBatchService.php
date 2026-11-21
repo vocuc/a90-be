@@ -8,6 +8,7 @@ use App\Models\AiCreative;
 use App\Models\GenerationOutput;
 use App\Models\ImageBatch;
 use App\Models\ImageBatchImage;
+use App\Services\Social\SocialPostService;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\UploadedFile;
@@ -115,6 +116,8 @@ class ImageBatchService
 
             $image->update(['generation_id' => $generation->id, 'output_id' => $generation->outputs->first()->id]);
             $this->audit->log('image_batch.regenerate', $batch, ['image_id' => $image->id, 'generation_id' => $generation->id], $user->id);
+            // Bài kế hoạch lấy ảnh từ lô (unboxing): bài về chờ, ảnh mới xong thì bài lại sẵn sàng đăng
+            app(SocialPostService::class)->followBatch($batch->id);
 
             return $image;
         });
@@ -155,6 +158,7 @@ class ImageBatchService
                     'disabled_at' => null,
                 ]);
                 $this->audit->log('image_batch.crop', $batch, ['image_id' => $image->id, 'output_id' => $output->id], $user->id);
+                app(SocialPostService::class)->followBatch($batch->id);
 
                 return $old;
             });
@@ -185,6 +189,7 @@ class ImageBatchService
 
             $this->audit->log('image_batch.delete_image', $batch, ['image_id' => $image->id], $user->id);
             $image->delete();
+            app(SocialPostService::class)->followBatch($batch->id);
         });
     }
 
