@@ -385,13 +385,16 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(5, $post->images()->count());
         $kinds = Generation::query()->whereIn('id', $post->images()->pluck('generation_id'))->orderBy('id')->pluck('kind')->all();
         $this->assertSame([Generation::KIND_OUTFIT_COVER, ...array_fill(0, 4, Generation::KIND_OUTFIT)], $kinds);
-        $this->assertSame(0, TextOverlayJob::query()->count(), 'Không chèn chữ: bìa đã có hook do worker phối đồ in');
+        $this->assertSame(0, TextOverlayJob::query()->count(), 'A51 không chèn chữ: worker phối đồ in hook lên bìa');
 
         // Lô có sẵn hook (chủ đề của bài) + hashtag chủ đề, khoá không cho worker đổi
         $batch = \App\Models\ImageBatch::query()->findOrFail($post->image_batch_id);
         $this->assertSame('5 outfit đi chơi Tết', $batch->title);
         $this->assertTrue($batch->hook_locked);
         $this->assertSame(['dichoi', 'tet'], $batch->outfit_tags);
+        // Không gửi text_template_id: lấy template đã duyệt đầu tiên của kênh
+        $templateId = $this->channel->textTemplates()->value('id');
+        $this->assertSame($templateId, $batch->text_template_id);
 
         // Worker phối đồ nhận job: thấy hook cố định + hashtag; gửi title khác thì A51 giữ nguyên hook
         $outfitToken = $outfitWorker->regenerateToken();
@@ -399,6 +402,9 @@ class ChannelPlanTest extends TestCase
         $this->assertTrue($job['batch']['hook_locked']);
         $this->assertSame('5 outfit đi chơi Tết', $job['batch']['title']);
         $this->assertSame(['dichoi', 'tet'], $job['batch']['outfit_tags']);
+        // Template chữ của kênh để worker in hook lên ảnh bìa
+        $this->assertSame($templateId, $job['batch']['text_template']['id']);
+        $this->assertSame('box', $job['batch']['text_template']['style']['background']);
         $this->withToken($outfitToken)->post("/api/v1/jobs/{$job['id']}", [
             'status' => 'completed', 'title' => 'Hook khác do worker tự đặt',
             'image' => UploadedFile::fake()->image('o.png', 32, 32),

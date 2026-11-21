@@ -76,10 +76,11 @@ class OutfitBatchService
      */
     /**
      * $lockedHook / $outfitTags (bài kế hoạch lookbook, 2026-11-21): lô có sẵn tiêu đề = hook, hook_locked = true, worker
-     * không tạo hook mới và tìm outfit theo $outfitTags.
+     * không tạo hook mới và tìm outfit theo $outfitTags. $textTemplateId: template chữ của kênh để worker in hook lên ảnh bìa.
      */
     public function create(User $user, int $count, int $images, bool $insertLogo, string $idempotencyKey, int $workerId,
-        ?array $productIds = null, bool $useProduct = true, ?string $lockedHook = null, array $outfitTags = []): array
+        ?array $productIds = null, bool $useProduct = true, ?string $lockedHook = null, array $outfitTags = [],
+        ?int $textTemplateId = null): array
     {
         $lock = Cache::lock("outfit-batch:{$user->id}", 120);
         $lock->block(30);
@@ -100,12 +101,13 @@ class OutfitBatchService
             $creative = $this->systemCreative($user);
             $created = [];
             foreach ($products->values() as $n => $product) {
-                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags) {
+                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags, $textTemplateId) {
                     $batch = ImageBatch::query()->create([
                         'user_id' => $user->id,
                         'idempotency_key' => "outfit:{$idempotencyKey}:{$n}",
                         'source' => ImageBatch::SOURCE_OUTFIT,
-                        ...($lockedHook !== null ? ['title' => $lockedHook, 'hook_locked' => true, 'outfit_tags' => array_values($outfitTags)] : []),
+                        ...($lockedHook !== null ? ['title' => $lockedHook, 'hook_locked' => true, 'outfit_tags' => array_values($outfitTags),
+                            'text_template_id' => $textTemplateId] : []),
                     ]);
                     $paths = $product ? $product->images->pluck('path', 'field_key')->all() : [];
                     for ($pos = 1; $pos <= $images; $pos++) {

@@ -484,6 +484,8 @@ class ChannelPlanService
         // Bài viết mẫu lấy ảnh bằng LÔ PHỐI ĐỒ mới (vd lookbook): không chọn ảnh có sẵn, chỉ ghi số ảnh + sản phẩm
         if (($sample['image_source'] ?? PostSamples::SOURCE_LIBRARY) === PostSamples::SOURCE_OUTFIT_BATCH) {
             $outfit = $this->validateOutfit($channel, $sample, $raw, $format, $errors);
+            // Hook in lên ảnh bìa theo template chữ của kênh (worker phối đồ v2, người dùng chốt 2026-11-21)
+            $textTemplateId = $this->approvedTemplateId($channel, $raw, $errors);
             $signature = self::signature($sampleKey, $hook, []);
             if (in_array($signature, $signatures, true)) {
                 $errors[] = 'Trùng hook với bài lookbook khác của kênh. Đổi hook.';
@@ -499,7 +501,7 @@ class ChannelPlanService
                 'video_template_id' => null,
                 'images' => [],
                 'outfit' => $outfit,
-                'text_template_id' => null,
+                'text_template_id' => $textTemplateId,
                 ...$this->caption($channel, $raw),
                 '_signature' => $signature,
             ], []];
@@ -575,12 +577,7 @@ class ChannelPlanService
 
         $textTemplateId = null;
         if ($hasText && $format === ContentPlanItem::FORMAT_PHOTO) {
-            $textTemplateId = $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED)
-                ->whereKey((int) ($raw['text_template_id'] ?? 0))->value('id')
-                ?? $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED)->orderBy('id')->value('id');
-            if (! $textTemplateId) {
-                $errors[] = 'Kênh chưa có template chữ đã duyệt.';
-            }
+            $textTemplateId = $this->approvedTemplateId($channel, $raw, $errors);
         }
 
         // Không trùng y hệt (cùng bộ ảnh + bài viết mẫu + hook)
@@ -606,6 +603,19 @@ class ChannelPlanService
         ], []];
     }
 
+    /** text_template_id gửi lên nếu là template đã duyệt của kênh, không thì template đã duyệt đầu tiên; không có -> lỗi. */
+    private function approvedTemplateId(Channel $channel, array $raw, array &$errors): ?int
+    {
+        $approved = fn () => $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED);
+        $id = $approved()->whereKey((int) ($raw['text_template_id'] ?? 0))->value('id')
+            ?? $approved()->orderBy('id')->value('id');
+        if (! $id) {
+            $errors[] = 'Kênh chưa có template chữ đã duyệt.';
+        }
+
+        return $id;
+    }
+
     /** Caption theo cài đặt AI của kênh: tiêu đề / nội dung cắt theo giới hạn, hashtag chỉ giữ cái trong kho (tối đa N). */
     private function caption(Channel $channel, array $raw): array
     {
@@ -624,7 +634,7 @@ class ChannelPlanService
     /**
      * Bài lấy ảnh bằng lô phối đồ: outfit.count = tổng số ảnh của lô (gồm 1 bìa), trong khoảng slide của bài viết mẫu và
      * giới hạn lô phối đồ; outfit.product_id (không bắt buộc) = sản phẩm đang hoạt động có ảnh của shop. Shop phải được
-     * gắn worker phối đồ. Chỉ bài ảnh, không chèn chữ (bìa đã có hook do worker đặt).
+     * gắn worker phối đồ. Chỉ bài ảnh, A51 không chèn chữ: worker phối đồ in hook lên ảnh bìa theo text_template_id của bài.
      *
      * @return array{count: int, product_id: ?int}
      */
@@ -761,7 +771,7 @@ class ChannelPlanService
         $post->syncStatus();
         if ($item->outfit) {
             // Ảnh tạo bằng lô phối đồ mới: bài chờ ảnh xong (SocialPostService::advanceIfReady) rồi vào hàng chờ đăng
-            $batch = $this->createOutfitBatch($channel, $item->outfit, 'plan-item-'.$item->id, $item->hook);
+            $batch = $this->createOutfitBatch($channel, $item->outfit, 'plan-item-'.$item->id, $item->hook, $item->text_template_id);
             $post->status = SocialPostStatus::Generating;
             $post->image_batch_id = $batch->id;
             $post->save();
@@ -777,7 +787,7 @@ class ChannelPlanService
     }
 
     /** Tạo 1 lô phối đồ cho bài (worker phối đồ đầu tiên được gắn cho shop, chèn logo nếu shop có logo). */
-    private function createOutfitBatch(Channel $channel, array $outfit, string $key, string $hook): ImageBatch
+    private function createOutfitBatch(Channel $channel, array $outfit, string $key, string $hook, ?int $textTemplateId): ImageBatch
     {
         $user = $channel->user()->firstOrFail();
         $workerId = Worker::query()->assignedTo($user->id, Worker::TYPE_OUTFIT)->orderBy('id')->value('id')
@@ -786,7 +796,7 @@ class ChannelPlanService
         // (công tắc "Dùng ảnh sản phẩm" tắt ở luồng tạo lô phối đồ hiện tại)
         $productId = ! empty($outfit['product_id']) ? (int) $outfit['product_id'] : null;
         $batches = $this->outfitBatches->create($user, 1, (int) $outfit['count'], (bool) $user->logoPath(), $key, $workerId,
-            $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? []);
+            $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? [], $textTemplateId);
 
         return $batches[0] ?? throw new BusinessException('OUTFIT_NO_PRODUCT', 'Không tạo được lô phối đồ.', 422);
     }
@@ -913,7 +923,8 @@ class ChannelPlanService
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
             if ($data['outfit']) {
                 // Làm lại bài lô phối đồ: tạo lô phối đồ MỚI, bài chờ ảnh xong rồi vào hàng chờ đăng
-                $batch = $this->createOutfitBatch($channel, $data['outfit'], 'redo-post-'.$post->id.'-'.now()->timestamp, $data['hook']);
+                $batch = $this->createOutfitBatch($channel, $data['outfit'], 'redo-post-'.$post->id.'-'.now()->timestamp, $data['hook'],
+                    $data['text_template_id']);
                 $data['images'] = $this->batchImages($batch);
                 $post->image_batch_id = $batch->id;
             }
@@ -941,6 +952,7 @@ class ChannelPlanService
                 ContentPlanItem::query()->whereKey($post->plan_item_id)->update([
                     'outfit' => $data['outfit'] ? json_encode($data['outfit']) : null,
                     'sample_key' => $data['sample_key'], 'hook' => $data['hook'], 'images' => json_encode($data['images']),
+                    'text_template_id' => $data['text_template_id'],
                     'title' => $data['title'], 'content' => $data['content'], 'hashtags' => json_encode($data['hashtags']),
                 ]);
             }
