@@ -113,7 +113,6 @@ class ChannelController extends Controller
             'time_slots' => ['sometimes', 'present', 'array', 'max:'.Channel::TIME_SLOTS_MAX],
             'time_slots.*.start' => ['required', 'date_format:H:i'],
             'time_slots.*.end' => ['required', 'date_format:H:i'],
-            'video_percent' => ['sometimes', 'required', 'integer', 'min:0', 'max:100'],
             'auto_approve_lineup' => ['sometimes', 'boolean'],
             'auto_approve_templates' => ['sometimes', 'boolean'],
             'auto_approve_plan' => ['sometimes', 'boolean'],
@@ -140,7 +139,7 @@ class ChannelController extends Controller
 
         $user = $request->user();
         $fields = collect($data)->only([
-            'name', 'is_active', 'plan_days', 'posts_per_day', 'video_percent',
+            'name', 'is_active', 'plan_days', 'posts_per_day',
             'auto_approve_lineup', 'auto_approve_templates', 'auto_approve_plan', 'title_max', 'content_max',
         ])->all();
         if (isset($fields['name'])) {
@@ -285,7 +284,8 @@ class ChannelController extends Controller
             'plan_days' => $channel->plan_days,
             'posts_per_day' => $channel->posts_per_day,
             'time_slots' => array_map(fn ($s) => ['start' => $s['start'], 'end' => $s['end']], $channel->time_slots ?? []),
-            'video_percent' => $channel->video_percent,
+            // % giờ đăng video theo tuyến (chỉ đọc, bỏ ô cấu hình 2026-11-22)
+            'video_percent' => $channel->videoPercent(),
             'auto_approve_lineup' => $channel->auto_approve_lineup,
             'auto_approve_templates' => $channel->auto_approve_templates,
             'auto_approve_plan' => $channel->auto_approve_plan,

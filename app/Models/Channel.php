@@ -102,6 +102,22 @@ class Channel extends Model
     }
 
     /** Những gì kênh còn thiếu để lập kế hoạch (hiển thị cho chủ shop, lệnh /lap-ke-hoach đọc). */
+    /**
+     * % giờ đăng VIDEO của kỳ = tổng % các bài viết mẫu CHỈ làm video (vd video_type_01) trong tuyến đã duyệt (chỉ bài đang
+     * bật). Thay ô "% bài video" ở Cấu hình (người dùng bỏ 2026-11-22; cột video_percent không dùng nữa). Chưa có tuyến: 0.
+     */
+    public function videoPercent(): int
+    {
+        $items = array_filter($this->approvedLineup()?->items ?? [], fn ($i) => PostSamples::isEnabled($i['sample_key']));
+        $total = array_sum(array_map(fn ($i) => (float) $i['percent'], $items));
+        if ($total <= 0) {
+            return 0;
+        }
+        $video = array_sum(array_map(fn ($i) => (PostSamples::get($i['sample_key'])['formats'] ?? []) === ['video'] ? (float) $i['percent'] : 0, $items));
+
+        return (int) round($video * 100 / $total);
+    }
+
     public function missing(): array
     {
         $missing = [];
@@ -118,11 +134,11 @@ class Channel extends Model
         if (! array_filter($this->approvedLineup()?->sampleKeys() ?? [], [PostSamples::class, 'isEnabled'])) {
             $missing[] = 'lineup';
         }
-        // Kênh còn bài ảnh (video_percent < 100) thì cần ít nhất 1 template chữ đã duyệt CÓ GẮN loại bài (template chưa gắn
+        // Tuyến có bài ảnh có chữ thì cần ít nhất 1 template chữ đã duyệt CÓ GẮN loại bài (template chưa gắn
         // loại bài nào không dùng được)
         // (Tuyến chỉ có bài không chữ, vd unboxing, thì không cần template)
         $needsText = ! $this->approvedLineup() || array_intersect($this->approvedLineup()->sampleKeys(), ChannelTextTemplate::sampleKeyOptions());
-        if ($this->video_percent < 100 && $needsText && ! $this->textTemplates()->where('status', ChannelTextTemplate::APPROVED)->get()
+        if ($needsText && ! $this->textTemplates()->where('status', ChannelTextTemplate::APPROVED)->get()
             ->contains(fn (ChannelTextTemplate $t) => ! empty($t->sample_keys))) {
             $missing[] = 'text_templates';
         }

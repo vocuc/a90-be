@@ -98,7 +98,8 @@ class ChannelPlanService
                 'plan_days' => $channel->plan_days,
                 'posts_per_day' => $channel->posts_per_day,
                 'time_slots' => $channel->time_slots ?? [],
-                'video_percent' => $channel->video_percent,
+                // % giờ đăng video tính theo tuyến (tổng % bài viết mẫu chỉ làm video), không còn cấu hình riêng
+                'video_percent' => $channel->videoPercent(),
                 'auto_approve' => [
                     'lineup' => $channel->auto_approve_lineup,
                     'templates' => $channel->auto_approve_templates,
@@ -247,7 +248,7 @@ class ChannelPlanService
             }
         }
         // Tỉ lệ video theo cấu hình hiện tại: slot mới thành video cho đủ số video cả kỳ
-        $videos = (int) round(($active->count() + count($missing)) * $channel->video_percent / 100)
+        $videos = (int) round(($active->count() + count($missing)) * $channel->videoPercent() / 100)
             - $active->where('format', ContentPlanItem::FORMAT_VIDEO)->count()
             - collect($missing)->where('format', ContentPlanItem::FORMAT_VIDEO)->count();
         foreach ($missing as $i => $s) {
@@ -313,7 +314,7 @@ class ChannelPlanService
     /**
      * Slot giờ của kỳ: mỗi ngày posts_per_day bài chia đều vào các khung giờ (dư thì khung đầu nhận thêm), mỗi bài giờ
      * ngẫu nhiên trong phần của nó trong khung (cách nhau >= MIN_GAP_MINUTES). Slot đã qua (hôm nay) bị bỏ.
-     * Bài video = làm tròn(tổng x video_percent / 100), rải đều.
+     * Bài video = làm tròn(tổng x % video của tuyến / 100) (Channel::videoPercent), rải đều.
      *
      * @return array<int, array{index: int, at: string, format: string}>
      */
@@ -353,7 +354,7 @@ class ChannelPlanService
         }
 
         $total = count($times);
-        $videos = (int) round($total * $channel->video_percent / 100);
+        $videos = (int) round($total * $channel->videoPercent() / 100);
         $videoIdx = [];
         for ($v = 0; $v < $videos; $v++) {
             $videoIdx[(int) floor(($v + 0.5) * $total / $videos)] = true;

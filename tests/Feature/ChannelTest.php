@@ -103,6 +103,7 @@ class ChannelTest extends TestCase
             'plan_days' => 3,
             'posts_per_day' => 4,
             'time_slots' => [['start' => '19:00', 'end' => '22:00'], ['start' => '11:00', 'end' => '13:00']],
+            // Ô "% bài video" đã bỏ (tính theo tuyến): gửi lên bị bỏ qua
             'video_percent' => 25,
             'auto_approve_lineup' => true,
             'auto_approve_plan' => true,
@@ -114,7 +115,7 @@ class ChannelTest extends TestCase
             ->assertJsonPath('data.plan_days', 3)
             ->assertJsonPath('data.posts_per_day', 4)
             ->assertJsonPath('data.time_slots', [['start' => '11:00', 'end' => '13:00'], ['start' => '19:00', 'end' => '22:00']])
-            ->assertJsonPath('data.video_percent', 25)
+            ->assertJsonPath('data.video_percent', 0)
             ->assertJsonPath('data.auto_approve_lineup', true)
             ->assertJsonPath('data.auto_approve_templates', false)
             ->assertJsonPath('data.auto_approve_plan', true)
@@ -128,8 +129,8 @@ class ChannelTest extends TestCase
             ->assertStatus(422)->assertJsonValidationErrors('time_slots');
         $this->updateChannel($shop, $id, ['time_slots' => [['start' => '13:00', 'end' => '11:00']]])
             ->assertStatus(422)->assertJsonValidationErrors('time_slots');
-        $this->updateChannel($shop, $id, ['requirements' => str_repeat('a', 3001), 'plan_days' => 31, 'posts_per_day' => 0, 'video_percent' => 101])
-            ->assertStatus(422)->assertJsonValidationErrors(['requirements', 'plan_days', 'posts_per_day', 'video_percent']);
+        $this->updateChannel($shop, $id, ['requirements' => str_repeat('a', 3001), 'plan_days' => 31, 'posts_per_day' => 0])
+            ->assertStatus(422)->assertJsonValidationErrors(['requirements', 'plan_days', 'posts_per_day']);
         $this->updateChannel($shop, $id, ['requirements' => str_repeat('a', 3000)])->assertOk();
 
         // Kênh của shop khác / không phải chủ shop

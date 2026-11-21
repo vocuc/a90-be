@@ -791,7 +791,7 @@ class ChannelPlanTest extends TestCase
     public function test_video_type_01_picks_template_and_product_images(): void
     {
         // Bài video giữ luồng "Tạo video": lệnh chọn sản phẩm, A51 chọn template + ảnh của sản phẩm, worker dựng video
-        $this->channel->update(['video_percent' => 100]);
+        // Tuyến chỉ có bài video -> 100% giờ đăng là video (không còn ô "% bài video")
         $refs = $this->images(3);
         $product = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Cao gót đỏ']);
         $empty = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Chưa có ảnh']);
@@ -833,7 +833,12 @@ class ChannelPlanTest extends TestCase
 
     public function test_slots_spread_video_and_skip_past_times(): void
     {
-        $this->channel->update(['plan_days' => 1, 'posts_per_day' => 4, 'video_percent' => 50]);
+        // % video theo tuyến: Video - Type 01 chiếm 50% tuyến -> 50% giờ đăng là video
+        $this->channel->update(['plan_days' => 1, 'posts_per_day' => 4]);
+        $this->channel->lineups()->create(['status' => 'approved', 'approved_at' => now(), 'items' => [
+            ['sample_key' => 'video_type_01', 'percent' => 50, 'reason' => null], ['sample_key' => 'closeup', 'percent' => 50, 'reason' => null],
+        ]]);
+        $this->assertSame(50, $this->channel->fresh()->videoPercent());
         $this->travelTo(CarbonImmutable::parse('2026-11-20 12:00:00'));
         $slots = app(ChannelPlanService::class)->computeSlots($this->channel->fresh(), CarbonImmutable::parse('2026-11-20'));
 
