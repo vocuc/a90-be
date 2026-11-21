@@ -116,8 +116,10 @@ class Channel extends Model
         if (! $this->approvedLineup()) {
             $missing[] = 'lineup';
         }
-        // Kênh còn bài ảnh (video_percent < 100) thì cần ít nhất 1 template chữ đã duyệt
-        if ($this->video_percent < 100 && ! $this->textTemplates()->where('status', ChannelTextTemplate::APPROVED)->exists()) {
+        // Kênh còn bài ảnh (video_percent < 100) thì cần ít nhất 1 template chữ đã duyệt CÓ GẮN loại bài (template chưa gắn
+        // loại bài nào không dùng được)
+        if ($this->video_percent < 100 && ! $this->textTemplates()->where('status', ChannelTextTemplate::APPROVED)->get()
+            ->contains(fn (ChannelTextTemplate $t) => ! empty($t->sample_keys))) {
             $missing[] = 'text_templates';
         }
 

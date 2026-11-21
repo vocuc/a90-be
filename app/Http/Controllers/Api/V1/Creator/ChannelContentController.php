@@ -78,6 +78,8 @@ class ChannelContentController extends Controller
                 'positions' => ChannelTextTemplate::POSITIONS,
                 'backgrounds' => ChannelTextTemplate::BACKGROUNDS,
                 'aligns' => ChannelTextTemplate::ALIGNS,
+                // Loại bài viết mẫu gắn được template (bài ảnh); in_lineup: có trong tuyến nội dung đã duyệt của kênh
+                'post_samples' => $this->templateSampleOptions($channel),
                 'preview_image' => $this->previewImage($channel),
             ],
         ]);
@@ -90,12 +92,14 @@ class ChannelContentController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:100'],
             'sample_text' => ['nullable', 'string', 'max:150'],
+            ...ChannelTextTemplate::sampleKeyRules('sample_keys'),
             ...ChannelTextTemplate::styleRules('style'),
         ], ['name.required' => 'Đặt tên cho template.']);
         $model = $channelModel->textTemplates()->create([
             'name' => trim($data['name']),
             'sample_text' => isset($data['sample_text']) ? trim($data['sample_text']) : null,
             'style' => ChannelTextTemplate::cleanStyle($data['style']),
+            'sample_keys' => ChannelTextTemplate::cleanSampleKeys($data['sample_keys'] ?? []),
             'status' => ChannelTextTemplate::APPROVED,
         ]);
 
@@ -108,12 +112,14 @@ class ChannelContentController extends Controller
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:100'],
             'sample_text' => ['sometimes', 'nullable', 'string', 'max:150'],
+            ...($request->has('sample_keys') ? ChannelTextTemplate::sampleKeyRules('sample_keys') : []),
             ...($request->has('style') ? ChannelTextTemplate::styleRules('style') : []),
         ]);
         $model->update([
             ...(isset($data['name']) ? ['name' => trim($data['name'])] : []),
             ...(array_key_exists('sample_text', $data) ? ['sample_text' => $data['sample_text']] : []),
             ...(isset($data['style']) ? ['style' => ChannelTextTemplate::cleanStyle($data['style'])] : []),
+            ...($request->has('sample_keys') ? ['sample_keys' => ChannelTextTemplate::cleanSampleKeys($data['sample_keys'] ?? [])] : []),
         ]);
 
         return response()->json(['data' => $this->template($model)]);
@@ -267,7 +273,18 @@ class ChannelContentController extends Controller
 
     private function template(ChannelTextTemplate $t): array
     {
-        return ['id' => $t->id, 'name' => $t->name, 'status' => $t->status, 'style' => $t->style, 'sample_text' => $t->sample_text];
+        return ['id' => $t->id, 'name' => $t->name, 'status' => $t->status, 'style' => $t->style,
+            'sample_keys' => $t->sample_keys ?? [], 'sample_text' => $t->sample_text];
+    }
+
+    /** Loại bài viết mẫu (bài ảnh) chủ shop gắn được cho template chữ; bài trong tuyến đã duyệt xếp trước. */
+    private function templateSampleOptions(Channel $channel): array
+    {
+        $lineup = $channel->approvedLineup()?->sampleKeys() ?? [];
+
+        return collect(ChannelTextTemplate::sampleKeyOptions())
+            ->map(fn ($key) => ['key' => $key, 'name' => PostSamples::get($key)['name'], 'in_lineup' => in_array($key, $lineup, true)])
+            ->sortBy(fn ($o) => $o['in_lineup'] ? 0 : 1)->values()->all();
     }
 
     private function planSummary(ContentPlan $p): array

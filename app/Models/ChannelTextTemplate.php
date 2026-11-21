@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Support\PostSamples;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -9,6 +11,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * Template chữ chèn lên ảnh của kênh (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 4.4). Lệnh /lap-ke-hoach
  * tạo 6 mẫu (pending, hoặc approved nếu kênh bật tự duyệt), chủ shop duyệt / từ chối / sửa. Worker đăng bài chèn chữ
  * theo style.
+ *
+ * sample_keys: loại bài viết mẫu (PostSamples, bài ảnh) được dùng template này. Rỗng = KHÔNG được dùng ở đâu (người dùng
+ * chốt 2026-11-21): lập kỳ, sửa chữ trên ảnh, thay template khi bỏ template đều chỉ chọn template gắn đúng loại bài.
  */
 class ChannelTextTemplate extends Model
 {
@@ -34,7 +39,39 @@ class ChannelTextTemplate extends Model
 
     protected function casts(): array
     {
-        return ['style' => 'array'];
+        return ['style' => 'array', 'sample_keys' => 'array'];
+    }
+
+    /** Template dùng được cho loại bài $sampleKey (đã gắn loại bài đó). */
+    public function scopeForSample(Builder $query, string $sampleKey): Builder
+    {
+        return $query->whereJsonContains('sample_keys', $sampleKey);
+    }
+
+    public function usableFor(string $sampleKey): bool
+    {
+        return in_array($sampleKey, $this->sample_keys ?? [], true);
+    }
+
+    /** Loại bài gắn được template: bài viết mẫu có dạng ảnh. */
+    public static function sampleKeyOptions(): array
+    {
+        return collect(PostSamples::all())->filter(fn ($s) => in_array('photo', $s['formats'], true))->keys()->values()->all();
+    }
+
+    /** Luật kiểm tra sample_keys (không bắt buộc: rỗng = template chưa dùng được). */
+    public static function sampleKeyRules(string $prefix): array
+    {
+        return [
+            $prefix => ['nullable', 'array'],
+            "{$prefix}.*" => ['string', 'in:'.implode(',', self::sampleKeyOptions())],
+        ];
+    }
+
+    /** @return string[] */
+    public static function cleanSampleKeys(?array $keys): array
+    {
+        return array_values(array_unique(array_intersect(array_map('strval', $keys ?? []), self::sampleKeyOptions())));
     }
 
     /** Luật kiểm tra style (dùng chung cho API skill và API chủ shop). */

@@ -51,11 +51,13 @@ class ChannelPlanApiController extends Controller
             'templates' => ['required', 'array', 'min:1', 'max:'.ChannelTextTemplate::SUGGEST_COUNT],
             'templates.*.name' => ['required', 'string', 'max:100'],
             'templates.*.sample_text' => ['nullable', 'string', 'max:150'],
+            ...ChannelTextTemplate::sampleKeyRules('templates.*.sample_keys'),
             ...ChannelTextTemplate::styleRules('templates.*.style'),
         ]);
         $saved = $this->plans->saveTemplates($this->channel($channel), $data['templates']);
 
-        return response()->json(['data' => $saved->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'status' => $t->status])], 201);
+        return response()->json(['data' => $saved->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'status' => $t->status,
+            'sample_keys' => $t->sample_keys])], 201);
     }
 
     /** Gửi bài cho kỳ đang giữ slot (plan.id trong context). Gửi bổ sung slot trống: gọi lại cùng API. */

@@ -106,7 +106,8 @@ class ChannelPlanService
                 'pending' => $channel->lineups()->where('status', ChannelLineup::PENDING)->latest('id')->get(['id', 'items', 'created_at']),
             ],
             'text_templates' => $channel->textTemplates()->whereIn('status', [ChannelTextTemplate::APPROVED, ChannelTextTemplate::PENDING])
-                ->orderBy('id')->get(['id', 'name', 'status', 'style', 'sample_text']),
+                // sample_keys: loại bài viết mẫu được dùng template (rỗng = không dùng được)
+                ->orderBy('id')->get(['id', 'name', 'status', 'style', 'sample_keys', 'sample_text']),
             'post_samples' => array_values(array_intersect_key(PostSamples::all(), array_flip($usedKeys))),
             'all_post_samples' => array_map(fn ($s) => ['key' => $s['key'], 'name' => $s['name'], 'group' => $s['group'], 'goal' => $s['goal'], 'formats' => $s['formats']], array_values(PostSamples::all())),
             'products' => Product::query()->where('user_id', $channel->user_id)->active()->with('hashtags')->orderByDesc('id')->limit(100)->get()
@@ -371,7 +372,7 @@ class ChannelPlanService
     /**
      * Lệnh lưu template chữ (6 mẫu). Theo công tắc tự duyệt.
      *
-     * @param  array<int, array{name: string, style: array, sample_text?: ?string}>  $templates
+     * @param  array<int, array{name: string, style: array, sample_keys?: ?array, sample_text?: ?string}>  $templates
      * @return Collection<int, ChannelTextTemplate>
      */
     public function saveTemplates(Channel $channel, array $templates): Collection
@@ -382,6 +383,7 @@ class ChannelPlanService
             'name' => Str::limit(trim((string) $t['name']), 100, ''),
             'status' => $status,
             'style' => ChannelTextTemplate::cleanStyle($t['style']),
+            'sample_keys' => ChannelTextTemplate::cleanSampleKeys($t['sample_keys'] ?? []),
             'sample_text' => isset($t['sample_text']) ? Str::limit(trim((string) $t['sample_text']), 150, '') : null,
         ])));
     }
@@ -485,7 +487,7 @@ class ChannelPlanService
         if (($sample['image_source'] ?? PostSamples::SOURCE_LIBRARY) === PostSamples::SOURCE_OUTFIT_BATCH) {
             $outfit = $this->validateOutfit($channel, $sample, $raw, $format, $errors);
             // Hook in lên ảnh bìa theo template chữ của kênh (worker phối đồ v2, người dùng chốt 2026-11-21)
-            $textTemplateId = $this->approvedTemplateId($channel, $raw, $errors);
+            $textTemplateId = $this->approvedTemplateId($channel, $raw, $sampleKey, $errors);
             $signature = self::signature($sampleKey, $hook, []);
             if (in_array($signature, $signatures, true)) {
                 $errors[] = 'Trùng hook với bài lookbook khác của kênh. Đổi hook.';
@@ -577,7 +579,7 @@ class ChannelPlanService
 
         $textTemplateId = null;
         if ($hasText && $format === ContentPlanItem::FORMAT_PHOTO) {
-            $textTemplateId = $this->approvedTemplateId($channel, $raw, $errors);
+            $textTemplateId = $this->approvedTemplateId($channel, $raw, $sampleKey, $errors);
         }
 
         // Không trùng y hệt (cùng bộ ảnh + bài viết mẫu + hook)
@@ -603,14 +605,25 @@ class ChannelPlanService
         ], []];
     }
 
-    /** text_template_id gửi lên nếu là template đã duyệt của kênh, không thì template đã duyệt đầu tiên; không có -> lỗi. */
-    private function approvedTemplateId(Channel $channel, array $raw, array &$errors): ?int
+    /**
+     * Template chữ của bài: phải ĐÃ DUYỆT và GẮN với loại bài viết mẫu $sampleKey (template chưa gắn loại bài nào không
+     * dùng được, người dùng chốt 2026-11-21). Gửi text_template_id sai -> lỗi; bỏ trống -> template hợp lệ đầu tiên.
+     */
+    private function approvedTemplateId(Channel $channel, array $raw, string $sampleKey, array &$errors): ?int
     {
-        $approved = fn () => $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED);
-        $id = $approved()->whereKey((int) ($raw['text_template_id'] ?? 0))->value('id')
-            ?? $approved()->orderBy('id')->value('id');
+        $usable = fn () => $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED)->forSample($sampleKey);
+        $wanted = (int) ($raw['text_template_id'] ?? 0);
+        if ($wanted) {
+            $id = $usable()->whereKey($wanted)->value('id');
+            if (! $id) {
+                $errors[] = "text_template_id {$wanted} không phải template chữ đã duyệt gắn với bài viết mẫu \"{$sampleKey}\".";
+            }
+
+            return $id;
+        }
+        $id = $usable()->orderBy('id')->value('id');
         if (! $id) {
-            $errors[] = 'Kênh chưa có template chữ đã duyệt.';
+            $errors[] = "Chưa có template chữ đã duyệt gắn với bài viết mẫu \"{$sampleKey}\" (chủ shop gắn loại bài ở tab Template chữ).";
         }
 
         return $id;
@@ -978,28 +991,35 @@ class ChannelPlanService
                 ->distinct()->pluck('social_post_id');
             $items = ContentPlanItem::query()->where('text_template_id', $template->id)->where('status', ContentPlanItem::DRAFT)
                 ->whereHas('plan', fn ($q) => $q->where('channel_id', $channel->id));
-            $replacement = $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED)
-                ->whereKeyNot($template->id)->orderBy('id')->value('id');
-
-            if (($postIds->isNotEmpty() || (clone $items)->exists()) && ! $replacement) {
+            // Template thay thế: template đã duyệt khác GẮN CÙNG loại bài viết mẫu với bài / bài kế hoạch
+            $others = $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED)
+                ->whereKeyNot($template->id)->orderBy('id')->get();
+            $replacementFor = fn (?string $key) => ($key ? $others->first(fn (ChannelTextTemplate $t) => $t->usableFor($key)) : $others->first())?->id;
+            $posts = SocialPost::query()->whereIn('id', $postIds)->get(['id', 'sample_key']);
+            $planItems = (clone $items)->get(['id', 'sample_key']);
+            $uncovered = $posts->pluck('sample_key')->merge($planItems->pluck('sample_key'))->unique()
+                ->reject(fn ($key) => $replacementFor($key))->values();
+            if ($uncovered->isNotEmpty()) {
+                $names = $uncovered->map(fn ($key) => $key ? (PostSamples::get($key)['name'] ?? $key) : 'không loại')->implode(', ');
                 throw new BusinessException('TEXT_TEMPLATE_IN_USE',
-                    'Template này đang được '.$postIds->count().' bài chưa đăng dùng. Duyệt thêm 1 template khác trước khi bỏ template này.', 409);
+                    "Template này đang được bài chưa đăng dùng (loại bài: {$names}). Gắn loại bài đó cho 1 template đã duyệt khác trước khi bỏ template này.", 409);
             }
 
             $template->update(['status' => ChannelTextTemplate::REJECTED]);
-            if (! $replacement) {
-                return 0;
+            foreach ($planItems as $item) {
+                ContentPlanItem::query()->whereKey($item->id)->update(['text_template_id' => $replacementFor($item->sample_key)]);
             }
-            $items->update(['text_template_id' => $replacement]);
-            foreach ($postIds as $postId) {
-                $post = SocialPost::query()->lockForUpdate()->find($postId);
+            $moved = [];
+            foreach ($posts as $row) {
+                $post = SocialPost::query()->lockForUpdate()->find($row->id);
                 if (! $post) {
                     continue;
                 }
-                $post->images()->where('text_template_id', $template->id)->update(['text_template_id' => $replacement]);
+                $moved[$post->id] = $replacementFor($post->sample_key);
+                $post->images()->where('text_template_id', $template->id)->update(['text_template_id' => $moved[$post->id]]);
                 $this->overlays->queueForPost($post);
             }
-            $this->audit->log('channel_text_template.retire', $template, ['moved_posts' => $postIds->count(), 'replacement' => $replacement]);
+            $this->audit->log('channel_text_template.retire', $template, ['moved_posts' => $postIds->count(), 'replacements' => $moved]);
 
             return $postIds->count();
         });
@@ -1015,7 +1035,10 @@ class ChannelPlanService
             throw new BusinessException('VIDEO_NO_OVERLAY', 'Bài video không chèn chữ.', 422);
         }
         $channel = $post->channel ?? throw new BusinessException('POST_NO_CHANNEL', 'Bài không thuộc kênh nào.', 409);
-        $approved = $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED)->pluck('id')->all();
+        // Chỉ template đã duyệt gắn với loại bài viết mẫu của bài
+        $approved = $channel->textTemplates()->where('status', ChannelTextTemplate::APPROVED)->orderBy('id')->get()
+            ->filter(fn (ChannelTextTemplate $t) => ! $post->sample_key || $t->usableFor($post->sample_key))
+            ->pluck('id')->values()->all();
 
         return DB::transaction(function () use ($post, $rows, $approved) {
             $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
@@ -1030,7 +1053,7 @@ class ChannelPlanService
                 if ($text && ! in_array($templateId, $approved, true)) {
                     $templateId = $approved[0] ?? null;
                     if (! $templateId) {
-                        throw new BusinessException('TEXT_TEMPLATE_REQUIRED', 'Kênh chưa có template chữ đã duyệt.', 409);
+                        throw new BusinessException('TEXT_TEMPLATE_REQUIRED', 'Chưa có template chữ đã duyệt gắn với loại bài này.', 409);
                     }
                 }
                 $image->update(['overlay_text' => $text ? Str::limit($text, 150, '') : null, 'text_template_id' => $templateId]);

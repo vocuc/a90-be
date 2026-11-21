@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\SocialPostStatus;
 use App\Models\Channel;
 use App\Models\ContentPlan;
+use App\Models\ContentPlanItem;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\Hashtag;
@@ -82,7 +83,8 @@ class ChannelPlanTest extends TestCase
 
     private function templateBody(): array
     {
-        return ['name' => 'Ô trắng giữa', 'sample_text' => 'Đập hộp đi chúc Tết', 'style' => [
+        return ['name' => 'Ô trắng giữa', 'sample_text' => 'Đập hộp đi chúc Tết',
+            'sample_keys' => ['unboxing', 'this_or_that', 'lookbook'], 'style' => [
             'position' => 'top', 'font' => 'Be Vietnam Pro', 'weight' => 800, 'size' => 6, 'color' => '#111111',
             'stroke' => null, 'background' => 'box', 'box_color' => '#ffffff', 'box_radius' => 8, 'align' => 'center', 'max_lines' => 3,
         ]];
@@ -325,8 +327,14 @@ class ChannelPlanTest extends TestCase
             ->assertStatus(409)->assertJsonPath('code', 'TEXT_TEMPLATE_IN_USE');
         $this->assertSame('approved', $used->fresh()->status);
 
-        // Có template khác đã duyệt: bỏ được, bài chuyển sang template đó và chèn chữ lại
-        $other = $this->channel->textTemplates()->create(['name' => 'Khác', 'status' => 'approved', 'style' => $used->style]);
+        // Template khác đã duyệt nhưng KHÔNG gắn loại bài của bài (unboxing): vẫn chặn
+        $other = $this->channel->textTemplates()->create(['name' => 'Khác', 'status' => 'approved', 'style' => $used->style,
+            'sample_keys' => ['this_or_that']]);
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$used->id}/reject")
+            ->assertStatus(409)->assertJsonPath('code', 'TEXT_TEMPLATE_IN_USE');
+
+        // Có template khác đã duyệt gắn cùng loại bài: bỏ được, bài chuyển sang template đó và chèn chữ lại
+        $other->update(['sample_keys' => ['this_or_that', 'unboxing']]);
         $oldJob = TextOverlayJob::query()->where('social_post_id', $post->id)->latest('id')->firstOrFail();
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$used->id}/reject")
             ->assertOk()->assertJsonPath('data.status', 'rejected')->assertJsonPath('data.moved_posts', 1);
@@ -337,6 +345,49 @@ class ChannelPlanTest extends TestCase
         $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')
             ->assertJsonPath('data.type', 'overlay')
             ->assertJsonPath('data.request.images.0.text', 'Đập hộp đi chúc Tết 🧧');
+    }
+
+    public function test_template_without_sample_keys_is_not_used(): void
+    {
+        $refs = $this->images(2);
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [
+            ['sample_key' => 'unboxing', 'percent' => 60], ['sample_key' => 'this_or_that', 'percent' => 40],
+        ]])->assertCreated();
+        $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
+        $template = $this->channel->textTemplates()->create(['name' => 'Chưa gắn', 'status' => 'approved',
+            'style' => $this->templateBody()['style']]);
+
+        // Template đã duyệt nhưng chưa gắn loại bài nào: coi như kênh chưa có template
+        $this->assertContains('text_templates', $this->context()['missing']);
+
+        // Gắn loại bài khác (this_or_that): bài unboxing có chữ vẫn bị từ chối, gửi thẳng id cũng bị từ chối
+        $template->update(['sample_keys' => ['this_or_that']]);
+        $context = $this->context();
+        $this->assertSame([], $context['missing']);
+        $this->assertSame(['this_or_that'], $context['text_templates'][0]['sample_keys']);
+        $planId = $context['plan']['id'];
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->item(0, $refs), $this->item(1, $refs, ['hook' => 'Hook khác', 'text_template_id' => $template->id]),
+        ]])->assertOk()->json('data.rejected');
+        $this->assertStringContainsString('gắn với bài viết mẫu "unboxing"', implode(' ', $rejected[0]['errors']));
+        $this->assertStringContainsString("text_template_id {$template->id}", implode(' ', $rejected[1]['errors']));
+
+        // Chủ shop gắn thêm unboxing ở tab Template chữ: bài được nhận với template đó
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$template->id}",
+            ['sample_keys' => ['khong_co']])->assertStatus(422)->assertJsonValidationErrors('sample_keys.0');
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$template->id}",
+            ['sample_keys' => ['this_or_that', 'unboxing', 'unboxing']])->assertOk()
+            ->assertJsonPath('data.sample_keys', ['this_or_that', 'unboxing']);
+        $this->app['auth']->forgetGuards();
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$this->item(0, $refs)]])
+            ->assertOk()->assertJsonPath('data.accepted', [0]);
+        $this->assertSame($template->id, ContentPlanItem::query()->where('plan_id', $planId)->value('text_template_id'));
+
+        // Danh sách loại bài gắn được (bài ảnh), bài trong tuyến xếp trước
+        $meta = $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/text-templates")
+            ->assertOk()->json('meta.post_samples');
+        $this->assertTrue($meta[0]['in_lineup']);
+        $this->assertContains('lookbook', array_column($meta, 'key'));
     }
 
     public function test_owner_adds_text_template_approved_right_away(): void
