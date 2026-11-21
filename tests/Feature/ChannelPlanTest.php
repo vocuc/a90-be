@@ -275,6 +275,51 @@ class ChannelPlanTest extends TestCase
             ->assertJsonPath('data.request.images.0', "https://media.test/{$overlayPath}");
     }
 
+    public function test_fill_missing_slots_of_approved_plan(): void
+    {
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->item(0, $refs), $this->item(1, $refs, ['hook' => 'Hook 1']),
+        ]])->assertOk();
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        $plans = $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/plans")->assertOk()->json('data');
+        $this->assertSame(2, $plans[0]['missing_slots']);
+        // Chủ shop huỷ 1 bài -> slot đó cũng thiếu
+        $cancelId = ContentPlanItem::query()->where('plan_id', $planId)->where('slot_index', 1)->value('id');
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/items/{$cancelId}/cancel")->assertOk();
+        $this->app['auth']->forgetGuards();
+
+        // Context chế độ bổ sung: chỉ slot thiếu + bài đang có của kỳ, không tạo kỳ preparing
+        $fill = $this->api('GET', "channels/{$this->channel->id}/context?fill_plan={$planId}")->assertOk()->json('data.plan');
+        $this->assertTrue($fill['fill']);
+        $this->assertSame('approved', $fill['status']);
+        $this->assertSame([1, 2, 3], array_column($fill['slots'], 'index'));
+        $this->assertSame([0], array_column($fill['items'], 'slot_index'));
+        $this->assertSame(0, ContentPlan::query()->where('status', ContentPlan::PREPARING)->count());
+
+        $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->item(0, $refs, ['hook' => 'Hook 0b']),
+            $this->item(1, $refs, ['hook' => 'Hook bổ sung 1']),
+            $this->item(2, $refs, ['hook' => 'Hook bổ sung 2']),
+        ]])->assertOk()->json('data');
+        $this->assertSame([1, 2], $res['accepted']);
+        $this->assertSame('approved', $res['plan']['status']);
+        $this->assertStringContainsString('đã có bài', implode(' ', $res['rejected'][0]['errors']));
+        // Kỳ đã duyệt: bài bổ sung thành bài đăng ngay; dòng cũ đã huỷ của slot 1 được thay
+        $items = ContentPlanItem::query()->where('plan_id', $planId)->orderBy('slot_index')->get();
+        $this->assertSame([0, 1, 2], $items->pluck('slot_index')->all());
+        $this->assertSame(['posted', 'posted', 'posted'], $items->pluck('status')->all());
+        $this->assertSame(3, SocialPost::query()->where('channel_id', $this->channel->id)->count());
+
+        // Slot đã qua giờ không bổ sung được
+        $this->travelTo(CarbonImmutable::parse($fill['slots'][2]['at'])->addMinute());
+        $late = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$this->item(3, $refs, ['hook' => 'Trễ'])]])
+            ->assertOk()->json('data.rejected');
+        $this->assertStringContainsString('qua giờ', implode(' ', $late[0]['errors']));
+    }
+
     public function test_edit_overlay_text_supersedes_old_job(): void
     {
         $refs = $this->images(2);

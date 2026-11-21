@@ -30,7 +30,8 @@ class PlanJobService
         return PlanJob::query()->where('channel_id', $channel->id)->latest('id')->first();
     }
 
-    public function create(Channel $channel, ?string $note): PlanJob
+    /** $fill: TẠO BỔ SUNG cho kỳ này (chờ duyệt / đã duyệt, còn slot thiếu bài) thay vì lập kỳ mới. */
+    public function create(Channel $channel, ?string $note, ?ContentPlan $fill = null): PlanJob
     {
         if (! self::hasWorker($channel->user_id)) {
             throw new BusinessException('PLAN_WORKER_REQUIRED', 'Shop chưa được gắn worker điều phối để lập kế hoạch, liên hệ admin A51 để gắn.', 409);
@@ -44,11 +45,18 @@ class PlanJobService
         if (! $channel->topics()->where('status', \App\Models\ChannelTopic::ACTIVE)->exists()) {
             throw new BusinessException('TOPICS_REQUIRED', 'Kênh chưa có chủ đề đang bật, vào tab Chủ đề để xây dựng chủ đề trước.', 409);
         }
-        if ($channel->plans()->where('status', ContentPlan::DRAFT)->exists()) {
+        if ($fill) {
+            if (! in_array($fill->status, [ContentPlan::DRAFT, ContentPlan::APPROVED], true)) {
+                throw new BusinessException('PLAN_CLOSED', 'Chỉ bổ sung được kỳ chờ duyệt hoặc đã duyệt.', 409);
+            }
+            if (! app(ChannelPlanService::class)->missingSlots($fill)) {
+                throw new BusinessException('PLAN_FULL', 'Kỳ đã đủ bài (các slot còn lại đã qua giờ đăng), không cần bổ sung.', 409);
+            }
+        } elseif ($channel->plans()->where('status', ContentPlan::DRAFT)->exists()) {
             throw new BusinessException('PLAN_DRAFT_PENDING', 'Kỳ trước đang chờ duyệt, duyệt hoặc huỷ kỳ đó rồi lập kỳ mới.', 409);
         }
 
-        return DB::transaction(function () use ($channel, $note) {
+        return DB::transaction(function () use ($channel, $note, $fill) {
             Channel::query()->lockForUpdate()->find($channel->id);
             if (PlanJob::query()->where('channel_id', $channel->id)->whereIn('status', [WorkerJob::QUEUED, WorkerJob::PROCESSING])->exists()) {
                 throw new BusinessException('PLAN_JOB_RUNNING', 'Kênh đang có lượt lập kế hoạch chưa xong, chờ xong rồi bấm lại.', 409);
@@ -58,7 +66,7 @@ class PlanJobService
                 'user_id' => $channel->user_id,
                 'channel_id' => $channel->id,
                 'status' => WorkerJob::QUEUED,
-                'payload' => ['note' => trim((string) $note) ?: null],
+                'payload' => ['note' => trim((string) $note) ?: null, 'plan_id' => $fill?->id],
             ]);
         });
     }
@@ -100,6 +108,8 @@ class PlanJobService
             'channel_id' => $channel->id,
             'channel_name' => $channel->name,
             'note' => $job->payload['note'] ?? null,
+            // Có: TẠO BỔ SUNG cho kỳ này (skill chạy /lap-ke-hoach <id kênh> --bo-sung <plan_id>)
+            'plan_id' => $job->payload['plan_id'] ?? null,
         ];
     }
 
@@ -108,9 +118,10 @@ class PlanJobService
     {
         return DB::transaction(function () use ($worker, $jobId, $summary) {
             $job = $this->lockAssigned($worker, $jobId);
+            $fillId = $job->payload['plan_id'] ?? null;
             $plan = $job->channel()->firstOrFail()->plans()
+                ->when($fillId, fn ($q) => $q->whereKey($fillId), fn ($q) => $q->where('updated_at', '>=', $job->claimed_at ?? $job->created_at))
                 ->whereIn('status', [ContentPlan::DRAFT, ContentPlan::APPROVED])
-                ->where('updated_at', '>=', $job->claimed_at ?? $job->created_at)
                 ->latest('id')->first(['id', 'status']);
             $result = [
                 'summary' => Str::limit(trim((string) $summary), PlanJob::SUMMARY_MAX, '…') ?: null,

@@ -115,4 +115,27 @@ class PlanWorkerTest extends TestCase
         $this->actingAs($this->shop)->deleteJson($url)->assertOk()->assertJsonPath('data.deleted', true);
         $this->assertNull(ContentPlan::query()->find($draft->id));
     }
+
+    public function test_fill_button_creates_fill_job_for_plan(): void
+    {
+        $token = $this->dispatcher();
+        $this->channel->topics()->create(['name' => 'Đi làm', 'source' => 'owner', 'status' => 'active']);
+        $draft = $this->plan(ContentPlan::DRAFT);
+        $draft->update(['slots' => [['index' => 0, 'at' => '2026-11-22T12:00:00+07:00', 'format' => 'photo']]]);
+        $url = "/api/v1/creator/channels/{$this->channel->id}/plan-jobs";
+
+        // Kỳ chờ duyệt vẫn bổ sung được (không bị chặn PLAN_DRAFT_PENDING)
+        $this->actingAs($this->shop)->postJson($url, ['plan_id' => $draft->id, 'note' => 'Bổ sung'])->assertCreated()
+            ->assertJsonPath('data.fill_plan_id', $draft->id);
+        $job = $this->worker($token, 'GET', '?types=plan')->assertOk()->json('data');
+        $this->assertSame($draft->id, $job['request']['plan_id']);
+        $res = $this->worker($token, 'POST', "/{$job['id']}", ['status' => 'completed', 'summary' => 'Đã bổ sung 1 bài.'])->assertOk()->json('data');
+        $this->assertSame($draft->id, $res['result']['plan_id']);
+
+        // Kỳ hết slot thiếu (slot đã qua giờ) -> PLAN_FULL; kỳ đã huỷ -> PLAN_CLOSED
+        $draft->update(['slots' => [['index' => 0, 'at' => '2026-11-21T08:10:00+07:00', 'format' => 'photo']]]);
+        $this->actingAs($this->shop)->postJson($url, ['plan_id' => $draft->id])->assertStatus(409)->assertJsonPath('code', 'PLAN_FULL');
+        $draft->update(['status' => ContentPlan::CANCELLED]);
+        $this->actingAs($this->shop)->postJson($url, ['plan_id' => $draft->id])->assertStatus(409)->assertJsonPath('code', 'PLAN_CLOSED');
+    }
 }

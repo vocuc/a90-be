@@ -65,14 +65,21 @@ class ChannelPlanService
 
     /**
      * Toàn bộ dữ liệu lệnh cần (mục 6.2). Kênh đủ điều kiện và chưa có kỳ draft: tạo / dùng lại kỳ preparing giữ slot.
+     * $fill (chế độ TẠO BỔ SUNG, a90-fe note/xay-kenh-tiktok/worker-lap-ke-hoach.txt mục 5): plan = kỳ đó (chờ duyệt / đã
+     * duyệt) với slots = CHỈ các slot còn thiếu bài (missingSlots), không tạo kỳ preparing.
      */
-    public function context(Channel $channel): array
+    public function context(Channel $channel, ?ContentPlan $fill = null): array
     {
         $channel->loadMissing('worker', 'user');
         $missing = $channel->missing();
         $draft = $channel->plans()->where('status', ContentPlan::DRAFT)->latest('id')->first();
         $plan = null;
-        if (! $draft && ! array_intersect($missing, ['worker', 'time_slots', 'lineup', 'text_templates'])) {
+        if ($fill) {
+            if (! in_array($fill->status, [ContentPlan::DRAFT, ContentPlan::APPROVED], true)) {
+                throw new BusinessException('PLAN_CLOSED', 'Chỉ bổ sung được kỳ chờ duyệt hoặc đã duyệt.', 409);
+            }
+            $plan = $fill;
+        } elseif (! $draft && ! array_intersect($missing, ['worker', 'time_slots', 'lineup', 'text_templates'])) {
             $plan = $this->preparingPlan($channel);
         }
         $lineup = $channel->approvedLineup();
@@ -132,13 +139,45 @@ class ChannelPlanService
                 'id' => $plan->id,
                 'start_date' => $plan->start_date->toDateString(),
                 'days' => $plan->days,
-                'slots' => $plan->slots,
-                'expires_at' => $plan->created_at->addHours(ContentPlan::SLOT_HOLD_HOURS),
+                // Bổ sung: chỉ slot còn thiếu bài (giờ đăng chưa qua)
+                'slots' => $fill ? $this->missingSlots($fill) : $plan->slots,
+                'expires_at' => $fill ? null : $plan->created_at->addHours(ContentPlan::SLOT_HOLD_HOURS),
+                'fill' => (bool) $fill,
+                'status' => $plan->status,
+                // Bổ sung: bài đang có của kỳ (để không lặp chủ đề / hook, giữ tỉ lệ tuyến)
+                'items' => $fill ? $fill->items()->whereIn('slot_index', $this->activeSlotIndexes($fill))->with('topic:id,name')
+                    ->orderBy('slot_index')->get()->map(fn (ContentPlanItem $i) => ['slot_index' => $i->slot_index,
+                        'scheduled_at' => $i->scheduled_at?->toIso8601String(), 'sample_key' => $i->sample_key,
+                        'topic' => $i->topic?->name, 'hook' => $i->hook])->all() : null,
             ] : null,
             'draft_plan_id' => $draft?->id,
             'redo_requests' => $this->redoRequests($channel),
             'now' => now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * Slot của kỳ còn THIẾU bài: giờ đăng còn sau LEAD_MINUTES và chưa có bài đang dùng (chưa có bài / bài đã huỷ / bài
+     * đăng của slot đã bị xoá). Nút "Tạo bổ sung" giao worker lập kế hoạch soạn bài cho đúng các slot này.
+     *
+     * @return array<int, array{index: int, at: string, format: string}>
+     */
+    public function missingSlots(ContentPlan $plan): array
+    {
+        $active = $this->activeSlotIndexes($plan);
+        $after = now()->addMinutes(self::LEAD_MINUTES);
+
+        return collect($plan->slots ?? [])
+            ->filter(fn ($s) => ! in_array((int) $s['index'], $active, true) && CarbonImmutable::parse($s['at'])->gt($after))
+            ->values()->all();
+    }
+
+    /** Slot đã có bài đang dùng: bài chờ duyệt, hoặc đã thành bài đăng mà bài đăng còn. */
+    private function activeSlotIndexes(ContentPlan $plan): array
+    {
+        return $plan->items()->where(fn ($q) => $q->where('status', ContentPlanItem::DRAFT)
+            ->orWhere(fn ($q) => $q->where('status', ContentPlanItem::POSTED)->whereHas('post')))
+            ->pluck('slot_index')->map(fn ($i) => (int) $i)->all();
     }
 
     /** Kỳ preparing còn hạn của kênh, không có thì tạo mới với slot giờ backend tính. */
@@ -376,9 +415,12 @@ class ChannelPlanService
      */
     public function submitItems(Channel $channel, ContentPlan $plan, array $items): array
     {
-        if (! in_array($plan->status, [ContentPlan::PREPARING, ContentPlan::DRAFT], true)) {
-            throw new BusinessException('PLAN_CLOSED', 'Kỳ kế hoạch đã duyệt hoặc đã huỷ, không nhận thêm bài.', 409);
+        // Kỳ đã duyệt chỉ nhận bài BỔ SUNG cho slot còn thiếu (nút "Tạo bổ sung"): bài thành bài đăng ngay
+        if (! in_array($plan->status, [ContentPlan::PREPARING, ContentPlan::DRAFT, ContentPlan::APPROVED], true)) {
+            throw new BusinessException('PLAN_CLOSED', 'Kỳ kế hoạch đã huỷ, không nhận thêm bài.', 409);
         }
+        $approved = $plan->status === ContentPlan::APPROVED;
+        $missing = $plan->status === ContentPlan::PREPARING ? null : array_column($this->missingSlots($plan), 'index');
         if ($plan->status === ContentPlan::PREPARING && $plan->created_at->lt(now()->subHours(ContentPlan::SLOT_HOLD_HOURS))) {
             throw new BusinessException('PLAN_EXPIRED', 'Slot giờ đã hết hạn giữ chỗ, chạy lại lệnh để lấy slot mới.', 409);
         }
@@ -387,7 +429,7 @@ class ChannelPlanService
 
         $accepted = [];
         $rejected = [];
-        $taken = $plan->items()->pluck('slot_index')->all();
+        $taken = $this->activeSlotIndexes($plan);
         $signatures = $this->existingSignatures($channel, $plan);
 
         foreach ($items as $raw) {
@@ -395,6 +437,11 @@ class ChannelPlanService
             $slot = is_numeric($slotIndex) ? $plan->slot((int) $slotIndex) : null;
             if (! $slot) {
                 $rejected[] = ['slot_index' => $slotIndex, 'errors' => ['slot_index không có trong kỳ.']];
+
+                continue;
+            }
+            if ($missing !== null && ! in_array((int) $slotIndex, $taken, true) && ! in_array((int) $slotIndex, $missing, true)) {
+                $rejected[] = ['slot_index' => $slotIndex, 'errors' => ['Slot đã qua giờ đăng (hoặc quá sát giờ), không bổ sung được.']];
 
                 continue;
             }
@@ -413,13 +460,21 @@ class ChannelPlanService
             $signature = $data['_signature'];
             $topicId = $this->topics->resolve($channel, $data['_topic']);
             unset($data['_signature'], $data['_topic']);
-            $plan->items()->create([
+            // Bổ sung slot có bài cũ đã huỷ / mất bài đăng: bỏ dòng cũ (slot_index duy nhất trong kỳ)
+            $plan->items()->where('slot_index', (int) $slotIndex)->delete();
+            $item = $plan->items()->create([
                 ...$data,
                 'topic_id' => $topicId,
                 'slot_index' => (int) $slotIndex,
                 'scheduled_at' => CarbonImmutable::parse($slot['at']),
                 'status' => ContentPlanItem::DRAFT,
             ]);
+            if ($approved) {
+                DB::transaction(function () use ($plan, $item) {
+                    $post = $this->createPost($plan->channel()->firstOrFail(), $item);
+                    $item->update(['status' => ContentPlanItem::POSTED, 'social_post_id' => $post->id]);
+                });
+            }
             $taken[] = (int) $slotIndex;
             $signatures[] = $signature;
             $accepted[] = (int) $slotIndex;
@@ -427,7 +482,7 @@ class ChannelPlanService
 
         $warnings = $this->lineupWarnings($plan->fresh(), $lineup);
         if ($accepted) {
-            $plan->update(['status' => ContentPlan::DRAFT, 'warnings' => $warnings ?: null]);
+            $plan->update(['status' => $approved ? ContentPlan::APPROVED : ContentPlan::DRAFT, 'warnings' => $warnings ?: null]);
         }
         $this->audit->log('content_plan.submit', $plan, ['accepted' => count($accepted), 'rejected' => count($rejected)]);
 

@@ -43,6 +43,11 @@ class ContentPlanItem extends Model
         return $this->belongsTo(SocialPost::class, 'social_post_id');
     }
 
+    public function topic(): BelongsTo
+    {
+        return $this->belongsTo(ChannelTopic::class, 'topic_id');
+    }
+
     public function textTemplate(): BelongsTo
     {
         return $this->belongsTo(ChannelTextTemplate::class, 'text_template_id');

@@ -62,9 +62,14 @@ class ChannelContentController extends Controller
     public function startPlanJob(Request $request, int $channel): JsonResponse
     {
         $channel = $this->channel($request, $channel);
-        $data = $request->validate(['note' => ['nullable', 'string', 'max:'.PlanJob::NOTE_MAX]]);
+        $data = $request->validate([
+            'note' => ['nullable', 'string', 'max:'.PlanJob::NOTE_MAX],
+            // Có: TẠO BỔ SUNG cho kỳ này (worker soạn bài cho các slot còn thiếu)
+            'plan_id' => ['nullable', 'integer'],
+        ]);
+        $fill = isset($data['plan_id']) ? $channel->plans()->findOrFail((int) $data['plan_id']) : null;
 
-        return response()->json(['data' => $this->planJobData($this->planJobs->create($channel, $data['note'] ?? null))], 201);
+        return response()->json(['data' => $this->planJobData($this->planJobs->create($channel, $data['note'] ?? null, $fill))], 201);
     }
 
     private function planJobData(?PlanJob $job): ?array
@@ -74,6 +79,8 @@ class ChannelContentController extends Controller
             // queued | processing | completed | failed
             'status' => $job->status,
             'note' => $job->payload['note'] ?? null,
+            // Lượt TẠO BỔ SUNG cho kỳ này (null = lập kỳ mới)
+            'fill_plan_id' => $job->payload['plan_id'] ?? null,
             // { summary, plan_id, plan_status } khi xong
             'result' => $job->result,
             'error_message' => $job->error_message,
@@ -204,7 +211,10 @@ class ChannelContentController extends Controller
             'items as total_items' => fn ($q) => $q->where('status', '!=', ContentPlanItem::CANCELLED),
         ])->latest('id')->limit(50)->get();
 
-        return response()->json(['data' => $plans->map(fn (ContentPlan $p) => [...$this->planSummary($p), 'total_items' => $p->total_items])]);
+        return response()->json(['data' => $plans->map(fn (ContentPlan $p) => [...$this->planSummary($p), 'total_items' => $p->total_items,
+            // Số slot còn thiếu bài (nút "Tạo bổ sung"), chỉ kỳ chờ duyệt / đã duyệt
+            'missing_slots' => in_array($p->status, [ContentPlan::DRAFT, ContentPlan::APPROVED], true) ? count($this->plans->missingSlots($p)) : 0,
+        ])]);
     }
 
     public function plan(Request $request, int $channel, int $plan): JsonResponse

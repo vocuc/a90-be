@@ -23,9 +23,15 @@ class ChannelPlanApiController extends Controller
 {
     public function __construct(private ChannelPlanService $plans, private ProductTagService $productTags) {}
 
-    public function context(int $channel): JsonResponse
+    /** ?fill_plan=<id kỳ>: chế độ TẠO BỔ SUNG, plan = kỳ đó với các slot còn thiếu bài. */
+    public function context(Request $request, int $channel): JsonResponse
     {
-        return response()->json(['data' => $this->plans->context($this->channel($channel))]);
+        $model = $this->channel($channel);
+        $fill = $request->filled('fill_plan')
+            ? ($model->plans()->find((int) $request->query('fill_plan')) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy kỳ kế hoạch.', 404))
+            : null;
+
+        return response()->json(['data' => $this->plans->context($model, $fill)]);
     }
 
     public function persona(Request $request, int $channel): JsonResponse
