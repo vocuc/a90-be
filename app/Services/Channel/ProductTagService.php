@@ -143,12 +143,9 @@ class ProductTagService
      * Sản phẩm của shop cần gắn tag: đang hoạt động, có ảnh trường TAG_FIELD_KEY, chưa có tag hoặc ảnh đó đã đổi so với
      * lúc gắn ($all: mọi sản phẩm có ảnh trường đó). cover = ảnh trường TAG_FIELD_KEY (ảnh skill xem).
      */
-    public function untagged(User $shop, bool $all): array
+    public function untagged(User $shop, bool $all, ?array $ids = null): array
     {
-        return Product::query()->ownedBy($shop)->active()
-            ->with(['images' => fn ($q) => $q->where('field_key', self::TAG_FIELD_KEY)])
-            ->whereHas('images', fn ($q) => $q->where('field_key', self::TAG_FIELD_KEY))
-            ->orderByDesc('id')->get()
+        return $this->taggable($shop, $ids)->get()
             ->each(fn (Product $p) => $p->setRelation('coverImage', $p->images->first()))
             ->filter(fn (Product $p) => $all || ! $p->tags || $p->tagged_image_id !== $p->coverImage->id)
             ->map(fn (Product $p) => [
@@ -160,6 +157,16 @@ class ProductTagService
                 'tags' => $p->tags,
                 'tag_sources' => $p->tag_sources,
             ])->values()->all();
+    }
+
+    /** Sản phẩm của shop gắn tag được (có ảnh trường TAG_FIELD_KEY), kèm đúng ảnh đó; $ids: chỉ các sản phẩm này. */
+    public function taggable(User $shop, ?array $ids = null)
+    {
+        return Product::query()->ownedBy($shop)
+            ->when($ids !== null, fn ($q) => $q->whereKey($ids), fn ($q) => $q->active())
+            ->with(['images' => fn ($q) => $q->where('field_key', self::TAG_FIELD_KEY)])
+            ->whereHas('images', fn ($q) => $q->where('field_key', self::TAG_FIELD_KEY))
+            ->orderByDesc('id');
     }
 
     /**

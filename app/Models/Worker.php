@@ -38,7 +38,21 @@ class Worker extends Model
      * (a90-fe note/xay-kenh-tiktok/worker-lap-chu-de.txt). */
     public const TYPE_TOPIC = 'topic';
 
-    public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH, self::TYPE_OUTFIT, self::TYPE_CONTENT, self::TYPE_TOPIC];
+    /** Worker gắn tag sản phẩm: nhận việc "Gắn tag bằng AI" (chủ shop chọn sản phẩm), gọi skill Claude /gan-tag-san-pham
+     * (a90-fe note/xay-kenh-tiktok/worker-gan-tag.txt). */
+    public const TYPE_TAG = 'tag';
+
+    /** Worker ĐIỀU PHỐI: 1 token / máy, nhận nhiều loại việc (DISPATCH_TYPES) rồi giao bộ xử lý con trên máy
+     * (a90-fe note/worker-dieu-phoi.txt). Thay cho worker riêng từng loại dựng nội dung / lập chủ đề / gắn tag. */
+    public const TYPE_DISPATCH = 'dispatch';
+
+    /** Loại việc worker điều phối làm được (đợt 1, người dùng chốt 2026-11-21). */
+    public const DISPATCH_TYPES = [self::TYPE_CONTENT, self::TYPE_TOPIC, self::TYPE_TAG];
+
+    public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH, self::TYPE_OUTFIT, self::TYPE_CONTENT, self::TYPE_TOPIC, self::TYPE_TAG, self::TYPE_DISPATCH];
+
+    /** Loại admin chọn khi tạo / đổi worker: dựng nội dung / lập chủ đề / gắn tag gộp vào Điều phối. */
+    public const CREATABLE_TYPES = [self::TYPE_IMAGE, self::TYPE_OUTFIT, self::TYPE_PUBLISH, self::TYPE_DISPATCH];
 
     protected $guarded = ['id'];
 
@@ -50,7 +64,9 @@ class Worker extends Model
     public function scopeAssignedTo(Builder $query, int $userId, ?string $type = null): Builder
     {
         return $query->where('is_active', true)
-            ->when($type, fn (Builder $q) => $q->where('type', $type))
+            // Worker điều phối làm được các loại DISPATCH_TYPES
+            ->when($type, fn (Builder $q) => $q->where(fn (Builder $t) => $t->where('type', $type)
+                ->when(in_array($type, self::DISPATCH_TYPES, true), fn (Builder $d) => $d->orWhere('type', self::TYPE_DISPATCH))))
             ->whereHas('users', fn (Builder $u) => $u->whereKey($userId));
     }
 
@@ -95,8 +111,21 @@ class Worker extends Model
             self::TYPE_OUTFIT => 'Phối đồ',
             self::TYPE_CONTENT => 'Dựng nội dung',
             self::TYPE_TOPIC => 'Lập chủ đề',
+            self::TYPE_TAG => 'Gắn tag sản phẩm',
+            self::TYPE_DISPATCH => 'Điều phối',
             default => 'Đăng bài',
         };
+    }
+
+    /** Loại việc worker nhận (worker điều phối: nhiều loại). */
+    public function jobTypes(): array
+    {
+        return $this->type === self::TYPE_DISPATCH ? self::DISPATCH_TYPES : [$this->type];
+    }
+
+    public function hasType(string $type): bool
+    {
+        return in_array($type, $this->jobTypes(), true);
     }
 
     public function isImage(): bool
@@ -198,7 +227,7 @@ class Worker extends Model
     /** Worker gọi API không đúng loại của nó (vd worker tạo ảnh gọi /video-images): 409 WORKER_TYPE_MISMATCH. */
     public function assertType(string $type): void
     {
-        if ($this->type !== $type) {
+        if (! $this->hasType($type)) {
             throw new BusinessException(
                 'WORKER_TYPE_MISMATCH',
                 "Worker \"{$this->name}\" là loại ".self::typeLabel($this->type).', không làm việc '.self::typeLabel($type).'.',

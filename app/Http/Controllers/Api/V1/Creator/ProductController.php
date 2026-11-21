@@ -12,6 +12,9 @@ use App\Models\ProductImage;
 use App\Models\User;
 use App\Services\MediaStorage;
 use App\Services\SettingService;
+use App\Models\TagJob;
+use App\Services\Channel\ProductTagService;
+use App\Services\Channel\TagJobService;
 use App\Support\ProductTags;
 use Closure;
 use Illuminate\Http\JsonResponse;
@@ -258,6 +261,47 @@ class ProductController extends Controller
         $product->save();
 
         return $this->resource($request, $product->id);
+    }
+
+    /**
+     * Gắn tag bằng AI: { product_ids: int[] (1-100, sản phẩm của mình có ảnh anh_san_pham) } -> 201 { data: job }
+     * (việc cho worker gắn tag, a90-fe note/xay-kenh-tiktok/worker-gan-tag.txt).
+     * 409 TAG_WORKER_REQUIRED | TAG_JOB_RUNNING; 422 errors.product_ids.
+     */
+    public function startTagJob(Request $request, TagJobService $tags): JsonResponse
+    {
+        $data = $request->validate([
+            'product_ids' => ['required', 'array', 'min:1', 'max:'.TagJob::MAX_PRODUCTS],
+            'product_ids.*' => ['integer'],
+        ], ['product_ids.required' => 'Vui lòng chọn sản phẩm.', 'product_ids.max' => 'Tối đa '.TagJob::MAX_PRODUCTS.' sản phẩm mỗi lần.']);
+
+        return response()->json(['data' => $this->tagJobData($tags->create($request->user(), $data['product_ids']))], 201);
+    }
+
+    /** Lượt gắn tag AI gần nhất + shop có worker gắn tag không. -> { data: { tag_worker, job, max } } */
+    public function latestTagJob(Request $request, TagJobService $tags): JsonResponse
+    {
+        return response()->json(['data' => [
+            'tag_worker' => TagJobService::hasWorker($request->user()->id),
+            'job' => $this->tagJobData($tags->latest($request->user())),
+            'max' => TagJob::MAX_PRODUCTS,
+            'field_key' => ProductTagService::TAG_FIELD_KEY,
+        ]]);
+    }
+
+    private function tagJobData(?TagJob $job): ?array
+    {
+        return $job ? [
+            'id' => $job->id,
+            // queued | processing | completed | failed
+            'status' => $job->status,
+            'product_count' => count($job->payload['product_ids'] ?? []),
+            // { updated, skipped, errors, requested } khi xong
+            'result' => $job->result,
+            'error_message' => $job->error_message,
+            'created_at' => $job->created_at,
+            'finished_at' => $job->finished_at,
+        ] : null;
     }
 
     public function destroy(Request $request, int $product): Response

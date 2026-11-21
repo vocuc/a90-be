@@ -25,7 +25,10 @@ class WorkerJob extends Model
     /** Xây dựng chủ đề tự động cho 1 kênh (worker lập chủ đề). */
     public const TYPE_TOPIC = 'topic';
 
-    public const TYPES = [self::TYPE_IMAGE, self::TYPE_OUTFIT, self::TYPE_CONTENT, self::TYPE_PUBLISH, self::TYPE_TOPIC];
+    /** Gắn tag bằng AI cho các sản phẩm chủ shop chọn (worker gắn tag). */
+    public const TYPE_TAG = 'tag';
+
+    public const TYPES = [self::TYPE_IMAGE, self::TYPE_OUTFIT, self::TYPE_CONTENT, self::TYPE_PUBLISH, self::TYPE_TOPIC, self::TYPE_TAG];
 
     public const QUEUED = 'queued';
 

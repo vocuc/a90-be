@@ -105,7 +105,7 @@
                         <label for="worker-type" class="mb-1">Loại worker</label>
                         <div class="input-group">
                             <select id="worker-type" name="type" class="form-control">
-                                @foreach (\App\Models\Worker::TYPES as $type)
+                                @foreach (array_unique([...\App\Models\Worker::CREATABLE_TYPES, $worker->type]) as $type)
                                     <option value="{{ $type }}" @selected($worker->type === $type)>{{ \App\Models\Worker::typeLabel($type) }}</option>
                                 @endforeach
                             </select>

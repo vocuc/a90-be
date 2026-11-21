@@ -106,6 +106,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('products/{product}/active', [ProductController::class, 'setActive'])->whereNumber('product');
             // Chủ shop sửa tag sản phẩm (AI gắn bằng /gan-tag-san-pham; trường chủ shop sửa AI không ghi đè)
             Route::put('products/{product}/tags', [ProductController::class, 'updateTags'])->whereNumber('product');
+            // Gắn tag bằng AI: chọn sản phẩm -> việc cho worker gắn tag (a90-fe note/xay-kenh-tiktok/worker-gan-tag.txt)
+            Route::get('products/tag-jobs/latest', [ProductController::class, 'latestTagJob']);
+            Route::post('products/tag-jobs', [ProductController::class, 'startTagJob']);
             Route::post('products/shares', [ProductController::class, 'bulkShare']);
             Route::get('products/{product}/shares', [ProductController::class, 'shares'])->whereNumber('product');
             Route::put('products/{product}/shares', [ProductController::class, 'updateShares'])->whereNumber('product');

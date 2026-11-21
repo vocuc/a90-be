@@ -40,7 +40,7 @@ class WorkerController extends Controller
         $request->merge(['name' => trim((string) $request->input('name')), 'email' => trim((string) $request->input('email'))]);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:100', 'unique:workers,name'],
-            'type' => ['required', Rule::in(Worker::TYPES)],
+            'type' => ['required', Rule::in(Worker::CREATABLE_TYPES)],
             'email' => ['nullable', 'email', 'exists:users,email'],
         ], [
             'name.required' => 'Vui lòng nhập tên worker.',
@@ -142,7 +142,7 @@ class WorkerController extends Controller
     /** Đổi loại worker (Tạo ảnh / Đăng bài). Chặn khi worker còn việc dở. */
     public function changeType(Request $request, Worker $worker): RedirectResponse
     {
-        $data = $request->validate(['type' => ['required', Rule::in(Worker::TYPES)]], ['type.required' => 'Chọn loại worker.']);
+        $data = $request->validate(['type' => ['required', Rule::in(Worker::CREATABLE_TYPES)]], ['type.required' => 'Chọn loại worker.']);
         if ($data['type'] === $worker->type) {
             return back();
         }

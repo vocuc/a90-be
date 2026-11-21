@@ -24,7 +24,7 @@
                     </div>
                     <div class="form-group">
                         <label>Loại worker <span class="text-danger">*</span></label>
-                        @foreach (\App\Models\Worker::TYPES as $type)
+                        @foreach (\App\Models\Worker::CREATABLE_TYPES as $type)
                             <div class="custom-control custom-radio">
                                 <input type="radio" id="type-{{ $type }}" name="type" value="{{ $type }}" class="custom-control-input"
                                        @checked(old('type', \App\Models\Worker::TYPE_IMAGE) === $type)>
@@ -36,6 +36,8 @@
                                             \App\Models\Worker::TYPE_OUTFIT => '— làm ảnh lô phối đồ của các tài khoản được gắn',
                                             \App\Models\Worker::TYPE_CONTENT => '— dựng ảnh bài kế hoạch kênh (in chữ, ghép bìa) cho các tài khoản được gắn',
                                             \App\Models\Worker::TYPE_TOPIC => '— lập chủ đề kênh TikTok (skill Claude /lap-chu-de) khi tài khoản được gắn bấm "Xây dựng chủ đề tự động"',
+                                            \App\Models\Worker::TYPE_TAG => '— gắn tag sản phẩm bằng AI (skill Claude /gan-tag-san-pham) khi tài khoản được gắn bấm "Gắn tag bằng AI"',
+                                            \App\Models\Worker::TYPE_DISPATCH => '— 1 token / máy: dựng nội dung bài kênh, lập chủ đề, gắn tag sản phẩm cho các tài khoản được gắn (chương trình D:\FlowKit\dieu-phoi, số việc song song đặt ở .env máy)',
                                             default => '— shop được gắn chọn worker ở trang bài đăng để đăng bài ảnh / video',
                                         } }}
                                     </span>

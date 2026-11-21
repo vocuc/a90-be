@@ -9,14 +9,17 @@ use App\Models\ChannelTextTemplate;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\ImageBatch;
+use App\Models\ContentJob;
 use App\Models\ImageBatchImage;
 use App\Models\ImageJob;
 use App\Models\Product;
 use App\Models\SocialPublishJob;
+use App\Models\TagJob;
 use App\Models\TopicJob;
 use App\Models\Worker;
 use App\Models\WorkerJob;
 use App\Services\Channel\ContentJobService;
+use App\Services\Channel\TagJobService;
 use App\Services\Channel\TopicJobService;
 use App\Services\MediaStorage;
 use App\Services\ShopImageLibrary;
@@ -25,6 +28,7 @@ use App\Services\WorkerJobService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -39,6 +43,7 @@ class WorkerJobController extends Controller
         private ContentJobService $content,
         private SocialPublishJobService $publish,
         private TopicJobService $topics,
+        private TagJobService $tags,
     ) {}
 
     /**
@@ -50,11 +55,29 @@ class WorkerJobController extends Controller
      *   publish: { request: { type: photo|video, platforms, ... } }
      *   topic:   { request: { count, note, today, channel, persona, post_samples, holidays, existing_topics, tag_options,
      *              product_tags } } (worker lập chủ đề, skill Claude /lap-chu-de)
+     *   tag:     { request: { products: [{ id, name, prompt_note, cover: { image_id, thumb_url }, ai_label, tags,
+     *              tag_sources }], tag_options, label_max } } (worker gắn tag, skill Claude /gan-tag-san-pham)
      */
     public function next(Request $request, MediaStorage $media): JsonResponse|Response
     {
         $worker = $this->worker($request);
-        $data = match ($worker->type) {
+        // ?types=content,tag: worker điều phối chỉ hỏi loại máy còn chỗ trống (a90-fe note/worker-dieu-phoi.txt)
+        $types = $worker->jobTypes();
+        if ($request->filled('types')) {
+            $types = array_values(array_intersect(array_map('trim', explode(',', (string) $request->query('types'))), $types));
+        }
+        foreach ($types as $type) {
+            if ($data = $this->claimType($worker, $type, $media)) {
+                return response()->json(['data' => $data]);
+            }
+        }
+
+        return response()->noContent();
+    }
+
+    private function claimType(Worker $worker, string $type, MediaStorage $media): ?array
+    {
+        return match ($type) {
             Worker::TYPE_IMAGE, Worker::TYPE_OUTFIT => $this->nextImage($worker, $media),
             Worker::TYPE_CONTENT => ($job = $this->content->claim($worker))
                 ? ['id' => $job->id, 'type' => WorkerJob::TYPE_CONTENT, 'request' => $this->content->request($job)] : null,
@@ -62,10 +85,10 @@ class WorkerJobController extends Controller
                 ? ['id' => $job->id, 'type' => WorkerJob::TYPE_PUBLISH, 'request' => $this->publish->request($job)] : null,
             Worker::TYPE_TOPIC => ($job = $this->topics->claim($worker))
                 ? ['id' => $job->id, 'type' => WorkerJob::TYPE_TOPIC, 'request' => $this->topics->request($job)] : null,
+            Worker::TYPE_TAG => ($job = $this->tags->claim($worker))
+                ? ['id' => $job->id, 'type' => WorkerJob::TYPE_TAG, 'request' => $this->tags->request($job)] : null,
             default => throw new BusinessException('WRONG_WORKER_TYPE', 'Loại worker không nhận việc.', 403),
         };
-
-        return $data ? response()->json(['data' => $data]) : response()->noContent();
     }
 
     private function nextImage(Worker $worker, MediaStorage $media): ?array
@@ -97,13 +120,14 @@ class WorkerJobController extends Controller
      *   content: files[0..n-1] (ảnh hoàn chỉnh theo thứ tự slide; cover_collage thì thêm bìa ở đầu)
      *   publish: post_url
      *   topic: topics [{ name, tags }] -> data.result { created, skipped, errors }
+     *   tag: items [{ id, image_id, ai_label, tags }] -> data.result { updated, skipped (trường chủ shop giữ), errors }
      * 409 JOB_NOT_ASSIGNED: việc không còn của worker (quá hạn, bị thay, sai loại).
      */
     public function submit(Request $request, int $id): JsonResponse
     {
         $worker = $this->worker($request);
         $job = WorkerJob::query()->findOrFail($id);
-        if ($job->type !== $worker->type) {
+        if (! $worker->hasType($job->type)) {
             throw new BusinessException('JOB_NOT_ASSIGNED', 'Job không còn được giao cho worker này.', 409);
         }
         $base = [
@@ -112,7 +136,15 @@ class WorkerJobController extends Controller
             'error_message' => ['nullable', 'string', 'max:490'],
         ];
 
-        if ($job->type === WorkerJob::TYPE_TOPIC) {
+        if ($job->type === WorkerJob::TYPE_TAG) {
+            $data = $request->validate([...$base, 'items' => ['nullable', 'array', 'max:'.TagJob::MAX_PRODUCTS]]);
+            if ($data['status'] === 'completed') {
+                $result = $this->tags->complete($worker, $id, $data['items'] ?? []);
+
+                return response()->json(['data' => ['id' => $id, 'type' => $job->type, 'status' => WorkerJob::COMPLETED, 'result' => $result]]);
+            }
+            $this->tags->fail($worker, $id, $data['error_code'], $data['error_message'] ?? null);
+        } elseif ($job->type === WorkerJob::TYPE_TOPIC) {
             $data = $request->validate([...$base,
                 'topics' => ['nullable', 'array', 'max:'.(TopicJob::COUNT_MAX * 2)],
             ]);
@@ -166,10 +198,36 @@ class WorkerJobController extends Controller
         return response()->json(['data' => $this->batchInfo($image)]);
     }
 
-    /** POST /api/v1/worker-jobs/{id}/extend: gia hạn việc ảnh đang làm (WorkerJobService::extend). */
+    /**
+     * POST /api/v1/worker-jobs/{id}/extend: gia hạn việc đang làm (mọi loại; đăng bài không có hạn -> giữ nguyên).
+     * 409 JOB_NOT_ASSIGNED: việc không còn của worker.
+     */
     public function extend(Request $request, int $id): JsonResponse
     {
-        $job = $this->images->extend($this->worker($request), ImageJob::query()->findOrFail($id));
+        $worker = $this->worker($request);
+        $job = WorkerJob::query()->findOrFail($id);
+        if (in_array($job->type, [WorkerJob::TYPE_IMAGE, WorkerJob::TYPE_OUTFIT], true)) {
+            $job = $this->images->extend($worker, ImageJob::query()->findOrFail($id));
+        } else {
+            $job = DB::transaction(function () use ($worker, $id) {
+                $locked = WorkerJob::query()->lockForUpdate()->findOrFail($id);
+                if ($locked->status !== WorkerJob::PROCESSING || $locked->worker_id !== $worker->id || ! $worker->hasType($locked->type)) {
+                    throw new BusinessException('JOB_NOT_ASSIGNED', 'Job không còn được giao cho worker này.', 409);
+                }
+                $minutes = match ($locked->type) {
+                    WorkerJob::TYPE_CONTENT => ContentJob::LEASE_MINUTES,
+                    WorkerJob::TYPE_TOPIC => TopicJob::LEASE_MINUTES,
+                    WorkerJob::TYPE_TAG => TagJob::LEASE_MINUTES,
+                    default => null,
+                };
+                if ($minutes) {
+                    // Dựng nội dung tính hạn theo claimed_at (ContentJobService::claim)
+                    $locked->update(['lease_expires_at' => now()->addMinutes($minutes), 'claimed_at' => now()]);
+                }
+
+                return $locked;
+            });
+        }
 
         return response()->json(['data' => ['id' => $job->id, 'lease_expires_at' => $job->lease_expires_at?->toIso8601String()]]);
     }

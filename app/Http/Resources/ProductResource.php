@@ -28,6 +28,8 @@ class ProductResource extends JsonResource
             'tags' => $this->tags,
             'tag_sources' => $this->tag_sources,
             'tagged_at' => $this->tagged_at,
+            // Gắn tag bằng AI được không: có ảnh trường anh_san_pham (skill chỉ xem ảnh này)
+            'taggable' => $this->images->contains('field_key', \App\Services\Channel\ProductTagService::TAG_FIELD_KEY),
             // Tắt thì không được tạo lô tự động
             'is_active' => (bool) ($this->is_active ?? true),
             'cover_url' => $media->url($this->images->first()?->thumbPathOrOriginal()),
