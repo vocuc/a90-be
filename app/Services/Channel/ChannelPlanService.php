@@ -57,7 +57,7 @@ class ChannelPlanService
     public function __construct(
         private MediaStorage $media,
         private AuditLogger $audit,
-        private TextOverlayService $overlays,
+        private ContentJobService $contentJobs,
         private OutfitBatchService $outfitBatches,
     ) {}
 
@@ -99,6 +99,8 @@ class ChannelPlanService
                 'ai' => [...$channel->aiSettings(), 'hashtags_max' => (int) config('ai90.social.ai_max_hashtags')],
                 // Bài viết mẫu lấy ảnh bằng lô phối đồ (vd lookbook) cần worker phối đồ được gắn cho shop
                 'outfit_worker' => Worker::query()->assignedTo($channel->user_id, Worker::TYPE_OUTFIT)->exists(),
+                // Bài ảnh có chữ / bìa ghép cần content-worker của shop dựng (a90-fe note/xay-kenh-tiktok/worker-content.txt)
+                'content_worker' => ContentJobService::hasWorker($channel->user_id),
             ],
             'missing' => $missing,
             'persona' => $channel->persona ?? (object) [],
@@ -521,7 +523,9 @@ class ChannelPlanService
             ], []];
         }
 
-        // Ảnh
+        // Ảnh. Dạng có bìa ghép (top_n): ảnh gửi = slide #1..#N, content-worker tự thêm bìa (slide 1) khi dựng
+        $collage = (bool) ($sample['cover_collage'] ?? false);
+        $offset = $collage ? 1 : 0;
         $images = array_values(is_array($raw['images'] ?? null) ? $raw['images'] : []);
         $parsed = [];
         foreach ($images as $i => $img) {
@@ -551,10 +555,10 @@ class ChannelPlanService
                 $errors[] = "Template \"{$template->name}\" cần đúng {$template->image_count} ảnh, bài có ".count($parsed).'.';
             }
         } else {
-            $min = $sample['slides']['min'];
-            $max = min($sample['slides']['max'], SocialPost::MAX_IMAGES);
+            $min = $sample['slides']['min'] - $offset;
+            $max = min($sample['slides']['max'], SocialPost::MAX_IMAGES) - $offset;
             if (count($parsed) < $min || count($parsed) > $max) {
-                $errors[] = "Bài viết mẫu \"{$sampleKey}\" cần {$min}-{$max} ảnh, bài có ".count($parsed).'.';
+                $errors[] = "Bài viết mẫu \"{$sampleKey}\" cần {$min}-{$max} ảnh".($collage ? ' (không tính bìa ghép, worker tự thêm)' : '').', bài có '.count($parsed).'.';
             }
         }
 
@@ -567,7 +571,7 @@ class ChannelPlanService
 
                 continue;
             }
-            $rule = PostSamples::slideRule($sample, $i, count($parsed));
+            $rule = PostSamples::slideRule($sample, $i + $offset, count($parsed) + $offset);
             $kind = $output->generation->isOutfit() ? 'outfit' : 'product';
             if (in_array($rule['image'], ['product', 'outfit'], true) && $rule['image'] !== $kind) {
                 $errors[] = 'Ảnh #'.($i + 1).": slide này cần ảnh {$rule['image']}, ảnh gửi là {$kind}.";
@@ -587,6 +591,13 @@ class ChannelPlanService
         }
         if ($sample['same_product'] && count(array_unique($groupKeys)) > 1) {
             $errors[] = "Bài viết mẫu \"{$sampleKey}\" cần mọi ảnh cùng 1 sản phẩm.";
+        }
+        if ($collage && $format === ContentPlanItem::FORMAT_PHOTO) {
+            $this->validateRanking($hook, $parsed, $groupKeys, $errors);
+        }
+        if ($format === ContentPlanItem::FORMAT_PHOTO && ContentJobService::needsBuild($sampleKey, $hasText)
+            && ! ContentJobService::hasWorker($channel->user_id)) {
+            $errors[] = 'Shop chưa được gắn worker dựng nội dung (content-worker), không dựng được bài ảnh có chữ.';
         }
 
         $textTemplateId = null;
@@ -696,6 +707,24 @@ class ChannelPlanService
         }
 
         return $outfit;
+    }
+
+    /** Bài Top N: N trong hook "Top N" = số ảnh; ảnh thứ k có chữ bắt đầu "#k"; N mẫu khác nhau (chỉ kiểm tra dữ liệu). */
+    private function validateRanking(string $hook, array $parsed, array $groupKeys, array &$errors): void
+    {
+        $n = count($parsed);
+        if (preg_match('/top\s*(\d+)/iu', $hook, $m) && (int) $m[1] !== $n) {
+            $errors[] = "Hook ghi Top {$m[1]} nhưng bài có {$n} ảnh xếp hạng.";
+        }
+        foreach ($parsed as $i => $p) {
+            $k = $i + 1;
+            if (! preg_match('/^#'.$k.'(?!\d)/u', (string) $p['text'])) {
+                $errors[] = "Ảnh #{$k}: chữ phải bắt đầu bằng \"#{$k} \" (vd \"#{$k} Cao gót mũi nhọn, sang chảnh\").";
+            }
+        }
+        if (count(array_unique($groupKeys)) < count($groupKeys)) {
+            $errors[] = 'Top N cần mỗi ảnh là 1 mẫu KHÁC NHAU.';
+        }
     }
 
     /** Nhãn ngày của ảnh outfit: đúng $need nhãn, bỏ emoji / khoảng trắng thừa, mỗi nhãn 1..LABEL_MAX ký tự, không trùng. */
@@ -836,7 +865,7 @@ class ChannelPlanService
         }
         $post->save();
         $this->syncImages($post, $item->images, $item->text_template_id);
-        $this->overlays->queueForPost($post);
+        $this->contentJobs->queueForPost($post);
 
         return $post;
     }
@@ -1001,7 +1030,7 @@ class ChannelPlanService
             if ($data['outfit']) {
                 $post->update(['status' => SocialPostStatus::Generating]);
             } else {
-                $this->overlays->queueForPost($post);
+                $this->contentJobs->queueForPost($post);
             }
             if ($post->plan_item_id) {
                 ContentPlanItem::query()->whereKey($post->plan_item_id)->update([
@@ -1059,7 +1088,7 @@ class ChannelPlanService
                 }
                 $moved[$post->id] = $replacementFor($post->sample_key);
                 $post->images()->where('text_template_id', $template->id)->update(['text_template_id' => $moved[$post->id]]);
-                $this->overlays->queueForPost($post);
+                $this->contentJobs->queueForPost($post);
             }
             $this->audit->log('channel_text_template.retire', $template, ['moved_posts' => $postIds->count(), 'replacements' => $moved]);
 
@@ -1104,7 +1133,7 @@ class ChannelPlanService
             $post->syncStatus();
             $post->last_error = null;
             $post->save();
-            $this->overlays->queueForPost($post);
+            $this->contentJobs->queueForPost($post);
 
             return $post->refresh();
         });

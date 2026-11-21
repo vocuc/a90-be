@@ -31,9 +31,12 @@
                                 <label class="custom-control-label font-weight-normal" for="type-{{ $type }}">
                                     <b>{{ \App\Models\Worker::typeLabel($type) }}</b>
                                     <span class="text-muted">
-                                        {{ $type === \App\Models\Worker::TYPE_IMAGE
-                                            ? '— nhận job tạo ảnh của các tài khoản được gắn'
-                                            : '— shop được gắn chọn worker ở trang bài đăng để đăng bài ảnh / video' }}
+                                        {{ match ($type) {
+                                            \App\Models\Worker::TYPE_IMAGE => '— nhận job tạo ảnh của các tài khoản được gắn',
+                                            \App\Models\Worker::TYPE_OUTFIT => '— làm ảnh lô phối đồ của các tài khoản được gắn',
+                                            \App\Models\Worker::TYPE_CONTENT => '— dựng ảnh bài kế hoạch kênh (in chữ, ghép bìa) cho các tài khoản được gắn',
+                                            default => '— shop được gắn chọn worker ở trang bài đăng để đăng bài ảnh / video',
+                                        } }}
                                     </span>
                                 </label>
                             </div>

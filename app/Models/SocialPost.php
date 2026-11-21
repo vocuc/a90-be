@@ -286,9 +286,9 @@ class SocialPost extends Model
         return $this->belongsTo(ContentPlanItem::class, 'plan_item_id');
     }
 
-    public function overlayJobs(): HasMany
+    public function contentJobs(): HasMany
     {
-        return $this->hasMany(TextOverlayJob::class, 'social_post_id');
+        return $this->hasMany(ContentJob::class, 'social_post_id');
     }
 
     /**

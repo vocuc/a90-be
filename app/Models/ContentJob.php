@@ -6,10 +6,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Việc chèn chữ lên ảnh của 1 bài (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 4.9, 5.11). Worker đăng bài của
- * kênh nhận qua GET /api/v1/post-jobs (type overlay, ưu tiên trước bài đăng). Sửa chữ -> job cũ superseded, tạo job mới.
+ * Việc DỰNG NỘI DUNG của 1 bài ảnh (a90-fe note/xay-kenh-tiktok/worker-content.txt, người dùng chốt 2026-11-21):
+ * A51 chỉ đưa nguyên liệu (ảnh theo thứ tự slide, chữ, template chữ, hook, dạng bài), CONTENT-WORKER của shop dựng ảnh
+ * hoàn chỉnh (in chữ, ghép bìa...) rồi gửi lại. Nhận qua GET /api/v1/content-jobs. Sửa chữ / làm lại -> job cũ superseded.
+ * (Bảng cũ text_overlay_jobs: trước đây worker đăng bài chèn chữ.)
  */
-class TextOverlayJob extends Model
+class ContentJob extends Model
 {
     public const QUEUED = 'queued';
 

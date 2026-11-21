@@ -30,7 +30,11 @@ class Worker extends Model
     /** Worker phối đồ (skill Claude): nhận ảnh bìa / ảnh outfit của lô phối đồ qua /v1/jobs. */
     public const TYPE_OUTFIT = 'outfit';
 
-    public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH, self::TYPE_OUTFIT];
+    /** Content-worker: dựng ảnh hoàn chỉnh bài ảnh kênh từ nguyên liệu A51 (in chữ, ghép bìa...) qua /v1/content-jobs
+     * (a90-fe note/xay-kenh-tiktok/worker-content.txt). */
+    public const TYPE_CONTENT = 'content';
+
+    public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH, self::TYPE_OUTFIT, self::TYPE_CONTENT];
 
     protected $guarded = ['id'];
 
@@ -85,6 +89,7 @@ class Worker extends Model
         return match ($type) {
             self::TYPE_IMAGE => 'Tạo ảnh',
             self::TYPE_OUTFIT => 'Phối đồ',
+            self::TYPE_CONTENT => 'Dựng nội dung',
             default => 'Đăng bài',
         };
     }

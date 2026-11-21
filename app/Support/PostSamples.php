@@ -34,7 +34,7 @@ final class PostSamples
      * Làm xong 1 bài (a90-fe note/xay-kenh-tiktok/bai-viet-mau/<key>.txt "ĐÃ LÀM") thì thêm key vào đây.
      * config ai90.post_samples_enabled ghi đè (vd test: ['*'] = bật hết).
      */
-    public const READY = ['lookbook', 'outfit_by_day'];
+    public const READY = ['top_n', 'lookbook', 'outfit_by_day'];
 
     /** @return array<string, array> key => bài viết mẫu (cả bài chưa bật), có cờ enabled */
     public static function all(): array
@@ -141,10 +141,13 @@ final class PostSamples
                 self::rule('first', 'product', true, 'Đôi A + câu hỏi "... chọn A hay B?"'),
                 self::rule('each', 'product', true, 'Chữ "A: ..." / "B: ..." mô tả ngắn'),
             ], false, '2 đôi khác kiểu cùng tầm giá / cùng màu để khó chọn. Hook theo tình huống (đi làm, hẹn hò, dịp lễ).'),
-            self::sample('top_n', 'Top N', 'compare', 'save', $both, 4, 8, [
-                self::rule('first', 'any', true, 'Tiêu đề "Top N đôi ... "'),
+            // Bìa GHÉP (người dùng chốt 2026-11-21): lệnh chỉ gửi N ảnh #1..#N, CONTENT-WORKER dựng thêm bìa ghép các ảnh
+            // đó + in hook (A51 không dựng). a90-fe note/xay-kenh-tiktok/bai-viet-mau/top_n.txt
+            [...self::sample('top_n', 'Top N', 'compare', 'save', $photo, 4, 8, [
+                self::rule('first', 'product', true, 'Bìa GHÉP ảnh các slide #1..#N (content-worker dựng) + hook "Top N đôi ..."'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 mẫu, chữ "#1 ...", "#2 ..." + lý do ngắn'),
-            ], false, 'Danh sách xếp hạng theo 1 tiêu chí (đi chúc Tết, đi làm, dưới 500k...). Đánh số đúng thứ tự.'),
+            ], false, 'Danh sách xếp hạng theo 1 tiêu chí (đi chúc Tết, đi làm cả ngày, đi chơi...). Hook = "Top N đôi ..." với N = số ảnh gửi. CHỈ gửi N ảnh sản phẩm của N mẫu KHÁC NHAU (3-7, #1 trước), KHÔNG gửi ảnh bìa: content-worker tự dựng bìa ghép các ảnh đó + in hook. Chữ ảnh thứ k bắt đầu "#k " rồi kiểu giày + lý do 2-4 từ ("#1 Cao gót mũi nhọn, sang chảnh"). Không nêu giá nếu Yêu cầu kênh không có. Caption kiểu "Bạn chốt số mấy? Lưu lại để sắm".'),
+                'cover_collage' => true],
             self::sample('which_suits_you', 'Bạn hợp đôi nào', 'compare', 'engagement', $photo, 3, 6, [
                 self::rule('first', 'any', true, 'Hook "Bạn hợp đôi nào theo ...?"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 nhóm (phong cách / tính cách / cung) + 1 đôi'),

@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\SocialPublishJob;
 use App\Models\Worker;
-use App\Services\Channel\TextOverlayService;
 use App\Services\Social\SocialPublishJobService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,22 +26,12 @@ use Illuminate\Http\Response;
  */
 class WorkerPostJobController extends Controller
 {
-    public function __construct(private SocialPublishJobService $jobs, private TextOverlayService $overlays) {}
+    public function __construct(private SocialPublishJobService $jobs) {}
 
     public function next(Request $request): JsonResponse|Response
     {
         $worker = $this->worker($request);
         $worker->assertType(Worker::TYPE_PUBLISH);
-
-        // Chèn chữ trước: bài kế hoạch phải chèn xong mới vào hàng chờ đăng
-        $overlay = $this->overlays->claim($worker);
-        if ($overlay) {
-            return response()->json(['data' => [
-                'id' => $overlay->id,
-                'type' => 'overlay',
-                'request' => $this->overlays->request($overlay),
-            ]]);
-        }
 
         $job = $this->jobs->claim($worker);
         if (! $job) {
@@ -78,25 +67,6 @@ class WorkerPostJobController extends Controller
         return response()->json(['data' => ['id' => $job->id, 'status' => $job->fresh()->status]]);
     }
 
-    public function submitOverlay(Request $request, int $id): JsonResponse
-    {
-        $data = $request->validate([
-            'status' => ['required', 'in:completed,failed'],
-            'files' => ['required_if:status,completed', 'array'],
-            'files.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:15360'],
-            'error_code' => ['required_if:status,failed', 'nullable', 'string', 'max:50', 'regex:/^[A-Z0-9_]+$/'],
-            'error_message' => ['nullable', 'string', 'max:490'],
-        ]);
-
-        $worker = $this->worker($request);
-        if ($data['status'] === 'completed') {
-            $this->overlays->complete($worker, $id, $request->file('files', []));
-        } else {
-            $this->overlays->fail($worker, $id, $data['error_code'], $data['error_message'] ?? null);
-        }
-
-        return response()->json(['data' => ['id' => $id, 'status' => $data['status']]]);
-    }
 
     private function worker(Request $request): Worker
     {

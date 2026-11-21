@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\Social\VideoPostController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
+use App\Http\Controllers\Api\V1\WorkerContentJobController;
 use App\Http\Controllers\Api\V1\WorkerPostJobController;
 use App\Http\Controllers\Api\V1\WorkerVideoImageController;
 use App\Http\Controllers\Api\V1\WorkerVideoTemplateController;
@@ -234,9 +235,13 @@ Route::prefix('v1/jobs')->middleware('worker')->group(function () {
 // (note/gop-luong-dang-bai.txt ở repo frontend)
 Route::prefix('v1/post-jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerPostJobController::class, 'next']);
-    // Job chèn chữ (type overlay, a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 5.11)
-    Route::post('overlay/{id}', [WorkerPostJobController::class, 'submitOverlay'])->whereNumber('id');
     Route::post('{id}', [WorkerPostJobController::class, 'submit'])->whereNumber('id');
+});
+
+// Content-worker: nhận nguyên liệu bài ảnh kênh, gửi lại ảnh hoàn chỉnh (a90-fe note/xay-kenh-tiktok/worker-content.txt)
+Route::prefix('v1/content-jobs')->middleware('worker')->group(function () {
+    Route::get('/', [WorkerContentJobController::class, 'next']);
+    Route::post('{id}', [WorkerContentJobController::class, 'submit'])->whereNumber('id');
 });
 
 // Worker tạo video: gắn 1 tài khoản A51 (admin gắn), xin N ảnh ngẫu nhiên trong các lô ảnh của shop đó để dựng video.

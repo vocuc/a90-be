@@ -10,7 +10,7 @@ use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\Hashtag;
 use App\Models\SocialPost;
-use App\Models\TextOverlayJob;
+use App\Models\ContentJob;
 use App\Models\User;
 use App\Models\Worker;
 use App\Services\Channel\ChannelPlanService;
@@ -31,6 +31,8 @@ class ChannelPlanTest extends TestCase
 
     private string $workerToken;
 
+    private string $contentToken;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -42,6 +44,9 @@ class ChannelPlanTest extends TestCase
         $this->shop = $this->creator();
         [$worker, $this->workerToken] = Worker::register('dang-'.Str::random(4), Worker::TYPE_PUBLISH);
         $worker->users()->attach($this->shop->id);
+        // Content-worker dựng bài ảnh có chữ (a90-fe note/xay-kenh-tiktok/worker-content.txt)
+        [$content, $this->contentToken] = Worker::register('dung-'.Str::random(4), Worker::TYPE_CONTENT);
+        $content->users()->attach($this->shop->id);
         $this->channel = $this->channelFor($this->shop, $worker, [
             'persona' => ['age_range' => '18-25'],
             'plan_days' => 2,
@@ -215,36 +220,47 @@ class ChannelPlanTest extends TestCase
         $posts = SocialPost::query()->where('channel_id', $this->channel->id)->orderBy('scheduled_at')->get();
         $this->assertCount(2, $posts);
         $post = $posts[0];
-        $this->assertSame(SocialPostStatus::Generating, $post->status, 'Chờ chèn chữ');
+        $this->assertSame(SocialPostStatus::Generating, $post->status, 'Chờ content-worker dựng');
         $this->assertSame('unboxing', $post->sample_key);
         $this->assertSame(['giaytet2027'], $post->hashtags, 'Hashtag ngoài kho bị bỏ');
         $this->assertSame(SocialPost::SOURCE_PLAN, $post->source);
 
-        // Worker nhận job chèn chữ trước (bài chưa tới giờ vẫn nhận)
-        $job = $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')->assertOk()
-            ->assertJsonPath('data.type', 'overlay')
+        // Worker đăng bài KHÔNG còn chèn chữ; content-worker nhận nguyên liệu (bài chưa tới giờ vẫn nhận)
+        $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')->assertNoContent();
+        $job = $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')->assertOk()
             ->assertJsonPath('data.request.post_id', $post->id)
+            ->assertJsonPath('data.request.sample_key', 'unboxing')
+            ->assertJsonPath('data.request.cover_collage', false)
             ->assertJsonPath('data.request.images.0.text', 'Đập hộp đi chúc Tết 🧧')
-            ->assertJsonPath('data.request.images.0.style.font', 'Be Vietnam Pro')
+            ->assertJsonPath('data.request.images.0.kind', 'product')
+            ->assertJsonPath('data.request.images.0.text_template.style.font', 'Be Vietnam Pro')
             ->json('data');
-        $imageId = $job['request']['images'][0]['image_id'];
-        $this->withToken($this->workerToken)->post("/api/v1/post-jobs/overlay/{$job['id']}", [
-            'status' => 'completed',
-            'files' => [$imageId => UploadedFile::fake()->image('overlay.jpg', 32, 32)],
-        ], ['Accept' => 'application/json'])->assertOk();
+        $n = count($job['request']['images']);
+        // Thiếu ảnh / lệch cỡ: từ chối
+        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job['id']}", [
+            'status' => 'completed', 'files' => [UploadedFile::fake()->image('a.jpg', 32, 32)],
+        ], ['Accept' => 'application/json'])->assertStatus(422)->assertJsonPath('code', 'CONTENT_FILES_COUNT');
+        $bad = array_map(fn ($i) => UploadedFile::fake()->image("b{$i}.jpg", 32, $i ? 40 : 32), range(0, $n - 1));
+        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job['id']}", ['status' => 'completed', 'files' => $bad],
+            ['Accept' => 'application/json'])->assertStatus(422)->assertJsonPath('code', 'CONTENT_SIZE_MISMATCH');
+        $files = array_map(fn ($i) => UploadedFile::fake()->image("c{$i}.jpg", 32, 32), range(0, $n - 1));
+        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job['id']}", ['status' => 'completed', 'files' => $files],
+            ['Accept' => 'application/json'])->assertOk();
         $post->refresh();
         $this->assertSame(SocialPostStatus::Queued, $post->status);
-        $overlayPath = $post->images()->find($imageId)->overlay_path;
+        $overlayPath = $post->images()->orderBy('position')->first()->overlay_path;
         $this->assertNotNull($overlayPath);
+        $this->assertSame($n, $post->images()->whereNotNull('overlay_path')->count(), 'Mọi slide dùng ảnh worker dựng');
 
-        // Bài thứ 2 cũng có chữ -> job chèn chữ tiếp theo; xong rồi tới giờ mới nhận bài đăng
-        $job2 = $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')->assertJsonPath('data.type', 'overlay')->json('data');
-        $this->withToken($this->workerToken)->post("/api/v1/post-jobs/overlay/{$job2['id']}", [
+        // Bài thứ 2 cũng có chữ -> job tiếp theo, lỗi -> chờ xử lý
+        $job2 = $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')->assertOk()->json('data');
+        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job2['id']}", [
             'status' => 'failed', 'error_code' => 'FONT_MISSING', 'error_message' => 'thiếu font',
         ], ['Accept' => 'application/json'])->assertOk();
         $this->assertSame(SocialPostStatus::PendingReview, $posts[1]->fresh()->status);
-        $this->assertSame('OVERLAY_FAILED', $posts[1]->fresh()->last_error['code']);
+        $this->assertSame('CONTENT_FAILED', $posts[1]->fresh()->last_error['code']);
 
+        $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')->assertNoContent();
         $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')->assertNoContent();
         $this->travelTo($post->scheduled_at->addMinute());
         $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')->assertOk()
@@ -262,17 +278,17 @@ class ChannelPlanTest extends TestCase
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
         $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
 
-        $old = $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')->json('data');
+        $old = $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')->json('data');
         $imageId = $old['request']['images'][0]['image_id'];
         $this->actingAs($this->shop)->putJson("/api/v1/creator/channel-posts/{$post->id}/overlays", [
             'overlays' => [['image_id' => $imageId, 'text' => 'Chữ mới']],
         ])->assertOk()->assertJsonPath('data.images.0.overlay_text', 'Chữ mới');
 
-        $this->withToken($this->workerToken)->post("/api/v1/post-jobs/overlay/{$old['id']}", [
-            'status' => 'completed', 'files' => [$imageId => UploadedFile::fake()->image('o.jpg', 8, 8)],
+        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$old['id']}", [
+            'status' => 'completed', 'files' => [UploadedFile::fake()->image('o.jpg', 8, 8), UploadedFile::fake()->image('p.jpg', 8, 8)],
         ], ['Accept' => 'application/json'])->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
-        $this->assertSame(TextOverlayJob::SUPERSEDED, TextOverlayJob::query()->find($old['id'])->status);
-        $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')
+        $this->assertSame(ContentJob::SUPERSEDED, ContentJob::query()->find($old['id'])->status);
+        $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')
             ->assertJsonPath('data.request.images.0.text', 'Chữ mới');
     }
 
@@ -337,15 +353,14 @@ class ChannelPlanTest extends TestCase
 
         // Có template khác đã duyệt gắn cùng loại bài: bỏ được, bài chuyển sang template đó và chèn chữ lại
         $other->update(['sample_keys' => ['this_or_that', 'unboxing']]);
-        $oldJob = TextOverlayJob::query()->where('social_post_id', $post->id)->latest('id')->firstOrFail();
+        $oldJob = ContentJob::query()->where('social_post_id', $post->id)->latest('id')->firstOrFail();
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/text-templates/{$used->id}/reject")
             ->assertOk()->assertJsonPath('data.status', 'rejected')->assertJsonPath('data.moved_posts', 1);
 
         $this->assertSame($other->id, $post->images()->whereNotNull('overlay_text')->value('text_template_id'));
-        $this->assertSame(TextOverlayJob::SUPERSEDED, $oldJob->fresh()->status);
+        $this->assertSame(ContentJob::SUPERSEDED, $oldJob->fresh()->status);
         $this->assertSame(SocialPostStatus::Generating, $post->fresh()->status);
-        $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')
-            ->assertJsonPath('data.type', 'overlay')
+        $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')
             ->assertJsonPath('data.request.images.0.text', 'Đập hộp đi chúc Tết 🧧');
     }
 
@@ -438,7 +453,7 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(5, $post->images()->count());
         $kinds = Generation::query()->whereIn('id', $post->images()->pluck('generation_id'))->orderBy('id')->pluck('kind')->all();
         $this->assertSame([Generation::KIND_OUTFIT_COVER, ...array_fill(0, 4, Generation::KIND_OUTFIT)], $kinds);
-        $this->assertSame(0, TextOverlayJob::query()->count(), 'A51 không chèn chữ: worker phối đồ in hook lên bìa');
+        $this->assertSame(0, ContentJob::query()->count(), 'Không giao content-worker: worker phối đồ in hook lên bìa');
 
         // Lô có sẵn hook (chủ đề của bài) + hashtag chủ đề, khoá không cho worker đổi
         $batch = \App\Models\ImageBatch::query()->findOrFail($post->image_batch_id);
@@ -519,7 +534,71 @@ class ChannelPlanTest extends TestCase
         $samples = collect($this->actingAs($this->shop)->getJson('/api/v1/creator/channels/post-samples')->assertOk()->json('data'))->keyBy('key');
         $this->assertTrue($samples['lookbook']['enabled']);
         $this->assertFalse($samples['unboxing']['enabled']);
-        $this->assertSame(['lookbook', 'outfit_by_day'], \App\Models\ChannelTextTemplate::sampleKeyOptions());
+        $this->assertSame(['top_n', 'lookbook', 'outfit_by_day'], \App\Models\ChannelTextTemplate::sampleKeyOptions());
+    }
+
+    public function test_top_n_gets_collage_cover_from_content_worker(): void
+    {
+        // Mỗi ảnh 1 mẫu khác nhau (creative khác nhau)
+        $refs = [...$this->images(1), ...$this->images(1), ...$this->images(1)];
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'top_n', 'percent' => 100]]])->assertCreated();
+        $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
+        $this->api('POST', "channels/{$this->channel->id}/text-templates", ['templates' => [[...$this->templateBody(), 'sample_keys' => ['top_n']]]])->assertCreated();
+        $this->channel->textTemplates()->update(['status' => 'approved']);
+        $planId = $this->context()['plan']['id'];
+        $ranked = fn (array $texts) => array_map(fn ($r, $t) => ['ref' => $r, 'text' => $t], array_slice($refs, 0, count($texts)), $texts);
+        $top = ['slot_index' => 0, 'sample_key' => 'top_n', 'hook' => 'Top 3 đôi giày đi chúc Tết',
+            'images' => $ranked(['#1 Cao gót, sang', '#2 Búp bê, êm', '#3 Sandal, mát']), 'title' => 'Bạn chốt số mấy?', 'hashtags' => ['tet2027']];
+
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$top, 'slot_index' => 1, 'hook' => 'Top 5 đôi'],
+            [...$top, 'slot_index' => 2, 'hook' => 'Top 3 khác', 'images' => $ranked(['#1 a', '3 b', '#2 c'])],
+        ]])->json('data.rejected');
+        $this->assertStringContainsString('Top 5', implode(' ', $rejected[0]['errors']));
+        $this->assertStringContainsString('#2', implode(' ', $rejected[1]['errors']));
+
+        $r = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$top]])->assertOk();
+        $this->assertSame([0], $r->json('data.accepted'), json_encode($r->json('data.rejected'), JSON_UNESCAPED_UNICODE));
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
+        $this->assertSame(3, $post->images()->count(), 'A51 không thêm bìa');
+
+        $job = $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')->assertOk()
+            ->assertJsonPath('data.request.cover_collage', true)
+            ->assertJsonPath('data.request.hook', 'Top 3 đôi giày đi chúc Tết')
+            ->json('data');
+        $this->assertCount(3, $job['request']['images']);
+        // Thiếu bìa: từ chối; đủ 3 + 1 bìa: bìa thành slide 1
+        $make = fn ($k) => array_map(fn ($i) => UploadedFile::fake()->image("t{$i}.jpg", 30, 40), range(1, $k));
+        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job['id']}", ['status' => 'completed', 'files' => $make(3)],
+            ['Accept' => 'application/json'])->assertStatus(422)->assertJsonPath('code', 'CONTENT_FILES_COUNT');
+        $this->withToken($this->contentToken)->post("/api/v1/content-jobs/{$job['id']}", ['status' => 'completed', 'files' => $make(4)],
+            ['Accept' => 'application/json'])->assertOk();
+        $images = $post->images()->orderBy('position')->get();
+        $this->assertCount(4, $images);
+        $this->assertTrue((bool) $images[0]->added_by_worker);
+        $this->assertSame([1, 2, 3, 4], $images->pluck('position')->all());
+        $this->assertSame(SocialPostStatus::Queued, $post->fresh()->status);
+
+        // Sửa chữ -> bỏ bìa cũ, giao job mới với 3 ảnh nguyên liệu
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channel-posts/{$post->id}/overlays", [
+            'overlays' => [['image_id' => $images[1]->id, 'text' => '#1 Cao gót mới']],
+        ])->assertOk();
+        $this->assertSame(3, $post->images()->count());
+        $this->withToken($this->contentToken)->getJson('/api/v1/content-jobs')->assertOk()
+            ->assertJsonPath('data.request.images.0.text', '#1 Cao gót mới');
+    }
+
+    public function test_photo_post_with_text_needs_content_worker(): void
+    {
+        Worker::query()->where('type', Worker::TYPE_CONTENT)->delete();
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->assertFalse($this->context()['channel']['content_worker']);
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$this->item(0, $refs)]])
+            ->json('data.rejected');
+        $this->assertStringContainsString('content-worker', implode(' ', $rejected[0]['errors']));
     }
 
     public function test_slots_spread_video_and_skip_past_times(): void
