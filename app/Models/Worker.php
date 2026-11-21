@@ -34,7 +34,11 @@ class Worker extends Model
      * (a90-fe note/xay-kenh-tiktok/worker-content.txt). */
     public const TYPE_CONTENT = 'content';
 
-    public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH, self::TYPE_OUTFIT, self::TYPE_CONTENT];
+    /** Worker lập chủ đề: nhận việc "xây dựng chủ đề tự động" của kênh, gọi skill Claude /lap-chu-de rồi trả chủ đề
+     * (a90-fe note/xay-kenh-tiktok/worker-lap-chu-de.txt). */
+    public const TYPE_TOPIC = 'topic';
+
+    public const TYPES = [self::TYPE_IMAGE, self::TYPE_PUBLISH, self::TYPE_OUTFIT, self::TYPE_CONTENT, self::TYPE_TOPIC];
 
     protected $guarded = ['id'];
 
@@ -90,6 +94,7 @@ class Worker extends Model
             self::TYPE_IMAGE => 'Tạo ảnh',
             self::TYPE_OUTFIT => 'Phối đồ',
             self::TYPE_CONTENT => 'Dựng nội dung',
+            self::TYPE_TOPIC => 'Lập chủ đề',
             default => 'Đăng bài',
         };
     }
@@ -175,11 +180,12 @@ class Worker extends Model
      */
     public function pendingJobCount(?int $userId = null): int
     {
-        if ($this->isImage()) {
-            return GenerationOutput::query()
+        if ($this->type !== self::TYPE_PUBLISH) {
+            // Việc worker đã nhận chưa trả (worker_jobs: ảnh, lô phối đồ, dựng bài)
+            return WorkerJob::query()
                 ->where('worker_id', $this->id)
-                ->where('status', OutputStatus::Processing)
-                ->when($userId, fn ($q) => $q->whereHas('generation', fn ($g) => $g->where('user_id', $userId)))
+                ->where('status', WorkerJob::PROCESSING)
+                ->when($userId, fn ($q) => $q->where('user_id', $userId))
                 ->count();
         }
 
@@ -189,7 +195,7 @@ class Worker extends Model
             ->count();
     }
 
-    /** Worker gọi API không đúng loại của nó (vd worker tạo ảnh gọi /post-jobs): 409 WORKER_TYPE_MISMATCH. */
+    /** Worker gọi API không đúng loại của nó (vd worker tạo ảnh gọi /video-images): 409 WORKER_TYPE_MISMATCH. */
     public function assertType(string $type): void
     {
         if ($this->type !== $type) {

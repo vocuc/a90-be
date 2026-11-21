@@ -185,24 +185,27 @@ class ProductTagTopicTest extends TestCase
         $this->assertSame([], $context['topics']);
         $planId = $context['plan']['id'];
 
-        $new = ['topic' => ['name' => '  Đi chúc Tết ', 'tags' => ['dip' => ['tet']]]];
+        // Chủ shop xây dựng chủ đề thủ công (lệnh chỉ dùng chủ đề có sẵn)
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topics", ['name' => '  Đi chúc Tết ', 'tags' => ['dip' => ['tet']]])
+            ->assertCreated()->assertJsonPath('data.name', 'Đi chúc Tết')->assertJsonPath('data.source', 'owner');
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topics", ['name' => 'đi chúc tết'])->assertStatus(422);
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topics", ['name' => 'Tag sai', 'tags' => ['dip' => ['khong_co']]])->assertStatus(422);
+        $topic = ChannelTopic::query()->sole();
+
+        $byName = ['topic' => ['name' => 'Đi chúc Tết']];
         $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
             $this->unboxing(0, $refs, []),                           // thiếu chủ đề
-            $this->unboxing(1, $refs, $new),                          // tạo chủ đề mới
-            $this->unboxing(2, [$refs[2], $refs[3]], $new),           // cùng chủ đề + cùng loại bài -> lặp
-            [...$this->unboxing(3, [$refs[2], $refs[3]], $new), 'sample_key' => 'this_or_that', 'hook' => 'Đi chúc Tết chọn A hay B?'],
-            $this->unboxing(0, [$refs[1], $refs[0]], ['topic' => ['name' => 'Tag sai', 'tags' => ['dip' => ['khong_co']]]]),
+            $this->unboxing(1, $refs, ['topic_id' => $topic->id]),
+            $this->unboxing(2, [$refs[2], $refs[3]], $byName),        // cùng chủ đề + cùng loại bài -> lặp
+            [...$this->unboxing(3, [$refs[2], $refs[3]], $byName), 'sample_key' => 'this_or_that', 'hook' => 'Đi chúc Tết chọn A hay B?'],
+            $this->unboxing(0, [$refs[1], $refs[0]], ['topic' => ['name' => 'Chủ đề AI tự nghĩ', 'tags' => ['dip' => ['tet']]]]),
         ]])->assertOk()->json('data');
         $this->assertSame([1, 3], $res['accepted']);
         $errors = collect($res['rejected'])->pluck('errors')->map(fn ($e) => implode(' ', $e))->all();
         $this->assertStringContainsString('Bài cần chủ đề', $errors[0]);
         $this->assertStringContainsString('TOPIC_REPEATED', $errors[1]);
-        $this->assertStringContainsString('topic.tags', $errors[2]);
-
-        $topic = ChannelTopic::query()->sole();
-        $this->assertSame('Đi chúc Tết', $topic->name);
-        $this->assertEquals(['dip' => ['tet']], $topic->tags);
-        $this->assertSame('ai', $topic->source);
+        $this->assertStringContainsString('TOPIC_NOT_FOUND', $errors[2]);
+        $this->assertSame(1, ChannelTopic::query()->count(), 'Lệnh không tự tạo chủ đề');
 
         // Kỳ được tự duyệt -> bài đăng có topic_id; context đếm bài theo loại bài
         $this->assertSame(2, SocialPost::query()->where('topic_id', $topic->id)->count());

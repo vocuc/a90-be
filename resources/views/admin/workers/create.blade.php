@@ -35,6 +35,7 @@
                                             \App\Models\Worker::TYPE_IMAGE => '— nhận job tạo ảnh của các tài khoản được gắn',
                                             \App\Models\Worker::TYPE_OUTFIT => '— làm ảnh lô phối đồ của các tài khoản được gắn',
                                             \App\Models\Worker::TYPE_CONTENT => '— dựng ảnh bài kế hoạch kênh (in chữ, ghép bìa) cho các tài khoản được gắn',
+                                            \App\Models\Worker::TYPE_TOPIC => '— lập chủ đề kênh TikTok (skill Claude /lap-chu-de) khi tài khoản được gắn bấm "Xây dựng chủ đề tự động"',
                                             default => '— shop được gắn chọn worker ở trang bài đăng để đăng bài ảnh / video',
                                         } }}
                                     </span>

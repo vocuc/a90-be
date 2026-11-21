@@ -121,11 +121,12 @@ class ImageWorkerSelectionTest extends TestCase
         [$chosen, $token] = Worker::register('chon', Worker::TYPE_IMAGE);
         $chosen->users()->attach($buyer->id);
         $id = $this->generate($buyer, $creative, extra: ['worker_id' => $chosen->id])->json('data.id');
-        $job = $this->claimJob($token, allUsers: false)->json('data.id');
-        $this->withToken($token)->postJson("/api/v1/jobs/{$job}", ['status' => 'failed', 'error_code' => 'TIMEOUT'])->assertOk();
+        $claimed = $this->claimJob($token, allUsers: false)->json('data');
+        $job = $claimed['id'];
+        $this->withToken($token)->postJson("/api/v1/worker-jobs/{$job}", ['status' => 'failed', 'error_code' => 'TIMEOUT'])->assertOk();
 
         $retryId = $this->actingAs($buyer)->postJson("/api/v1/generations/{$id}/retry", [
-            'output_ids' => [$job],
+            'output_ids' => [$claimed['output_id']],
             'idempotency_key' => 'retry-1',
         ])->assertStatus(202)->json('data.id');
 

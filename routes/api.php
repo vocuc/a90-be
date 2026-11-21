@@ -23,8 +23,6 @@ use App\Http\Controllers\Api\V1\Shipping\ShippingOrderController;
 use App\Http\Controllers\Api\V1\Social\PostController;
 use App\Http\Controllers\Api\V1\Social\VideoPostController;
 use App\Http\Controllers\Api\V1\WorkerJobController;
-use App\Http\Controllers\Api\V1\WorkerContentJobController;
-use App\Http\Controllers\Api\V1\WorkerPostJobController;
 use App\Http\Controllers\Api\V1\WorkerVideoImageController;
 use App\Http\Controllers\Api\V1\WorkerVideoTemplateController;
 use Illuminate\Support\Facades\Route;
@@ -144,6 +142,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('channels/{channel}/calendar', [ChannelContentController::class, 'calendar'])->whereNumber('channel');
             // Chủ đề kênh (AI tự tạo khi lập kế hoạch; chủ shop sửa tên / tags, tạm tắt)
             Route::get('channels/{channel}/topics', [ChannelContentController::class, 'topics'])->whereNumber('channel');
+            Route::post('channels/{channel}/topics', [ChannelContentController::class, 'storeTopic'])->whereNumber('channel');
+            // Xây dựng chủ đề tự động: tạo việc cho worker lập chủ đề (a90-fe note/xay-kenh-tiktok/worker-lap-chu-de.txt)
+            Route::post('channels/{channel}/topic-jobs', [ChannelContentController::class, 'startTopicJob'])->whereNumber('channel');
             Route::put('channels/{channel}/topics/{topic}', [ChannelContentController::class, 'updateTopic'])->whereNumber(['channel', 'topic']);
             Route::put('channel-posts/{post}/overlays', [ChannelContentController::class, 'updateOverlays'])->whereNumber('post');
             Route::post('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');
@@ -228,25 +229,13 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     });
 });
 
-// Worker tạo ảnh nội bộ (xác thực bằng token worker): chỉ nhận job của các tài khoản admin gắn với worker.
-Route::prefix('v1/jobs')->middleware('worker')->group(function () {
+// MỌI worker (xác thực bằng token worker): 1 API chung, việc lưu ở worker_jobs phân biệt bằng type = loại worker
+// (image, outfit, content, publish; a90-fe note/gop-viec-worker.txt). Chỉ nhận việc của các tài khoản admin gắn với worker.
+Route::prefix('v1/worker-jobs')->middleware('worker')->group(function () {
     Route::get('/', [WorkerJobController::class, 'next']);
     Route::post('{id}', [WorkerJobController::class, 'submit'])->whereNumber('id');
     Route::post('{id}/extend', [WorkerJobController::class, 'extend'])->whereNumber('id');
     Route::get('{id}/batch', [WorkerJobController::class, 'batch'])->whereNumber('id');
-});
-
-// Worker đăng bài (ảnh / video): nhận bài đã tới giờ được giao cho chính worker, 1 job / bài chứa mọi nền tảng
-// (note/gop-luong-dang-bai.txt ở repo frontend)
-Route::prefix('v1/post-jobs')->middleware('worker')->group(function () {
-    Route::get('/', [WorkerPostJobController::class, 'next']);
-    Route::post('{id}', [WorkerPostJobController::class, 'submit'])->whereNumber('id');
-});
-
-// Content-worker: nhận nguyên liệu bài ảnh kênh, gửi lại ảnh hoàn chỉnh (a90-fe note/xay-kenh-tiktok/worker-content.txt)
-Route::prefix('v1/content-jobs')->middleware('worker')->group(function () {
-    Route::get('/', [WorkerContentJobController::class, 'next']);
-    Route::post('{id}', [WorkerContentJobController::class, 'submit'])->whereNumber('id');
 });
 
 // Worker tạo video: gắn 1 tài khoản A51 (admin gắn), xin N ảnh ngẫu nhiên trong các lô ảnh của shop đó để dựng video.

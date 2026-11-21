@@ -7,6 +7,7 @@ use App\Models\Banner;
 use App\Models\GenerationOutput;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use App\Models\ImageJob;
 use Tests\TestCase;
 
 class ImageOptimizationTest extends TestCase
@@ -57,11 +58,11 @@ class ImageOptimizationTest extends TestCase
         $token = $this->workerToken();
         $jobId = $this->claimJob($token)->assertOk()->json('data.id');
         $upload = UploadedFile::fake()->image('result.png', 2048, 1024);
-        $this->withToken($token)->post("/api/v1/jobs/{$jobId}", ['status' => 'completed', 'image' => $upload],
+        $this->withToken($token)->post("/api/v1/worker-jobs/{$jobId}", ['status' => 'completed', 'image' => $upload],
             ['Accept' => 'application/json'])->assertOk();
 
         // Ảnh gốc giữ nguyên để tải về, thumbnail WebP 600px để hiển thị danh sách.
-        $output = GenerationOutput::query()->findOrFail($jobId);
+        $output = ImageJob::query()->findOrFail($jobId)->output;
         $this->assertStringEndsWith('.png', $output->image_path);
         $this->assertSame([2048, 1024], $this->dimensions($output->image_path));
         $this->assertStringStartsWith('generations/outputs/', $output->thumb_path);

@@ -12,8 +12,8 @@ use Illuminate\Support\Str;
 
 /**
  * Chủ đề kênh (a90-fe note/xay-kenh-tiktok/chu-de-va-tag-san-pham.txt mục 4): mọi bài lệnh /lap-ke-hoach gửi phải có
- * chủ đề (topic_id có sẵn hoặc topic {name, tags} mới, A51 tạo). Cùng chủ đề + cùng loại bài không lặp trong
- * ChannelTopic::REPEAT_DAYS ngày.
+ * chủ đề CÓ SẴN của kênh (topic_id; chủ đề do worker lập chủ đề hoặc chủ shop tạo, worker-lap-chu-de.txt). Cùng chủ đề +
+ * cùng loại bài không lặp trong ChannelTopic::REPEAT_DAYS ngày.
  */
 class ChannelTopicService
 {
@@ -41,17 +41,13 @@ class ChannelTopicService
             }
             $topic = $channel->topics()->where('name', $name)->first();
             if (! $topic) {
-                [$tags, $tagErrors] = ProductTags::cleanFilter(is_array($raw['topic']['tags'] ?? null) ? $raw['topic']['tags'] : []);
-                if ($tagErrors) {
-                    array_push($errors, ...array_map(fn ($e) => "topic.tags: {$e}", $tagErrors));
+                // Chỉ dùng chủ đề CÓ SẴN của kênh (người dùng chốt 2026-11-21): chủ đề do worker lập chủ đề / chủ shop tạo
+                $errors[] = "Chủ đề \"{$name}\" chưa có trong kênh. Chỉ dùng chủ đề có sẵn (topic_id); hết chủ đề dùng được thì nhờ chủ shop bấm \"Xây dựng chủ đề\" ở tab Chủ đề (TOPIC_NOT_FOUND).";
 
-                    return null;
-                }
-
-                return ['id' => null, 'name' => $name, 'tags' => $tags ?: null];
+                return null;
             }
         } else {
-            $errors[] = 'Bài cần chủ đề: topic_id (chủ đề có sẵn) hoặc topic {name, tags} (chủ đề mới).';
+            $errors[] = 'Bài cần chủ đề có sẵn của kênh: topic_id (hoặc topic {name} trùng tên chủ đề có sẵn).';
 
             return null;
         }
@@ -91,7 +87,7 @@ class ChannelTopicService
             ->exists();
     }
 
-    /** Id chủ đề đã kiểm tra (tạo mới nếu chưa có, nguồn ai). */
+    /** Id chủ đề đã kiểm tra (chủ đề luôn có sẵn; giữ nhánh tạo cho dữ liệu cũ). */
     public function resolve(Channel $channel, array $topic): int
     {
         if ($topic['id']) {

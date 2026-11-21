@@ -22,12 +22,12 @@ class AdminWorkerTest extends TestCase
     /** Token hợp lệ: qua được xác thực (worker tạo ảnh chưa gắn tài khoản -> 204 chưa có job, không phải 401). */
     private function assertTokenWorks(string $token): void
     {
-        $this->withToken($token)->getJson('/api/v1/jobs')->assertNoContent();
+        $this->withToken($token)->getJson('/api/v1/worker-jobs')->assertNoContent();
     }
 
     private function assertTokenRejected(string $token): void
     {
-        $this->withToken($token)->getJson('/api/v1/jobs')->assertStatus(401);
+        $this->withToken($token)->getJson('/api/v1/worker-jobs')->assertStatus(401);
     }
 
     public function test_only_admin_can_open_worker_pages(): void
@@ -158,11 +158,18 @@ class AdminWorkerTest extends TestCase
         [$image, $imageToken] = Worker::register('anh', Worker::TYPE_IMAGE);
         [$publish, $publishToken] = Worker::register('dang', Worker::TYPE_PUBLISH);
 
-        $this->withToken($imageToken)->getJson('/api/v1/post-jobs')->assertStatus(409)->assertJsonPath('code', 'WORKER_TYPE_MISMATCH');
+        // 1 API chung /worker-jobs: mỗi worker chỉ nhận việc đúng loại của mình (a90-fe note/gop-viec-worker.txt)
         $this->withToken($imageToken)->getJson('/api/v1/video-images?count=1')->assertStatus(409)->assertJsonPath('code', 'WORKER_TYPE_MISMATCH');
-        $this->withToken($publishToken)->getJson('/api/v1/jobs')->assertStatus(409)->assertJsonPath('code', 'WORKER_TYPE_MISMATCH');
-        $this->withToken($imageToken)->getJson('/api/v1/jobs')->assertNoContent();
-        $this->withToken($publishToken)->getJson('/api/v1/post-jobs')->assertNoContent();
+        $this->withToken($imageToken)->getJson('/api/v1/worker-jobs')->assertNoContent();
+        $this->withToken($publishToken)->getJson('/api/v1/worker-jobs')->assertNoContent();
+        // Gửi kết quả việc của loại khác -> 409
+        $shop = $this->buyer();
+        $image->users()->attach($shop->id);
+        $this->generate($shop, $this->publishedCreative($this->creator()))->assertStatus(202);
+        $this->app['auth']->forgetGuards();
+        $jobId = $this->withToken($imageToken)->getJson('/api/v1/worker-jobs')->assertOk()->assertJsonPath('data.type', 'image')->json('data.id');
+        $this->withToken($publishToken)->postJson("/api/v1/worker-jobs/{$jobId}", ['status' => 'completed'])
+            ->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
     }
 
     public function test_change_type_and_detach_blocked_while_worker_has_pending_jobs(): void
@@ -190,9 +197,9 @@ class AdminWorkerTest extends TestCase
         $this->assertTrue(AuditLog::query()->where('action', 'admin.worker.change_type')->exists());
 
         // Worker tạo ảnh đang tạo ảnh của shop: không bỏ shop được
-        $this->withToken($token)->getJson('/api/v1/jobs')->assertNoContent();
+        $this->withToken($token)->getJson('/api/v1/worker-jobs')->assertNoContent();
         $this->generate($shop, $this->publishedCreative($this->creator()))->assertStatus(202);
-        $this->withToken($token)->getJson('/api/v1/jobs')->assertOk();
+        $this->withToken($token)->getJson('/api/v1/worker-jobs')->assertOk();
         $this->actingAs($this->admin())->delete("/admin/workers/{$worker->id}/users/{$shop->id}")->assertSessionHasErrors('worker');
     }
 }

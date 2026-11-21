@@ -83,11 +83,11 @@ class GenerationProductTest extends TestCase
         $product = Product::query()->create(['user_id' => $buyer->id, 'name' => 'Áo thun']);
         $id = $this->generate($buyer, $creative, extra: ['product_id' => $product->id])->json('data.id');
         [, $token] = \App\Models\Worker::register('anh', \App\Models\Worker::TYPE_IMAGE);
-        $job = $this->claimJob($token)->json('data.id');
-        $this->withToken($token)->postJson("/api/v1/jobs/{$job}", ['status' => 'failed', 'error_code' => 'TIMEOUT'])->assertOk();
+        $claimed = $this->claimJob($token)->json('data');
+        $this->withToken($token)->postJson("/api/v1/worker-jobs/{$claimed['id']}", ['status' => 'failed', 'error_code' => 'TIMEOUT'])->assertOk();
 
         $retryId = $this->actingAs($buyer)->postJson("/api/v1/generations/{$id}/retry", [
-            'output_ids' => [$job],
+            'output_ids' => [$claimed['output_id']],
             'idempotency_key' => 'retry-1',
         ])->assertStatus(202)->json('data.id');
 

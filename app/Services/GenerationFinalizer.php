@@ -10,6 +10,8 @@ use App\Models\AiCreative;
 use App\Models\CreatorProfile;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\ImageJob;
+use App\Models\WorkerJob;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -38,11 +40,11 @@ class GenerationFinalizer
                 'thumb_path' => $thumbPath,
                 'mime' => $mime,
                 'size_bytes' => $sizeBytes,
-                'lease_expires_at' => null,
                 'error_code' => null,
                 'error_message' => null,
                 'finished_at' => now(),
             ]);
+            $this->closeJob($output->id, WorkerJob::COMPLETED);
 
             // Chỉ ảnh thành công của lượt tạo thật (không phải tạo thử) mới tính lượt sử dụng.
             if ($generation->type === GenerationType::Paid) {
@@ -69,17 +71,30 @@ class GenerationFinalizer
 
             $output->update([
                 'status' => OutputStatus::Failed,
-                'lease_expires_at' => null,
                 'error_code' => $errorCode,
                 'error_message' => Str::limit($errorMessage, 490),
                 'finished_at' => now(),
             ]);
+            $this->closeJob($output->id, WorkerJob::FAILED, $errorCode, $errorMessage);
 
             $generation->failed_count++;
             $this->settle($generation);
 
             GenerationOutputFinished::dispatch($output->id);
         });
+    }
+
+    /** Đóng việc tạo ảnh (worker_jobs) đang chờ / đang làm của output khi ảnh chốt kết quả (xong, lỗi, huỷ, quá hạn). */
+    private function closeJob(int $outputId, string $status, ?string $errorCode = null, ?string $errorMessage = null): void
+    {
+        ImageJob::query()->where('generation_output_id', $outputId)->whereIn('status', [WorkerJob::QUEUED, WorkerJob::PROCESSING])
+            ->update([
+                'status' => $status,
+                'lease_expires_at' => null,
+                'error_code' => $errorCode,
+                'error_message' => $errorMessage !== null ? Str::limit($errorMessage, 490) : null,
+                'finished_at' => now(),
+            ]);
     }
 
     /**

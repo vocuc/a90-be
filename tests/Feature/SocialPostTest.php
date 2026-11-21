@@ -382,12 +382,12 @@ class SocialPostTest extends TestCase
 
     private function claimPostJob(string $token): TestResponse
     {
-        return $this->withToken($token)->getJson('/api/v1/post-jobs');
+        return $this->withToken($token)->getJson('/api/v1/worker-jobs');
     }
 
     private function submitPostJob(string $token, int $jobId, array $body = ['status' => 'completed']): TestResponse
     {
-        return $this->withToken($token)->postJson("/api/v1/post-jobs/{$jobId}", $body);
+        return $this->withToken($token)->postJson("/api/v1/worker-jobs/{$jobId}", $body);
     }
 
     public function test_publish_assigns_worker_who_posts_all_platforms_in_one_job(): void
@@ -425,7 +425,7 @@ class SocialPostTest extends TestCase
         $this->claimPostJob(Worker::register('no-shop', Worker::TYPE_PUBLISH)[1])->assertNoContent();
 
         $job = $this->claimPostJob($token)->assertOk()
-            ->assertJsonPath('data.type', 'photo')
+            ->assertJsonPath('data.type', 'publish')->assertJsonPath('data.request.type', 'photo')
             ->assertJsonPath('data.request.post_id', $post->id)
             ->assertJsonPath('data.request.platforms', ['tiktok', 'facebook'])
             ->assertJsonPath('data.request.description', "Nội dung đã sửa\n#a51 #ChânDung")
@@ -546,7 +546,7 @@ class SocialPostTest extends TestCase
             ->assertJsonPath('data.image_count', 2);
 
         $this->claimPostJob($token)->assertOk()
-            ->assertJsonPath('data.type', 'video')
+            ->assertJsonPath('data.type', 'publish')->assertJsonPath('data.request.type', 'video')
             ->assertJsonPath('data.request.template.name', 'LensPop')
             ->assertJsonPath('data.request.template.image_count', 2)
             ->assertJsonCount(2, 'data.request.images');

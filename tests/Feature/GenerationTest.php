@@ -13,6 +13,7 @@ use App\Models\Worker;
 use App\Services\GenerationFinalizer;
 use App\Services\MediaStorage;
 use Illuminate\Support\Str;
+use App\Models\ImageJob;
 use Tests\TestCase;
 
 class GenerationTest extends TestCase
@@ -40,8 +41,8 @@ class GenerationTest extends TestCase
 
         $job = $this->claimJob($token)->assertOk()->json('data');
 
-        $this->assertSame($generation->outputs[0]->id, $job['id']);
-        $this->assertSame(['id', 'request', 'logo'], array_keys($job));
+        $this->assertSame($generation->outputs[0]->id, $job['output_id']);
+        $this->assertSame(['id', 'type', 'output_id', 'request', 'logo'], array_keys($job));
         // Tạo ảnh lẻ không chèn logo
         $this->assertNull($job['logo']);
         $this->assertSame([
@@ -53,7 +54,9 @@ class GenerationTest extends TestCase
 
         $output = $generation->outputs[0]->fresh();
         $this->assertSame(OutputStatus::Processing, $output->status);
-        $this->assertSame(Worker::query()->value('id'), $output->worker_id);
+        // Hàng đợi ở worker_jobs: việc của ảnh ghi worker đang giữ
+        $this->assertSame(Worker::query()->value('id'), $output->job->worker_id);
+        $this->assertSame($job['id'], $output->job->id);
         $this->assertSame(GenerationStatus::Processing, $generation->fresh()->status);
         $this->assertNotNull(Worker::query()->value('last_seen_at'));
     }
@@ -78,20 +81,20 @@ class GenerationTest extends TestCase
 
         // Gắn bob: bỏ qua job cũ hơn của alice, nhận job của bob; alice vẫn chờ worker khác
         $worker->users()->attach($bob->id);
-        $this->claimJob($token, allUsers: false)->assertOk()->assertJsonPath('data.id', $bobJob->id);
+        $this->claimJob($token, allUsers: false)->assertOk()->assertJsonPath('data.output_id', $bobJob->id);
         $this->claimJob($token, allUsers: false)->assertNoContent();
         $this->assertSame(OutputStatus::Queued, $aliceJob->fresh()->status);
 
         $other = $this->workerToken('worker-2');
         Worker::findActiveByToken($other)->users()->attach($alice->id);
-        $this->claimJob($other, allUsers: false)->assertOk()->assertJsonPath('data.id', $aliceJob->id);
+        $this->claimJob($other, allUsers: false)->assertOk()->assertJsonPath('data.output_id', $aliceJob->id);
     }
 
     public function test_invalid_or_disabled_worker_token_is_rejected(): void
     {
         $this->claimJob('wrong-token')->assertStatus(401)->assertJsonPath('code', 'WORKER_UNAUTHORIZED');
-        $this->withToken('wrong-token')->postJson('/api/v1/jobs/999', ['status' => 'failed'])->assertStatus(401);
-        $this->getJson('/api/v1/jobs')->assertStatus(401);
+        $this->withToken('wrong-token')->postJson('/api/v1/worker-jobs/999', ['status' => 'failed'])->assertStatus(401);
+        $this->getJson('/api/v1/worker-jobs')->assertStatus(401);
 
         $token = $this->workerToken();
         Worker::query()->update(['is_active' => false]);
@@ -160,9 +163,9 @@ class GenerationTest extends TestCase
         // Worker gửi lại hoặc lệnh sweep chạm vào output đã chốt: không hoàn thêm.
         $this->failJob($token, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
         $this->completeJob($token, $jobId)->assertStatus(409);
-        app(GenerationFinalizer::class)->fail($jobId, 'TIMEOUT', 'again');
+        app(GenerationFinalizer::class)->fail(ImageJob::query()->findOrFail($jobId)->generation_output_id, 'TIMEOUT', 'again');
 
-        $this->assertSame(OutputStatus::Failed, GenerationOutput::query()->findOrFail($jobId)->status);
+        $this->assertSame(OutputStatus::Failed, ImageJob::query()->findOrFail($jobId)->output->status);
     }
 
     public function test_worker_cannot_submit_a_job_held_by_another_worker(): void
@@ -175,7 +178,7 @@ class GenerationTest extends TestCase
         $jobId = $this->claimJob($owner)->json('data.id');
 
         $this->completeJob($other, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
-        $this->assertSame(OutputStatus::Processing, GenerationOutput::query()->findOrFail($jobId)->status);
+        $this->assertSame(OutputStatus::Processing, ImageJob::query()->findOrFail($jobId)->output->status);
         $this->assertCount(0, app(MediaStorage::class)->disk()->allFiles('generations/outputs'));
 
         $this->completeJob($owner, $jobId)->assertOk()->assertJsonPath('data.status', 'completed');
@@ -188,16 +191,16 @@ class GenerationTest extends TestCase
         $token = $this->workerToken();
         $jobId = $this->claimJob($token)->json('data.id');
 
-        $this->withToken($token)->postJson("/api/v1/jobs/{$jobId}", ['status' => 'completed'])
+        $this->withToken($token)->postJson("/api/v1/worker-jobs/{$jobId}", ['status' => 'completed'])
             ->assertStatus(422)->assertJsonValidationErrors('image');
-        $this->withToken($token)->postJson("/api/v1/jobs/{$jobId}", ['status' => 'failed'])
+        $this->withToken($token)->postJson("/api/v1/worker-jobs/{$jobId}", ['status' => 'failed'])
             ->assertStatus(422)->assertJsonValidationErrors('error_code');
-        $this->withToken($token)->postJson("/api/v1/jobs/{$jobId}", ['status' => 'done'])
+        $this->withToken($token)->postJson("/api/v1/worker-jobs/{$jobId}", ['status' => 'done'])
             ->assertStatus(422)->assertJsonValidationErrors('status');
-        $this->withToken($token)->postJson('/api/v1/jobs/999999', ['status' => 'failed', 'error_code' => 'X'])
+        $this->withToken($token)->postJson('/api/v1/worker-jobs/999999', ['status' => 'failed', 'error_code' => 'X'])
             ->assertNotFound();
 
-        $this->assertSame(OutputStatus::Processing, GenerationOutput::query()->findOrFail($jobId)->status);
+        $this->assertSame(OutputStatus::Processing, ImageJob::query()->findOrFail($jobId)->output->status);
     }
 
     public function test_client_supplied_model_and_prompt_are_ignored(): void
@@ -244,7 +247,7 @@ class GenerationTest extends TestCase
         // Lần retry dùng lại ảnh đầu vào của lần tạo gốc.
         $token = $this->workerToken('retry-worker');
         $job = $this->claimJob($token)->json('data');
-        $this->assertSame($retry->json('data.outputs.0.id'), $job['id']);
+        $this->assertSame($retry->json('data.outputs.0.id'), $job['output_id']);
         $this->assertSame($original['input_images']['product_image'], $job['request']['productImage']);
         $this->completeJob($token, $job['id'])->assertOk();
 

@@ -80,7 +80,7 @@ class SocialPublishJobService
             ]);
             $this->syncImages($post, $images);
             // Job lỗi lần trước: không tính vào lịch sử hiện tại
-            $post->publishJobs()->where('status', OutputStatus::Failed)->update(['superseded' => true]);
+            $post->publishJobs()->where('status', OutputStatus::Failed)->update(['status' => OutputStatus::Superseded]);
             $post->queuePlatforms();
             $post->syncStatus();
             $post->save();
@@ -114,11 +114,10 @@ class SocialPublishJobService
                 throw new BusinessException('POST_NOT_RETRYABLE', 'Bài chưa chọn worker / nền tảng, hãy bấm Đăng bài.', 409);
             }
 
-            $post->publishJobs()->whereIn('status', [OutputStatus::Processing, OutputStatus::Failed])->where('superseded', false)->get()
+            $post->publishJobs()->whereIn('status', [OutputStatus::Processing, OutputStatus::Failed])->get()
                 ->each(fn (SocialPublishJob $job) => $job->update([
-                    'superseded' => true,
+                    'status' => OutputStatus::Superseded,
                     ...($job->status === OutputStatus::Processing ? [
-                        'status' => OutputStatus::Failed,
                         'error_code' => 'RETRIED',
                         'error_message' => 'Chủ shop bấm tạo lại.',
                         'finished_at' => now(),
@@ -158,9 +157,12 @@ class SocialPublishJobService
 
             $platforms = array_keys(array_filter($post->platformStatuses(), fn ($status) => $status === PlatformPublishStatus::Queued));
             $job = $post->publishJobs()->create([
+                'user_id' => $post->user_id,
                 'platforms' => $platforms,
                 'status' => OutputStatus::Processing,
                 'worker_id' => $worker->id,
+                'attempts' => 1,
+                'claimed_at' => now(),
             ]);
             foreach ($platforms as $platform) {
                 $post->{SocialPlatform::from($platform)->statusColumn()} = PlatformPublishStatus::Publishing;
@@ -264,7 +266,7 @@ class SocialPublishJobService
     private function lockAssigned(Worker $worker, SocialPublishJob $job): SocialPublishJob
     {
         $job = SocialPublishJob::query()->lockForUpdate()->findOrFail($job->id);
-        if ($job->status !== OutputStatus::Processing || $job->worker_id !== $worker->id || $job->superseded) {
+        if ($job->status !== OutputStatus::Processing || $job->worker_id !== $worker->id) {
             throw new BusinessException('JOB_NOT_ASSIGNED', 'Job không còn được giao cho worker này.', 409);
         }
 

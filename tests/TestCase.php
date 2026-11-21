@@ -127,12 +127,12 @@ abstract class TestCase extends BaseTestCase
             Worker::findActiveByToken($token)?->users()->syncWithoutDetaching(User::query()->pluck('id'));
         }
 
-        return $this->withToken($token)->getJson('/api/v1/jobs');
+        return $this->withToken($token)->getJson('/api/v1/worker-jobs');
     }
 
     protected function completeJob(string $token, int $jobId): TestResponse
     {
-        return $this->withToken($token)->post("/api/v1/jobs/{$jobId}", [
+        return $this->withToken($token)->post("/api/v1/worker-jobs/{$jobId}", [
             'status' => 'completed',
             'image' => UploadedFile::fake()->image('result.png', 32, 32),
         ], ['Accept' => 'application/json']);
@@ -140,7 +140,7 @@ abstract class TestCase extends BaseTestCase
 
     protected function failJob(string $token, int $jobId, string $errorCode = 'CONTENT_BLOCKED'): TestResponse
     {
-        return $this->withToken($token)->postJson("/api/v1/jobs/{$jobId}", [
+        return $this->withToken($token)->postJson("/api/v1/worker-jobs/{$jobId}", [
             'status' => 'failed',
             'error_code' => $errorCode,
             'error_message' => 'blocked by safety filter',

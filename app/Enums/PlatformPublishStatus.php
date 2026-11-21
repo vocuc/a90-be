@@ -26,7 +26,7 @@ enum PlatformPublishStatus: string
             OutputStatus::Queued => self::Queued,
             OutputStatus::Processing => self::Publishing,
             OutputStatus::Completed => self::Published,
-            OutputStatus::Failed => self::Failed,
+            OutputStatus::Failed, OutputStatus::Superseded => self::Failed,
         };
     }
 }

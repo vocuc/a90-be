@@ -3,16 +3,24 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\OutputStatus;
+use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Models\ChannelTextTemplate;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\ImageBatch;
 use App\Models\ImageBatchImage;
+use App\Models\ImageJob;
 use App\Models\Product;
+use App\Models\SocialPublishJob;
+use App\Models\TopicJob;
 use App\Models\Worker;
+use App\Models\WorkerJob;
+use App\Services\Channel\ContentJobService;
+use App\Services\Channel\TopicJobService;
 use App\Services\MediaStorage;
 use App\Services\ShopImageLibrary;
+use App\Services\Social\SocialPublishJobService;
 use App\Services\WorkerJobService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,33 +28,152 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Str;
 
 /**
- * API cho worker tạo ảnh: nhận 1 job (= 1 ảnh) và trả kết quả.
+ * API CHUNG cho mọi worker (a90-fe note/gop-viec-worker.txt, chốt 2026-11-21): mọi việc lưu ở worker_jobs, phân biệt
+ * bằng type = loại worker (image, outfit, content, publish). Worker nhận việc đúng loại của mình rồi trả kết quả.
+ * Thay các API cũ /v1/jobs, /v1/content-jobs, /v1/post-jobs (đã bỏ).
  */
 class WorkerJobController extends Controller
 {
-    public function __construct(private WorkerJobService $jobs) {}
+    public function __construct(
+        private WorkerJobService $images,
+        private ContentJobService $content,
+        private SocialPublishJobService $publish,
+        private TopicJobService $topics,
+    ) {}
 
+    /**
+     * GET /api/v1/worker-jobs: việc kế tiếp đúng loại của worker. 204: không có việc.
+     * 200 { data: { id (mã việc worker_jobs), type: image|outfit|content|publish, ...dữ liệu theo loại } }
+     *   image:   { output_id, request (dữ liệu gửi model), logo }
+     *   outfit:  { output_id, kind, batch, product, history_images, use_product, first_image, logo, user_id }
+     *   content: { request: { post_id, sample_key, sample_name, cover_collage, hook, images } }
+     *   publish: { request: { type: photo|video, platforms, ... } }
+     *   topic:   { request: { count, note, today, channel, persona, post_samples, holidays, existing_topics, tag_options,
+     *              product_tags } } (worker lập chủ đề, skill Claude /lap-chu-de)
+     */
     public function next(Request $request, MediaStorage $media): JsonResponse|Response
     {
-        $output = $this->jobs->claim($this->worker($request));
-        if (! $output) {
-            return response()->noContent();
-        }
+        $worker = $this->worker($request);
+        $data = match ($worker->type) {
+            Worker::TYPE_IMAGE, Worker::TYPE_OUTFIT => $this->nextImage($worker, $media),
+            Worker::TYPE_CONTENT => ($job = $this->content->claim($worker))
+                ? ['id' => $job->id, 'type' => WorkerJob::TYPE_CONTENT, 'request' => $this->content->request($job)] : null,
+            Worker::TYPE_PUBLISH => ($job = $this->publish->claim($worker))
+                ? ['id' => $job->id, 'type' => WorkerJob::TYPE_PUBLISH, 'request' => $this->publish->request($job)] : null,
+            Worker::TYPE_TOPIC => ($job = $this->topics->claim($worker))
+                ? ['id' => $job->id, 'type' => WorkerJob::TYPE_TOPIC, 'request' => $this->topics->request($job)] : null,
+            default => throw new BusinessException('WRONG_WORKER_TYPE', 'Loại worker không nhận việc.', 403),
+        };
 
+        return $data ? response()->json(['data' => $data]) : response()->noContent();
+    }
+
+    private function nextImage(Worker $worker, MediaStorage $media): ?array
+    {
+        $job = $this->images->claim($worker);
+        if (! $job) {
+            return null;
+        }
+        $output = $job->output;
         $generation = $output->generation()->with(['model', 'creative.config', 'user.creatorProfile'])->firstOrFail();
         if ($generation->isOutfit()) {
-            return response()->json(['data' => $this->outfitJob($output, $generation, $media)]);
+            return [...$this->outfitJob($output, $generation, $media), 'id' => $job->id, 'type' => WorkerJob::TYPE_OUTFIT, 'output_id' => $output->id];
         }
 
-        // id: mã job để gửi kết quả (POST /jobs/{id}); request: dữ liệu gửi tới model.
-        // logo: worker chèn vào ảnh trước khi gửi kết quả. Để ngoài request vì worker dán nguyên request cho model.
-        // Phải trả kết quả trong ai90.worker.lease_minutes, quá hạn job được giao cho worker khác.
-        return response()->json(['data' => [
-            'id' => $output->id,
+        // request: dữ liệu gửi tới model. logo: worker chèn vào ảnh trước khi gửi kết quả (để ngoài request vì worker
+        // dán nguyên request cho model). Phải trả kết quả trong ai90.worker.lease_minutes, quá hạn việc giao worker khác.
+        return [
+            'id' => $job->id,
+            'type' => WorkerJob::TYPE_IMAGE,
+            'output_id' => $output->id,
             'request' => $this->request($generation, $media),
             'logo' => $this->logo($generation, $media),
-        ]]);
+        ];
     }
+
+    /**
+     * POST /api/v1/worker-jobs/{id}: status=completed|failed (+ error_code, error_message khi failed) và kết quả theo loại:
+     *   image / outfit: file image (+ title: hook bìa lô phối đồ)
+     *   content: files[0..n-1] (ảnh hoàn chỉnh theo thứ tự slide; cover_collage thì thêm bìa ở đầu)
+     *   publish: post_url
+     *   topic: topics [{ name, tags }] -> data.result { created, skipped, errors }
+     * 409 JOB_NOT_ASSIGNED: việc không còn của worker (quá hạn, bị thay, sai loại).
+     */
+    public function submit(Request $request, int $id): JsonResponse
+    {
+        $worker = $this->worker($request);
+        $job = WorkerJob::query()->findOrFail($id);
+        if ($job->type !== $worker->type) {
+            throw new BusinessException('JOB_NOT_ASSIGNED', 'Job không còn được giao cho worker này.', 409);
+        }
+        $base = [
+            'status' => ['required', 'in:completed,failed'],
+            'error_code' => ['required_if:status,failed', 'nullable', 'string', 'max:50', 'regex:/^[A-Z0-9_]+$/'],
+            'error_message' => ['nullable', 'string', 'max:490'],
+        ];
+
+        if ($job->type === WorkerJob::TYPE_TOPIC) {
+            $data = $request->validate([...$base,
+                'topics' => ['nullable', 'array', 'max:'.(TopicJob::COUNT_MAX * 2)],
+            ]);
+            if ($data['status'] === 'completed') {
+                $result = $this->topics->complete($worker, $id, $data['topics'] ?? []);
+
+                return response()->json(['data' => ['id' => $id, 'type' => $job->type, 'status' => WorkerJob::COMPLETED, 'result' => $result]]);
+            }
+            $this->topics->fail($worker, $id, $data['error_code'], $data['error_message'] ?? null);
+        } elseif ($job->type === WorkerJob::TYPE_CONTENT) {
+            $data = $request->validate([...$base,
+                'files' => ['required_if:status,completed', 'array', 'max:20'],
+                'files.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:15360'],
+            ]);
+            $data['status'] === 'completed'
+                ? $this->content->complete($worker, $id, $request->file('files', []))
+                : $this->content->fail($worker, $id, $data['error_code'], $data['error_message'] ?? null);
+        } elseif ($job->type === WorkerJob::TYPE_PUBLISH) {
+            $data = $request->validate([...$base, 'post_url' => ['nullable', 'string', 'max:500', 'url:http,https']]);
+            $publishJob = SocialPublishJob::query()->findOrFail($id);
+            $data['status'] === 'completed'
+                ? $this->publish->complete($worker, $publishJob, $data['post_url'] ?? null)
+                : $this->publish->fail($worker, $publishJob, $data['error_code'], $data['error_message'] ?? null);
+        } else {
+            $data = $request->validate([...$base,
+                'image' => ['required_if:status,completed', 'image', 'mimes:jpg,jpeg,png,webp', 'max:'.config('ai90.worker.output_max_size_kb')],
+                // Ảnh bìa lô phối đồ: hook bìa -> tiêu đề lô (ảnh outfit sau chọn outfit theo tiêu đề này)
+                'title' => ['nullable', 'string', 'max:255'],
+            ]);
+            $imageJob = ImageJob::query()->findOrFail($id);
+            if ($data['status'] === 'completed') {
+                $this->images->complete($worker, $imageJob, $data['image']);
+                $this->saveBatchTitle($imageJob->output()->firstOrFail(), $data['title'] ?? null);
+            } else {
+                $this->images->fail($worker, $imageJob, $data['error_code'], $data['error_message'] ?? null);
+            }
+        }
+
+        return response()->json(['data' => ['id' => $id, 'type' => $job->type, 'status' => WorkerJob::query()->whereKey($id)->value('status')]]);
+    }
+
+    /**
+     * GET /api/v1/worker-jobs/{id}/batch: lô của việc ảnh lô phối đồ worker đang / đã làm: id, title (hook bìa; null khi
+     * bìa chưa xong / lỗi), position, total. Ảnh outfit đọc tiêu đề lô để chọn outfit đúng chủ đề.
+     */
+    public function batch(Request $request, int $id): JsonResponse
+    {
+        $job = ImageJob::query()->whereKey($id)->where('worker_id', $this->worker($request)->id)->firstOrFail();
+        $image = ImageBatchImage::query()->where('output_id', $job->generation_output_id)->firstOrFail();
+
+        return response()->json(['data' => $this->batchInfo($image)]);
+    }
+
+    /** POST /api/v1/worker-jobs/{id}/extend: gia hạn việc ảnh đang làm (WorkerJobService::extend). */
+    public function extend(Request $request, int $id): JsonResponse
+    {
+        $job = $this->images->extend($this->worker($request), ImageJob::query()->findOrFail($id));
+
+        return response()->json(['data' => ['id' => $job->id, 'lease_expires_at' => $job->lease_expires_at?->toIso8601String()]]);
+    }
+
 
     /**
      * Logo = ảnh đại diện HIỆN TẠI của shop chủ generation; null khi không chèn
@@ -81,29 +208,6 @@ class WorkerJobController extends Controller
             'aspectRatio' => $generation->aspect_ratio,
             'modelDisplayName' => $generation->model->name,
         ];
-    }
-
-    public function submit(Request $request, int $id): JsonResponse
-    {
-        $output = GenerationOutput::query()->findOrFail($id);
-        $data = $request->validate([
-            'status' => ['required', 'in:completed,failed'],
-            'image' => ['required_if:status,completed', 'image', 'mimes:jpg,jpeg,png,webp', 'max:'.config('ai90.worker.output_max_size_kb')],
-            'error_code' => ['required_if:status,failed', 'nullable', 'string', 'max:50', 'regex:/^[A-Z0-9_]+$/'],
-            'error_message' => ['nullable', 'string', 'max:490'],
-            // Ảnh bìa lô phối đồ: hook bìa -> tiêu đề lô (ảnh outfit sau chọn outfit theo tiêu đề này)
-            'title' => ['nullable', 'string', 'max:255'],
-        ]);
-
-        $worker = $this->worker($request);
-        if ($data['status'] === 'completed') {
-            $this->jobs->complete($worker, $output, $data['image']);
-            $this->saveBatchTitle($output, $data['title'] ?? null);
-        } else {
-            $this->jobs->fail($worker, $output, $data['error_code'], $data['error_message'] ?? null);
-        }
-
-        return response()->json(['data' => ['id' => $output->id, 'status' => $output->fresh()->status]]);
     }
 
     /**
@@ -146,18 +250,6 @@ class WorkerJobController extends Controller
         return ['id' => $first->id, 'url' => $media->url($first->image_path)];
     }
 
-    /**
-     * GET /api/v1/jobs/{id}/batch: lô của job worker đang / đã làm: id, title (hook bìa; null khi bìa chưa xong / lỗi),
-     * position, total. Ảnh outfit đọc tiêu đề lô để chọn outfit đúng chủ đề.
-     */
-    public function batch(Request $request, int $id): JsonResponse
-    {
-        $output = GenerationOutput::query()->whereKey($id)->where('worker_id', $this->worker($request)->id)->firstOrFail();
-        $image = ImageBatchImage::query()->where('output_id', $output->id)->firstOrFail();
-
-        return response()->json(['data' => $this->batchInfo($image)]);
-    }
-
     private function batchInfo(ImageBatchImage $image): array
     {
         $batch = ImageBatch::query()->find($image->image_batch_id, ['id', 'title', 'hook_locked', 'outfit_tags', 'outfit_labels', 'text_template_id']);
@@ -182,14 +274,6 @@ class WorkerJobController extends Controller
             'position' => $image->position,
             'total' => ImageBatchImage::query()->where('image_batch_id', $image->image_batch_id)->count(),
         ];
-    }
-
-    /** POST /api/v1/jobs/{id}/extend: gia hạn job đang làm (WorkerJobService::extend). */
-    public function extend(Request $request, int $id): JsonResponse
-    {
-        $output = $this->jobs->extend($this->worker($request), GenerationOutput::query()->findOrFail($id));
-
-        return response()->json(['data' => ['id' => $output->id, 'lease_expires_at' => $output->lease_expires_at?->toIso8601String()]]);
     }
 
     /**

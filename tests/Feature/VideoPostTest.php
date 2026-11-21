@@ -96,12 +96,12 @@ class VideoPostTest extends TestCase
 
     private function nextJob(string $token): TestResponse
     {
-        return $this->withToken($token)->getJson('/api/v1/post-jobs');
+        return $this->withToken($token)->getJson('/api/v1/worker-jobs');
     }
 
     private function submit(string $token, int $jobId, array $body = ['status' => 'completed']): TestResponse
     {
-        return $this->withToken($token)->postJson("/api/v1/post-jobs/{$jobId}", $body);
+        return $this->withToken($token)->postJson("/api/v1/worker-jobs/{$jobId}", $body);
     }
 
     /** Tạo 1 lô phối đồ ($images ảnh) cho sản phẩm và coi như worker đã làm xong mọi ảnh. */
@@ -279,7 +279,7 @@ class VideoPostTest extends TestCase
         $this->travel(2)->hours();
         $this->nextJob($otherToken)->assertNoContent();
         $job = $this->nextJob($token)->assertOk()
-            ->assertJsonPath('data.type', 'video')
+            ->assertJsonPath('data.type', 'publish')->assertJsonPath('data.request.type', 'video')
             ->assertJsonPath('data.request.platforms', ['tiktok'])
             ->assertJsonPath('data.request.post_id', $id)
             ->assertJsonPath('data.request.title', 'Video mới')

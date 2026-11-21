@@ -7,13 +7,15 @@ use App\Enums\OutputStatus;
 use App\Exceptions\BusinessException;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
+use App\Models\ImageJob;
 use App\Models\Worker;
+use App\Models\WorkerJob;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Giao việc cho worker: mỗi job là 1 ảnh (generation_output).
- * Worker nhận job sẽ giữ nó trong lease_minutes; quá hạn thì lệnh sweep giao lại hoặc đánh dấu thất bại.
+ * Giao việc TẠO ẢNH cho worker (worker_jobs type image | outfit, a90-fe note/gop-viec-worker.txt): mỗi việc là 1 ảnh
+ * (generation_output). Worker nhận việc giữ nó trong lease_minutes; quá hạn thì lệnh sweep giao lại hoặc đánh dấu thất bại.
  */
 class WorkerJobService
 {
@@ -31,7 +33,7 @@ class WorkerJobService
      * tài khoản thì worker tạo ảnh khác của tài khoản nhận thay để ảnh không bị treo (note/chon-worker-tao-anh.txt).
      * SKIP LOCKED để nhiều worker gọi cùng lúc không nhận trùng.
      */
-    public function claim(Worker $worker): ?GenerationOutput
+    public function claim(Worker $worker): ?ImageJob
     {
         if ($worker->type !== Worker::TYPE_OUTFIT) {
             $worker->assertType(Worker::TYPE_IMAGE);
@@ -94,20 +96,29 @@ class WorkerJobService
                 return null;
             }
 
-            $output->update([
-                'status' => OutputStatus::Processing,
+            // Việc của ảnh (output queued luôn có 1 việc queued; dữ liệu cũ thiếu thì tạo bù)
+            $job = ImageJob::query()->where('generation_output_id', $output->id)->where('status', WorkerJob::QUEUED)
+                ->lockForUpdate()->first()
+                ?? ImageJob::query()->create([
+                    'type' => $worker->type === Worker::TYPE_OUTFIT ? WorkerJob::TYPE_OUTFIT : WorkerJob::TYPE_IMAGE,
+                    'generation_output_id' => $output->id,
+                    'status' => WorkerJob::QUEUED,
+                ]);
+            $job->update([
+                'status' => WorkerJob::PROCESSING,
                 'worker_id' => $worker->id,
-                'attempts' => $output->attempts + 1,
+                'attempts' => $job->attempts + 1,
                 'lease_expires_at' => now()->addMinutes(config('ai90.worker.lease_minutes')),
-                'started_at' => $output->started_at ?? now(),
+                'claimed_at' => now(),
             ]);
+            $output->update(['status' => OutputStatus::Processing]);
 
             Generation::query()
                 ->whereKey($output->generation_id)
                 ->where('status', GenerationStatus::Queued)
                 ->update(['status' => GenerationStatus::Processing]);
 
-            return $output;
+            return $job->setRelation('output', $output);
         });
     }
 
@@ -125,9 +136,10 @@ class WorkerJobService
             ->whereIn('fo.status', $pending);
     }
 
-    public function complete(Worker $worker, GenerationOutput $output, UploadedFile $image): void
+    public function complete(Worker $worker, ImageJob $job, UploadedFile $image): void
     {
-        $this->assertAssigned($worker, $output);
+        $this->assertAssigned($worker, $job);
+        $output = $job->output()->firstOrFail();
 
         // Lưu ảnh trước, ngoài transaction, để không giữ khóa trong lúc upload lên S3.
         $directory = MediaStorage::datedDirectory('generations/outputs');
@@ -135,8 +147,8 @@ class WorkerJobService
         $thumbPath = $this->storeThumb($image, $directory);
 
         try {
-            DB::transaction(function () use ($worker, $output, $path, $thumbPath, $image) {
-                $this->assertAssigned($worker, $this->lockOutput($output));
+            DB::transaction(function () use ($worker, $job, $output, $path, $thumbPath, $image) {
+                $this->assertAssigned($worker, $this->lockJob($job));
                 $this->finalizer->complete($output->id, $path, $thumbPath, $image->getMimeType() ?: 'application/octet-stream', $image->getSize());
             });
         } catch (BusinessException $e) {
@@ -160,10 +172,10 @@ class WorkerJobService
      * Gia hạn job đang làm thêm lease_minutes tính từ bây giờ (worker phối đồ gọi định kỳ vì một ảnh có thể làm lâu hơn
      * lease_minutes). Job không còn được giao cho worker này -> 409 JOB_NOT_ASSIGNED.
      */
-    public function extend(Worker $worker, GenerationOutput $output): GenerationOutput
+    public function extend(Worker $worker, ImageJob $job): ImageJob
     {
-        return DB::transaction(function () use ($worker, $output) {
-            $locked = $this->lockOutput($output);
+        return DB::transaction(function () use ($worker, $job) {
+            $locked = $this->lockJob($job);
             $this->assertAssigned($worker, $locked);
             $locked->update(['lease_expires_at' => now()->addMinutes(config('ai90.worker.lease_minutes'))]);
 
@@ -171,11 +183,11 @@ class WorkerJobService
         });
     }
 
-    public function fail(Worker $worker, GenerationOutput $output, string $errorCode, ?string $errorMessage): void
+    public function fail(Worker $worker, ImageJob $job, string $errorCode, ?string $errorMessage): void
     {
-        DB::transaction(function () use ($worker, $output, $errorCode, $errorMessage) {
-            $this->assertAssigned($worker, $this->lockOutput($output));
-            $this->finalizer->fail($output->id, $errorCode, $errorMessage ?: 'Worker không tạo được ảnh.');
+        DB::transaction(function () use ($worker, $job, $errorCode, $errorMessage) {
+            $this->assertAssigned($worker, $this->lockJob($job));
+            $this->finalizer->fail($job->generation_output_id, $errorCode, $errorMessage ?: 'Worker không tạo được ảnh.');
         });
     }
 
@@ -186,41 +198,47 @@ class WorkerJobService
      */
     public function releaseExpiredLeases(): array
     {
-        $expired = GenerationOutput::query()
-            ->where('status', OutputStatus::Processing)
+        $expired = ImageJob::query()
+            ->where('status', WorkerJob::PROCESSING)
             ->where('lease_expires_at', '<', now())
-            ->get(['id', 'attempts']);
+            ->get(['id', 'generation_output_id', 'attempts']);
 
         $requeued = 0;
         $failed = 0;
-        foreach ($expired as $output) {
-            if ($output->attempts >= config('ai90.worker.max_attempts')) {
-                $this->finalizer->fail($output->id, 'TIMEOUT', 'Worker không trả kết quả sau '.$output->attempts.' lần nhận.');
+        foreach ($expired as $job) {
+            if ($job->attempts >= config('ai90.worker.max_attempts')) {
+                $this->finalizer->fail($job->generation_output_id, 'TIMEOUT', 'Worker không trả kết quả sau '.$job->attempts.' lần nhận.');
                 $failed++;
 
                 continue;
             }
 
             // Điều kiện trong WHERE: worker vừa trả kết quả thì không bị giao lại.
-            $requeued += GenerationOutput::query()
-                ->whereKey($output->id)
-                ->where('status', OutputStatus::Processing)
-                ->where('lease_expires_at', '<', now())
-                ->update(['status' => OutputStatus::Queued, 'worker_id' => null, 'lease_expires_at' => null]);
+            $done = DB::transaction(function () use ($job) {
+                $n = ImageJob::query()->whereKey($job->id)->where('status', WorkerJob::PROCESSING)->where('lease_expires_at', '<', now())
+                    ->update(['status' => WorkerJob::QUEUED, 'worker_id' => null, 'lease_expires_at' => null]);
+                if ($n) {
+                    GenerationOutput::query()->whereKey($job->generation_output_id)->where('status', OutputStatus::Processing)
+                        ->update(['status' => OutputStatus::Queued]);
+                }
+
+                return $n;
+            });
+            $requeued += $done;
         }
 
         return ['requeued' => $requeued, 'failed' => $failed];
     }
 
-    private function lockOutput(GenerationOutput $output): GenerationOutput
+    private function lockJob(ImageJob $job): ImageJob
     {
-        return GenerationOutput::query()->lockForUpdate()->findOrFail($output->id);
+        return ImageJob::query()->lockForUpdate()->findOrFail($job->id);
     }
 
-    /** Chỉ worker đang giữ job mới được trả kết quả (job hết hạn đã giao cho worker khác thì từ chối). */
-    private function assertAssigned(Worker $worker, GenerationOutput $output): void
+    /** Chỉ worker đang giữ việc mới được trả kết quả (việc hết hạn đã giao cho worker khác thì từ chối). */
+    private function assertAssigned(Worker $worker, ImageJob $job): void
     {
-        if ($output->status !== OutputStatus::Processing || $output->worker_id !== $worker->id) {
+        if ($job->status !== WorkerJob::PROCESSING || $job->worker_id !== $worker->id) {
             throw new BusinessException('JOB_NOT_ASSIGNED', 'Job không còn được giao cho worker này.', 409);
         }
     }

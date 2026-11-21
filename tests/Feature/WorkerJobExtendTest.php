@@ -2,14 +2,14 @@
 
 namespace Tests\Feature;
 
-use App\Models\GenerationOutput;
+use App\Models\WorkerJob;
 use App\Models\Product;
 use App\Models\User;
 use App\Models\Worker;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
-/** POST /api/v1/jobs/{id}/extend: worker gia hạn job đang làm (worker phối đồ Python, D:\FlowKit\phoi-do-worker). */
+/** POST /api/v1/worker-jobs/{id}/extend: worker gia hạn job đang làm (worker phối đồ Python, D:\FlowKit\phoi-do-worker). */
 class WorkerJobExtendTest extends TestCase
 {
     /** @return array{0: Worker, 1: string} */
@@ -31,13 +31,13 @@ class WorkerJobExtendTest extends TestCase
     {
         $user = $this->buyer();
         [, $token] = $this->outfitWorkerWithJob($user);
-        $id = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data.id');
-        GenerationOutput::query()->whereKey($id)->update(['lease_expires_at' => now()->addMinute()]);
+        $id = $this->withToken($token)->getJson('/api/v1/worker-jobs')->assertOk()->json('data.id');
+        WorkerJob::query()->whereKey($id)->update(['lease_expires_at' => now()->addMinute()]);
 
         $this->travel(5)->minutes();
-        $res = $this->withToken($token)->postJson("/api/v1/jobs/{$id}/extend")->assertOk()->assertJsonPath('data.id', $id);
+        $res = $this->withToken($token)->postJson("/api/v1/worker-jobs/{$id}/extend")->assertOk()->assertJsonPath('data.id', $id);
 
-        $lease = GenerationOutput::query()->findOrFail($id)->lease_expires_at;
+        $lease = WorkerJob::query()->findOrFail($id)->lease_expires_at;
         $this->assertTrue($lease->greaterThan(now()->addMinutes(config('ai90.worker.lease_minutes') - 1)));
         $this->assertNotNull($res->json('data.lease_expires_at'));
         $this->completeJob($token, $id)->assertOk();
@@ -49,12 +49,12 @@ class WorkerJobExtendTest extends TestCase
         [, $token] = $this->outfitWorkerWithJob($user);
         [$other, $otherToken] = Worker::register('phoi-do-'.Str::random(6), Worker::TYPE_OUTFIT);
         $other->users()->attach($user->id);
-        $id = $this->withToken($token)->getJson('/api/v1/jobs')->assertOk()->json('data.id');
+        $id = $this->withToken($token)->getJson('/api/v1/worker-jobs')->assertOk()->json('data.id');
 
-        $this->withToken($otherToken)->postJson("/api/v1/jobs/{$id}/extend")->assertStatus(409);
+        $this->withToken($otherToken)->postJson("/api/v1/worker-jobs/{$id}/extend")->assertStatus(409);
 
         $this->completeJob($token, $id)->assertOk();
-        $this->withToken($token)->postJson("/api/v1/jobs/{$id}/extend")->assertStatus(409);
-        $this->withToken($token)->postJson('/api/v1/jobs/999999/extend')->assertNotFound();
+        $this->withToken($token)->postJson("/api/v1/worker-jobs/{$id}/extend")->assertStatus(409);
+        $this->withToken($token)->postJson('/api/v1/worker-jobs/999999/extend')->assertNotFound();
     }
 }

@@ -12,8 +12,10 @@ use App\Models\ContentPlan;
 use App\Models\ContentPlanItem;
 use App\Models\GenerationOutput;
 use App\Models\SocialPost;
+use App\Models\TopicJob;
 use App\Services\Channel\ChannelPlanService;
 use App\Services\Channel\ChannelTopicService;
+use App\Services\Channel\TopicJobService;
 use App\Services\MediaStorage;
 use App\Support\PostSamples;
 use App\Support\ProductTags;
@@ -29,7 +31,12 @@ use Illuminate\Validation\ValidationException;
  */
 class ChannelContentController extends Controller
 {
-    public function __construct(private ChannelPlanService $plans, private MediaStorage $media, private ChannelTopicService $topics) {}
+    public function __construct(
+        private ChannelPlanService $plans,
+        private MediaStorage $media,
+        private ChannelTopicService $topics,
+        private TopicJobService $topicJobs,
+    ) {}
 
     // ---- Tuyến nội dung ----
 
@@ -247,7 +254,11 @@ class ChannelContentController extends Controller
 
     // ---- Chủ đề kênh (a90-fe note/xay-kenh-tiktok/chu-de-va-tag-san-pham.txt mục 4) ----
 
-    /** Chủ đề kênh kèm số bài theo loại bài + lần dùng gần nhất. -> { topics, tag_options } */
+    /**
+     * Chủ đề kênh kèm số bài theo loại bài + lần dùng gần nhất.
+     * -> { topics, tag_options, topic_worker (shop có worker lập chủ đề), job (lượt xây dựng tự động gần nhất | null),
+     *      count: { min, max, default } }
+     */
     public function topics(Request $request, int $channel): JsonResponse
     {
         $channel = $this->channel($request, $channel);
@@ -255,7 +266,65 @@ class ChannelContentController extends Controller
         return response()->json(['data' => [
             'topics' => $this->topics->listFor($channel),
             'tag_options' => ProductTags::options(),
+            'topic_worker' => TopicJobService::hasWorker($channel->user_id),
+            'job' => $this->topicJob($this->topicJobs->latest($channel)),
+            'count' => ['min' => TopicJob::COUNT_MIN, 'max' => TopicJob::COUNT_MAX, 'default' => TopicJob::COUNT_DEFAULT],
         ]]);
+    }
+
+    /** Xây dựng chủ đề THỦ CÔNG: { name, tags? } -> 201 { data: Topic } (nguồn owner, bật sẵn). */
+    public function storeTopic(Request $request, int $channel): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:'.ChannelTopic::NAME_MAX],
+            'tags' => ['nullable', 'array'],
+        ]);
+        $name = ChannelTopic::cleanName($data['name']);
+        if ($name === '') {
+            throw ValidationException::withMessages(['name' => 'Tên chủ đề không được trống.']);
+        }
+        if ($channel->topics()->where('name', $name)->exists()) {
+            throw ValidationException::withMessages(['name' => 'Kênh đã có chủ đề tên này.']);
+        }
+        [$tags, $errors] = ProductTags::cleanFilter($data['tags'] ?? []);
+        if ($errors) {
+            throw ValidationException::withMessages(['tags' => $errors]);
+        }
+        $topic = $channel->topics()->create(['name' => $name, 'tags' => $tags ?: null, 'source' => ProductTags::SOURCE_OWNER, 'status' => ChannelTopic::ACTIVE]);
+
+        return response()->json(['data' => collect($this->topics->listFor($channel))->firstWhere('id', $topic->id)], 201);
+    }
+
+    /**
+     * Xây dựng chủ đề TỰ ĐỘNG: { count (1-30), note? } -> 201 { data: job } (việc cho worker lập chủ đề).
+     * 409 TOPIC_WORKER_REQUIRED (shop chưa gắn worker lập chủ đề) | TOPIC_JOB_RUNNING (đang có lượt chưa xong).
+     */
+    public function startTopicJob(Request $request, int $channel): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+        $data = $request->validate([
+            'count' => ['required', 'integer', 'min:'.TopicJob::COUNT_MIN, 'max:'.TopicJob::COUNT_MAX],
+            'note' => ['nullable', 'string', 'max:'.TopicJob::NOTE_MAX],
+        ]);
+
+        return response()->json(['data' => $this->topicJob($this->topicJobs->create($channel, (int) $data['count'], $data['note'] ?? null))], 201);
+    }
+
+    private function topicJob(?TopicJob $job): ?array
+    {
+        return $job ? [
+            'id' => $job->id,
+            // queued | processing | completed | failed
+            'status' => $job->status,
+            'count' => $job->payload['count'] ?? null,
+            'note' => $job->payload['note'] ?? null,
+            // { created, skipped, errors } khi xong
+            'result' => $job->result,
+            'error_message' => $job->error_message,
+            'created_at' => $job->created_at,
+            'finished_at' => $job->finished_at,
+        ] : null;
     }
 
     /** { name?, tags?: {kieu: [], got: [], ...}, status?: active|paused } Chủ shop sửa tên / tags -> nguồn owner. */

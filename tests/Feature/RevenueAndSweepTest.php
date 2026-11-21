@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\OutputStatus;
 use App\Models\GenerationOutput;
+use App\Models\ImageJob;
 use Tests\TestCase;
 
 class RevenueAndSweepTest extends TestCase
@@ -38,12 +39,13 @@ class RevenueAndSweepTest extends TestCase
 
         $this->travel(2)->minutes();
         $this->artisan('generations:sweep-stuck')->assertSuccessful();
-        $output = GenerationOutput::query()->findOrFail($jobId);
-        $this->assertSame(OutputStatus::Queued, $output->status);
-        $this->assertNull($output->worker_id);
+        $job = ImageJob::query()->findOrFail($jobId);
+        $this->assertSame(OutputStatus::Queued, $job->output->status);
+        $this->assertSame('queued', $job->status);
+        $this->assertNull($job->worker_id);
 
         $this->claimJob($alive)->assertOk()->assertJsonPath('data.id', $jobId);
-        $this->assertSame(2, $output->fresh()->attempts);
+        $this->assertSame(2, $job->fresh()->attempts);
 
         // Worker cũ gửi kết quả muộn: bị từ chối, worker mới vẫn hoàn thành bình thường.
         $this->completeJob($dead, $jobId)->assertStatus(409)->assertJsonPath('code', 'JOB_NOT_ASSIGNED');
@@ -59,7 +61,7 @@ class RevenueAndSweepTest extends TestCase
 
         for ($attempt = 1; $attempt <= 3; $attempt++) {
             $jobId = $this->claimJob($token)->assertOk()->json('data.id');
-            $this->assertSame($attempt, GenerationOutput::query()->findOrFail($jobId)->attempts);
+            $this->assertSame($attempt, ImageJob::query()->findOrFail($jobId)->attempts);
             $this->travel(16)->minutes();
             $this->artisan('generations:sweep-stuck')->assertSuccessful();
         }
@@ -67,7 +69,7 @@ class RevenueAndSweepTest extends TestCase
         $output = GenerationOutput::query()->firstOrFail();
         $this->assertSame(OutputStatus::Failed, $output->status);
         $this->assertSame('TIMEOUT', $output->error_code);
-        $this->assertSame(3, $output->attempts);
+        $this->assertSame(3, ImageJob::query()->sole()->attempts);
         $this->claimJob($token)->assertNoContent();
     }
 }

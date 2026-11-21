@@ -72,6 +72,29 @@ class ProductTagService
         return ['tagged' => $tagged, 'untagged' => $this->untaggedCount($shop)];
     }
 
+    /**
+     * Số sản phẩm đang hoạt động đã gắn tag theo từng giá trị tag: { kieu: { cao_got: 5, ... }, dip: {...}, ... } + tagged,
+     * untagged (worker lập chủ đề đặt bộ lọc tag có sản phẩm thật).
+     */
+    public function summary(User $shop): array
+    {
+        $out = array_fill_keys(ProductTags::tagFields(), []);
+        $products = Product::query()->accessibleBy($shop)->active()->whereNotNull('tags')->get(['id', 'tags']);
+        foreach ($products as $p) {
+            foreach (ProductTags::tagFields() as $field) {
+                foreach ((array) ($p->tags[$field] ?? []) as $value) {
+                    $out[$field][$value] = ($out[$field][$value] ?? 0) + 1;
+                }
+            }
+        }
+
+        return [
+            'counts' => array_map(fn ($c) => (object) $c, $out),
+            'tagged' => $products->count(),
+            'untagged' => $this->untaggedCount($shop),
+        ];
+    }
+
     private function untaggedCount(User $shop): int
     {
         return Product::query()->ownedBy($shop)->active()->whereNull('tags')->whereHas('images', fn ($q) => $q->where('field_key', self::TAG_FIELD_KEY))->count();

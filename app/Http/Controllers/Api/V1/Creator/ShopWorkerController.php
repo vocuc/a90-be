@@ -81,12 +81,13 @@ class ShopWorkerController extends Controller
         return [
             'id' => $worker->id,
             'name' => $worker->name,
-            // image | publish | outfit | content
+            // image | publish | outfit | content | topic
             'type' => $worker->type,
             'functions' => match ($worker->type) {
                 Worker::TYPE_IMAGE => ['image'],
                 Worker::TYPE_OUTFIT => ['outfit'],
                 Worker::TYPE_CONTENT => ['content'],
+                Worker::TYPE_TOPIC => ['topic'],
                 default => ['publish', 'video'],
             },
             'online' => (bool) $worker->last_seen_at?->greaterThanOrEqualTo(now()->subMinutes(self::ONLINE_MINUTES)),

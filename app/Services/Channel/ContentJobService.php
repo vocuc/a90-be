@@ -73,7 +73,7 @@ class ContentJobService
 
             return true;
         }
-        $post->contentJobs()->create(['worker_id' => $workerId, 'sample_key' => $post->sample_key, 'status' => ContentJob::QUEUED]);
+        $post->contentJobs()->create(['user_id' => $post->user_id, 'worker_id' => $workerId, 'sample_key' => $post->sample_key, 'status' => ContentJob::QUEUED]);
         $post->status = SocialPostStatus::Generating;
         $post->last_error = null;
         $post->save();
@@ -96,7 +96,8 @@ class ContentJobService
             if (! $job) {
                 return null;
             }
-            $job->update(['status' => ContentJob::PROCESSING, 'claimed_at' => now()]);
+            $job->update(['status' => ContentJob::PROCESSING, 'claimed_at' => now(), 'attempts' => $job->attempts + 1,
+                'lease_expires_at' => now()->addMinutes(ContentJob::LEASE_MINUTES)]);
 
             return $job;
         });

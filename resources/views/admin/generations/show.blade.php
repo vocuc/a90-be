@@ -85,7 +85,7 @@
                                             <div class="text-danger"><code>{{ $output->error_code }}</code> {{ $output->error_message }}</div>
                                         @endif
                                         @if ($output->worker)
-                                            <div class="text-muted">Worker: {{ $output->worker->name }} · lần nhận {{ $output->attempts }}</div>
+                                            <div class="text-muted">Worker: {{ $output->worker->name }} · lần nhận {{ $output->job?->attempts }}</div>
                                         @endif
                                         @if ($output->retry_of_output_id)
                                             <div class="text-muted">Retry của ảnh #{{ $output->retry_of_output_id }}</div>
