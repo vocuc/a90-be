@@ -76,7 +76,8 @@ class ChannelPlanService
             $plan = $this->preparingPlan($channel);
         }
         $lineup = $channel->approvedLineup();
-        $usedKeys = $lineup?->sampleKeys() ?? array_keys(PostSamples::all());
+        // Chỉ bài viết mẫu ĐÃ LÀM XONG (PostSamples::READY); bài chưa bật trong tuyến cũ bị bỏ qua
+        $usedKeys = array_values(array_filter($lineup?->sampleKeys() ?? array_keys(PostSamples::all()), [PostSamples::class, 'isEnabled']));
         $from = $plan ? CarbonImmutable::parse($plan->start_date) : CarbonImmutable::today();
         $to = $from->addDays(($plan?->days ?? $channel->plan_days) + 7);
 
@@ -102,14 +103,17 @@ class ChannelPlanService
             'missing' => $missing,
             'persona' => $channel->persona ?? (object) [],
             'lineup' => [
-                'approved' => $lineup ? ['id' => $lineup->id, 'items' => $lineup->items] : null,
+                'approved' => $lineup ? ['id' => $lineup->id,
+                    'items' => array_values(array_filter($lineup->items, fn ($i) => PostSamples::isEnabled($i['sample_key']))),
+                    // Bài trong tuyến nhưng CHƯA LÀM XONG: không lập kế hoạch cho các bài này
+                    'disabled' => array_values(array_filter($lineup->sampleKeys(), fn ($k) => ! PostSamples::isEnabled($k)))] : null,
                 'pending' => $channel->lineups()->where('status', ChannelLineup::PENDING)->latest('id')->get(['id', 'items', 'created_at']),
             ],
             'text_templates' => $channel->textTemplates()->whereIn('status', [ChannelTextTemplate::APPROVED, ChannelTextTemplate::PENDING])
                 // sample_keys: loại bài viết mẫu được dùng template (rỗng = không dùng được)
                 ->orderBy('id')->get(['id', 'name', 'status', 'style', 'sample_keys', 'sample_text']),
             'post_samples' => array_values(array_intersect_key(PostSamples::all(), array_flip($usedKeys))),
-            'all_post_samples' => array_map(fn ($s) => ['key' => $s['key'], 'name' => $s['name'], 'group' => $s['group'], 'goal' => $s['goal'], 'formats' => $s['formats']], array_values(PostSamples::all())),
+            'all_post_samples' => array_map(fn ($s) => ['key' => $s['key'], 'name' => $s['name'], 'group' => $s['group'], 'goal' => $s['goal'], 'formats' => $s['formats']], array_values(PostSamples::enabled())),
             'products' => Product::query()->where('user_id', $channel->user_id)->active()->with('hashtags')->orderByDesc('id')->limit(100)->get()
                 ->map(fn (Product $p) => ['id' => $p->id, 'name' => $p->name, 'prompt_note' => $p->prompt_note, 'hashtags' => $p->hashtags->pluck('name')->all()]),
             'images' => $this->imageCatalog($channel),
@@ -333,6 +337,11 @@ class ChannelPlanService
     /** @return array<int, array{sample_key: string, percent: int, reason: ?string}> */
     public function normalizeLineupItems(array $items): array
     {
+        $disabled = collect($items)->pluck('sample_key')->filter(fn ($k) => PostSamples::exists((string) $k) && ! PostSamples::isEnabled((string) $k))
+            ->map(fn ($k) => PostSamples::get((string) $k)['name'])->unique()->values();
+        if ($disabled->isNotEmpty()) {
+            throw new BusinessException('SAMPLE_NOT_READY', 'Bài viết mẫu chưa làm xong, chưa dùng được: '.$disabled->implode(', ').'.', 422);
+        }
         $rows = collect($items)
             ->filter(fn ($i) => isset($i['sample_key']) && PostSamples::exists((string) $i['sample_key']) && (float) ($i['percent'] ?? 0) > 0)
             ->unique('sample_key')
@@ -469,6 +478,9 @@ class ChannelPlanService
         if (! $sample) {
             return [[], ["sample_key \"{$sampleKey}\" không có trong thư viện bài viết mẫu."]];
         }
+        if (! $sample['enabled']) {
+            return [[], ["Bài viết mẫu \"{$sample['name']}\" chưa làm xong, chưa dùng được."]];
+        }
         if (! in_array($sampleKey, $lineup->sampleKeys(), true)) {
             $errors[] = "Bài viết mẫu \"{$sampleKey}\" không thuộc tuyến nội dung đã duyệt.";
         }
@@ -490,7 +502,7 @@ class ChannelPlanService
             $textTemplateId = $this->approvedTemplateId($channel, $raw, $sampleKey, $errors);
             $signature = self::signature($sampleKey, $hook, []);
             if (in_array($signature, $signatures, true)) {
-                $errors[] = 'Trùng hook với bài lookbook khác của kênh. Đổi hook.';
+                $errors[] = 'Trùng hook với bài lô phối đồ khác của kênh. Đổi hook.';
             }
             if ($errors) {
                 return [[], $errors];
@@ -648,8 +660,10 @@ class ChannelPlanService
      * Bài lấy ảnh bằng lô phối đồ: outfit.count = tổng số ảnh của lô (gồm 1 bìa), trong khoảng slide của bài viết mẫu và
      * giới hạn lô phối đồ; outfit.product_id (không bắt buộc) = sản phẩm đang hoạt động có ảnh của shop. Shop phải được
      * gắn worker phối đồ. Chỉ bài ảnh, A51 không chèn chữ: worker phối đồ in hook lên ảnh bìa theo text_template_id của bài.
+     * Bài viết mẫu có 'outfit_labels' (outfit_by_day): outfit.labels = đúng count - 1 nhãn ngày, worker in lên ảnh outfit
+     * thay "Outfit N".
      *
-     * @return array{count: int, product_id: ?int}
+     * @return array{count: int, product_id: ?int, tags: string[], labels?: string[]}
      */
     private function validateOutfit(Channel $channel, array $sample, array $raw, string $format, array &$errors): array
     {
@@ -676,7 +690,35 @@ class ChannelPlanService
             $errors[] = 'outfit.tags (hashtag chủ đề để tìm outfit) cần 1-'.self::OUTFIT_TAGS_MAX.' hashtag.';
         }
 
-        return ['count' => $count, 'product_id' => $productId ?: null, 'tags' => $tags];
+        $outfit = ['count' => $count, 'product_id' => $productId ?: null, 'tags' => $tags];
+        if ($sample['outfit_labels'] ?? false) {
+            $outfit['labels'] = $this->validateLabels($raw['outfit']['labels'] ?? null, $count - 1, $errors);
+        }
+
+        return $outfit;
+    }
+
+    /** Nhãn ngày của ảnh outfit: đúng $need nhãn, bỏ emoji / khoảng trắng thừa, mỗi nhãn 1..LABEL_MAX ký tự, không trùng. */
+    private function validateLabels(mixed $raw, int $need, array &$errors): array
+    {
+        $labels = collect(is_array($raw) ? array_values($raw) : [])
+            ->map(fn ($l) => trim(preg_replace(['/[\x{1F000}-\x{1FFFF}\x{2600}-\x{27BF}\x{FE0F}\x{200D}]/u', '/\s+/u'], ['', ' '], (string) $l)))
+            ->all();
+        if (count($labels) !== $need) {
+            $errors[] = "outfit.labels cần đúng {$need} nhãn ngày (= outfit.count - 1, mỗi ảnh outfit 1 nhãn), đang có ".count($labels).'.';
+
+            return $labels;
+        }
+        foreach ($labels as $i => $label) {
+            if ($label === '' || mb_strlen($label) > PostSamples::LABEL_MAX) {
+                $errors[] = 'outfit.labels #'.($i + 1).' phải có 1-'.PostSamples::LABEL_MAX.' ký tự (không emoji).';
+            }
+        }
+        if (count(array_unique(array_map('mb_strtolower', $labels))) !== count($labels)) {
+            $errors[] = 'outfit.labels không được trùng nhau.';
+        }
+
+        return $labels;
     }
 
     public const OUTFIT_TAGS_MAX = 5;
@@ -809,7 +851,7 @@ class ChannelPlanService
         // (công tắc "Dùng ảnh sản phẩm" tắt ở luồng tạo lô phối đồ hiện tại)
         $productId = ! empty($outfit['product_id']) ? (int) $outfit['product_id'] : null;
         $batches = $this->outfitBatches->create($user, 1, (int) $outfit['count'], (bool) $user->logoPath(), $key, $workerId,
-            $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? [], $textTemplateId);
+            $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? [], $textTemplateId, $outfit['labels'] ?? null);
 
         return $batches[0] ?? throw new BusinessException('OUTFIT_NO_PRODUCT', 'Không tạo được lô phối đồ.', 422);
     }

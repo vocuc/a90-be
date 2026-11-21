@@ -28,12 +28,34 @@ final class PostSamples
 
     public const IMAGE_KINDS = ['product', 'outfit', 'any'];
 
-    /** @return array<string, array> key => bài viết mẫu */
+    /**
+     * Bài viết mẫu ĐÃ LÀM XONG (người dùng chốt 2026-11-21): chỉ những bài này được bật (chọn vào tuyến nội dung, lập kế
+     * hoạch, gắn template chữ). Bài chưa làm xong vẫn nằm trong thư viện (hiện "Chưa làm xong") để giữ tên cho bài cũ.
+     * Làm xong 1 bài (a90-fe note/xay-kenh-tiktok/bai-viet-mau/<key>.txt "ĐÃ LÀM") thì thêm key vào đây.
+     * config ai90.post_samples_enabled ghi đè (vd test: ['*'] = bật hết).
+     */
+    public const READY = ['lookbook', 'outfit_by_day'];
+
+    /** @return array<string, array> key => bài viết mẫu (cả bài chưa bật), có cờ enabled */
     public static function all(): array
     {
         static $samples = null;
+        $samples ??= collect(self::definitions())->keyBy('key')->all();
 
-        return $samples ??= collect(self::definitions())->keyBy('key')->all();
+        return array_map(fn ($s) => [...$s, 'enabled' => self::isEnabled($s['key'])], $samples);
+    }
+
+    /** @return array<string, array> chỉ bài viết mẫu đang bật */
+    public static function enabled(): array
+    {
+        return array_filter(self::all(), fn ($s) => $s['enabled']);
+    }
+
+    public static function isEnabled(string $key): bool
+    {
+        $ready = config('ai90.post_samples_enabled') ?? self::READY;
+
+        return in_array('*', $ready, true) || in_array($key, $ready, true);
     }
 
     public static function exists(string $key): bool
@@ -63,6 +85,9 @@ final class PostSamples
     public const SOURCE_LIBRARY = 'library';
 
     public const SOURCE_OUTFIT_BATCH = 'outfit_batch';
+
+    /** Độ dài tối đa 1 nhãn ngày in lên ảnh outfit (bài có 'outfit_labels' => true, vd outfit_by_day). */
+    public const LABEL_MAX = 30;
 
     private static function sample(string $key, string $name, string $group, string $goal, array $formats, int $min, int $max,
         array $slideRules, bool $sameProduct, string $guide, string $imageSource = self::SOURCE_LIBRARY): array
@@ -141,10 +166,13 @@ final class PostSamples
                 self::rule('middle', 'outfit', true, 'Outfit mang ĐÚNG kiểu giày đó "...mang lên thế này"'),
                 self::rule('last', 'any', true, 'Chốt mã / size'),
             ], false, 'Chỉ dùng khi có ảnh phối đồ mang đúng kiểu giày của ảnh sản phẩm (xem ảnh để chắc).'),
-            self::sample('outfit_by_day', 'Outfit theo ngày / dịp', 'outfit', 'save', $both, 3, 8, [
-                self::rule('first', 'outfit', true, 'Hook "7 ngày ... mặc gì?"'),
-                self::rule('each', 'outfit', true, 'Mỗi slide 1 ngày / 1 dịp: "Mùng 1: ...", "Thứ 2: ..."'),
-            ], false, 'Gắn mỗi outfit với 1 ngày hoặc dịp trong hook (Tết, tuần đi làm, chuyến du lịch).'),
+            // Cũng lấy ảnh bằng LÔ PHỐI ĐỒ mới (người dùng chốt 2026-11-21): worker in nhãn ngày (outfit.labels) lên ảnh
+            // outfit thay "Outfit N" để số không lệch với ngày. a90-fe note/xay-kenh-tiktok/bai-viet-mau/outfit_by_day.txt
+            [...self::sample('outfit_by_day', 'Outfit theo ngày / dịp', 'outfit', 'save', $photo, 3, 8, [
+                self::rule('first', 'outfit', false, 'Ảnh bìa lô phối đồ: worker in đúng hook "N ngày ... mặc gì?" lên bìa'),
+                self::rule('each', 'outfit', false, 'Ảnh outfit của lô, worker in nhãn ngày (outfit.labels) thay "Outfit N"'),
+            ], false, 'Không chọn ảnh có sẵn. Hook = "N ngày ... mặc gì?" (Tết, tuần đi làm, chuyến du lịch), in lên bìa. outfit.count = tổng số ảnh lô (gồm 1 bìa); outfit.labels = đúng outfit.count - 1 nhãn theo thứ tự ngày, dạng "<Ngày>: <mô tả 2-4 từ>" ("Mùng 1: Đi chúc Tết", "Thứ 2: Họp đầu tuần"; mô tả theo dịp, không tả món vì worker chọn outfit theo hashtag), tối đa '.self::LABEL_MAX.' ký tự, không emoji; outfit.tags = 1-5 hashtag chủ đề tìm outfit trên OOTD; outfit.product_id tuỳ chọn. Caption kiểu "Lưu lại kẻo ... đứng trước tủ đồ".', 'outfit_batch'),
+                'outfit_labels' => true],
 
             // ---- Kể chuyện ----
             self::sample('pov', 'POV', 'story', 'reach', $photo, 2, 3, [

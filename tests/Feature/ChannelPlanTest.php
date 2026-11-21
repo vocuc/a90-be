@@ -34,6 +34,8 @@ class ChannelPlanTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Test luồng chung với cả bài viết mẫu chưa làm xong (unboxing, this_or_that...): bật hết
+        config(['ai90.post_samples_enabled' => ['*']]);
         $admin = User::factory()->create(['role' => 'admin']);
         $this->planToken = $admin->createToken('plan:test', ['channel-plan'])->plainTextToken;
 
@@ -463,6 +465,61 @@ class ChannelPlanTest extends TestCase
         $this->assertSame('5 outfit đi chơi Tết', $batch->fresh()->title);
         // Worker đăng bài chưa nhận được gì cho tới khi ảnh xong
         $this->withToken($this->workerToken)->getJson('/api/v1/post-jobs')->assertNoContent();
+    }
+
+    public function test_outfit_by_day_creates_outfit_batch_with_day_labels(): void
+    {
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'outfit_by_day', 'percent' => 100]]])->assertCreated();
+        $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
+        $this->api('POST', "channels/{$this->channel->id}/text-templates", ['templates' => [[...$this->templateBody(), 'sample_keys' => ['outfit_by_day']]]])->assertCreated();
+        $this->channel->textTemplates()->update(['status' => 'approved']);
+        [$outfitWorker] = Worker::register('phoi-do-'.Str::random(4), Worker::TYPE_OUTFIT);
+        $outfitWorker->users()->attach($this->shop->id);
+        $planId = $this->context()['plan']['id'];
+        $byDay = ['slot_index' => 0, 'sample_key' => 'outfit_by_day', 'hook' => '3 ngày Tết mặc gì cho xinh?',
+            'outfit' => ['count' => 4, 'tags' => ['maudo'], 'labels' => ['Mùng 1: Áo dài đỏ 🧧', 'Mùng 2:  Váy len', 'Mùng 3: Đầm xoè']],
+            'title' => 'Lưu lại kẻo Tết đứng trước tủ đồ', 'hashtags' => ['tet2027']];
+
+        // Thiếu nhãn / trùng nhãn: từ chối
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$byDay, 'slot_index' => 1, 'hook' => 'khác', 'outfit' => [...$byDay['outfit'], 'labels' => ['Mùng 1: x']]],
+            [...$byDay, 'slot_index' => 2, 'hook' => 'khác nữa', 'outfit' => [...$byDay['outfit'], 'labels' => ['A', 'a', 'B']]],
+        ]])->json('data.rejected');
+        $this->assertStringContainsString('đúng 3 nhãn', implode(' ', $rejected[0]['errors']));
+        $this->assertStringContainsString('trùng', implode(' ', $rejected[1]['errors']));
+
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$byDay]])
+            ->assertOk()->assertJsonPath('data.accepted', [0]);
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+
+        $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
+        $this->assertSame(SocialPostStatus::Generating, $post->status);
+        $this->assertSame(4, $post->images()->count());
+        $batch = \App\Models\ImageBatch::query()->findOrFail($post->image_batch_id);
+        $labels = ['Mùng 1: Áo dài đỏ', 'Mùng 2: Váy len', 'Mùng 3: Đầm xoè'];
+        $this->assertSame($labels, $batch->outfit_labels, 'Bỏ emoji, gộp khoảng trắng');
+        $this->assertSame('3 ngày Tết mặc gì cho xinh?', $batch->title);
+
+        $job = $this->withToken($outfitWorker->regenerateToken())->getJson('/api/v1/jobs')->assertOk()->json('data');
+        $this->assertSame($labels, $job['batch']['outfit_labels']);
+    }
+
+    public function test_only_ready_post_samples_are_usable(): void
+    {
+        config(['ai90.post_samples_enabled' => null]); // mặc định: PostSamples::READY
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [
+            ['sample_key' => 'lookbook', 'percent' => 50], ['sample_key' => 'unboxing', 'percent' => 50],
+        ]])->assertStatus(422)->assertJsonPath('code', 'SAMPLE_NOT_READY');
+
+        // Tuyến cũ (đã duyệt trước khi chặn) chỉ có bài chưa xong -> coi như thiếu tuyến
+        $this->channel->lineups()->create(['items' => [['sample_key' => 'unboxing', 'percent' => 100, 'reason' => null]],
+            'status' => 'approved', 'approved_at' => now()]);
+        $this->assertContains('lineup', $this->channel->fresh()->missing());
+
+        $samples = collect($this->actingAs($this->shop)->getJson('/api/v1/creator/channels/post-samples')->assertOk()->json('data'))->keyBy('key');
+        $this->assertTrue($samples['lookbook']['enabled']);
+        $this->assertFalse($samples['unboxing']['enabled']);
+        $this->assertSame(['lookbook', 'outfit_by_day'], \App\Models\ChannelTextTemplate::sampleKeyOptions());
     }
 
     public function test_slots_spread_video_and_skip_past_times(): void

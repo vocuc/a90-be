@@ -24,7 +24,7 @@ class ImageBatch extends Model
 
     protected function casts(): array
     {
-        return ['hook_locked' => 'boolean', 'outfit_tags' => 'array'];
+        return ['hook_locked' => 'boolean', 'outfit_tags' => 'array', 'outfit_labels' => 'array'];
     }
 
     public function user(): BelongsTo

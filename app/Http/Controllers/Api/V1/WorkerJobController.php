@@ -160,7 +160,7 @@ class WorkerJobController extends Controller
 
     private function batchInfo(ImageBatchImage $image): array
     {
-        $batch = ImageBatch::query()->find($image->image_batch_id, ['id', 'title', 'hook_locked', 'outfit_tags', 'text_template_id']);
+        $batch = ImageBatch::query()->find($image->image_batch_id, ['id', 'title', 'hook_locked', 'outfit_tags', 'outfit_labels', 'text_template_id']);
         // Template chữ của kênh (đọc cả khi chủ shop đã bỏ template sau khi tạo lô: lô vẫn in theo kiểu đã chốt)
         $template = $batch?->text_template_id
             ? ChannelTextTemplate::query()->find($batch->text_template_id, ['id', 'name', 'style'])
@@ -173,6 +173,9 @@ class WorkerJobController extends Controller
             // outfit_tags: hashtag chủ đề để tìm outfit trên OOTD (a90-fe note/xay-kenh-tiktok/bai-viet-mau/lookbook.txt)
             'hook_locked' => (bool) $batch?->hook_locked,
             'outfit_tags' => $batch?->outfit_tags ?? [],
+            // Bài outfit_by_day: nhãn ngày in lên ảnh outfit thay "Outfit N" (phần tử 0 = ảnh vị trí 2), worker in theo
+            // text_template; rỗng = lô thường (note/xay-kenh-tiktok/bai-viet-mau/outfit_by_day.txt)
+            'outfit_labels' => $batch?->outfit_labels ?? [],
             // Worker phối đồ v2 in hook (title) lên ảnh bìa theo style này (style như ChannelTextTemplate); null = lô
             // không có template chữ
             'text_template' => $template ? ['id' => $template->id, 'name' => $template->name, 'style' => $template->style] : null,

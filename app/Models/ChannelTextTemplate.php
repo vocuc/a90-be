@@ -53,10 +53,10 @@ class ChannelTextTemplate extends Model
         return in_array($sampleKey, $this->sample_keys ?? [], true);
     }
 
-    /** Loại bài gắn được template: bài viết mẫu có dạng ảnh. */
+    /** Loại bài gắn được template: bài viết mẫu ĐÃ LÀM XONG có dạng ảnh. */
     public static function sampleKeyOptions(): array
     {
-        return collect(PostSamples::all())->filter(fn ($s) => in_array('photo', $s['formats'], true))->keys()->values()->all();
+        return collect(PostSamples::enabled())->filter(fn ($s) => in_array('photo', $s['formats'], true))->keys()->values()->all();
     }
 
     /** Luật kiểm tra sample_keys (không bắt buộc: rỗng = template chưa dùng được). */

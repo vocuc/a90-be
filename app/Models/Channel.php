@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Services\Social\SocialContentJobService;
+use App\Support\PostSamples;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -113,7 +114,8 @@ class Channel extends Model
         if (! $this->time_slots) {
             $missing[] = 'time_slots';
         }
-        if (! $this->approvedLineup()) {
+        // Tuyến đã duyệt phải có ít nhất 1 bài viết mẫu ĐÃ LÀM XONG (PostSamples::READY)
+        if (! array_filter($this->approvedLineup()?->sampleKeys() ?? [], [PostSamples::class, 'isEnabled'])) {
             $missing[] = 'lineup';
         }
         // Kênh còn bài ảnh (video_percent < 100) thì cần ít nhất 1 template chữ đã duyệt CÓ GẮN loại bài (template chưa gắn
