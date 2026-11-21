@@ -610,9 +610,18 @@ class ChannelPlanService
         if (! in_array($format, $sample['formats'], true)) {
             $errors[] = "Bài viết mẫu \"{$sampleKey}\" không dùng cho {$format}.";
         }
-        $hook = trim((string) ($raw['hook'] ?? ''));
-        if ($hook === '' || mb_strlen($hook) > 200) {
-            $errors[] = 'hook bắt buộc, tối đa 200 ký tự.';
+        // Bài không chữ trên ảnh / video (unboxing, video_type_01; người dùng chốt 2026-11-22): hook không hiện ở đâu ->
+        // lệnh chỉ viết tiêu đề, A51 lấy TIÊU ĐỀ làm hook (danh sách hook theo chủ đề, chặn trùng, recent_posts)
+        if (PostSamples::hookFromTitle($sample)) {
+            $hook = $this->caption($channel, $raw)['title'];
+            if ($hook === '') {
+                $errors[] = "title bắt buộc (bài viết mẫu \"{$sampleKey}\" dùng tiêu đề làm hook, không cần gửi hook).";
+            }
+        } else {
+            $hook = trim((string) ($raw['hook'] ?? ''));
+            if ($hook === '' || mb_strlen($hook) > 200) {
+                $errors[] = 'hook bắt buộc, tối đa 200 ký tự.';
+            }
         }
         // Chủ đề (mọi loại bài): cùng chủ đề + cùng loại bài không lặp trong ChannelTopic::REPEAT_DAYS ngày
         $topic = $this->topics->check($channel, $raw, $sampleKey, $at, $errors, $exceptPostId, $exceptItemId);
@@ -669,6 +678,20 @@ class ChannelPlanService
                 '_signature' => $signature,
                 '_topic' => $topic,
             ], []];
+        }
+
+        // Bài VIDEO từ ảnh sản phẩm (video_type_01): lệnh gửi product_id -> A51 chọn template + ảnh như "Tạo video", rồi kiểm
+        // tra như bài video thường bên dưới. Chủ shop sửa bài (gửi lại images + video_template_id, không product_id): kiểm tra thường
+        if (($sample['image_source'] ?? PostSamples::SOURCE_LIBRARY) === PostSamples::SOURCE_PRODUCT_VIDEO && ! empty($raw['product_id'])) {
+            if ($format !== ContentPlanItem::FORMAT_VIDEO) {
+                return [[], ["Bài viết mẫu \"{$sampleKey}\" chỉ dùng cho slot video."]];
+            }
+            $picked = $this->pickVideo($channel, (int) $raw['product_id']);
+            if (is_string($picked)) {
+                return [[], [$picked]];
+            }
+            $raw['video_template_id'] = $picked['template']->id;
+            $raw['images'] = $picked['outputs']->map(fn ($o) => ['ref' => self::ref($o->generation_id, $o->id)])->values()->all();
         }
 
         // Ảnh. Dạng có bìa ghép (top_n): ảnh gửi = slide #1..#N, content-worker tự thêm bìa (slide 1) khi dựng
@@ -892,6 +915,33 @@ class ChannelPlanService
         return ['product_id' => $productId];
     }
 
+    /**
+     * Bài video từ ảnh sản phẩm: video template đang bật của shop ngẫu nhiên trong các template mà sản phẩm đủ ảnh, ảnh =
+     * ShopImageLibrary::productImagesForVideo (ít dùng cho video trước, mới trước) - như nút "Tạo video". Lỗi -> chuỗi lý do.
+     *
+     * @return array{template: VideoTemplate, outputs: Collection}|string
+     */
+    private function pickVideo(Channel $channel, int $productId): array|string
+    {
+        $user = $channel->user()->firstOrFail();
+        if (! Product::query()->accessibleBy($user)->active()->whereKey($productId)->exists()) {
+            return "product_id {$productId} không phải sản phẩm đang bật của shop.";
+        }
+        $library = app(\App\Services\ShopImageLibrary::class);
+        $have = (int) ($library->countsPerProduct($user->id)->get($productId) ?? 0);
+        $templates = VideoTemplate::query()->where('user_id', $user->id)->usable()->get();
+        if ($templates->isEmpty()) {
+            return 'Shop chưa có video template đang bật, không làm được bài video.';
+        }
+        $fit = $templates->filter(fn (VideoTemplate $t) => $t->image_count <= $have);
+        if ($fit->isEmpty()) {
+            return "Sản phẩm {$productId} mới có {$have} ảnh, không đủ cho video template nào (cần ít nhất {$templates->min('image_count')} ảnh). Chọn sản phẩm khác.";
+        }
+        $template = $fit->random();
+
+        return ['template' => $template, 'outputs' => $library->productImagesForVideo($user->id, $productId, $template->image_count)];
+    }
+
     /** Bài Top N: N trong hook "Top N" = số ảnh; ảnh thứ k có chữ bắt đầu "#k"; N mẫu khác nhau (chỉ kiểm tra dữ liệu). */
     private function validateRanking(string $hook, array $parsed, array $groupKeys, array &$errors): void
     {
@@ -1035,6 +1085,9 @@ class ChannelPlanService
             'source' => SocialPost::SOURCE_PLAN,
             'type' => $item->format === ContentPlanItem::FORMAT_VIDEO ? SocialPost::TYPE_VIDEO : SocialPost::TYPE_PHOTO,
             ...VideoPostService::templateSnapshot($template),
+            // Bài video: sản phẩm của ảnh (worker đăng bài nhận kèm khi dựng video, như bài "Tạo video")
+            'product_id' => $item->format === ContentPlanItem::FORMAT_VIDEO && $item->images
+                ? (Generation::query()->whereKey($item->images[0]['generation_id'])->value('product_id') ?: null) : null,
             'scheduled_at' => $item->scheduled_at,
             'title' => $item->title,
             'content' => (string) $item->content,

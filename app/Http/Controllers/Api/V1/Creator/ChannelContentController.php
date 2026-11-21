@@ -246,7 +246,7 @@ class ChannelContentController extends Controller
         $model = $channel->plans()->findOrFail($plan)->items()->findOrFail($item);
         $data = $request->validate([
             'sample_key' => ['required', 'string'],
-            'hook' => ['required', 'string', 'max:200'],
+            'hook' => ['nullable', 'string', 'max:200'],
             'video_template_id' => ['nullable', 'integer'],
             'images' => ['nullable', 'array', 'max:'.SocialPost::MAX_IMAGES],
             'images.*.ref' => ['required', 'string'],

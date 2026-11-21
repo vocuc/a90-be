@@ -788,6 +788,49 @@ class ChannelPlanTest extends TestCase
         $this->assertStringContainsString('content-worker', implode(' ', $rejected[0]['errors']));
     }
 
+    public function test_video_type_01_picks_template_and_product_images(): void
+    {
+        // Bài video giữ luồng "Tạo video": lệnh chọn sản phẩm, A51 chọn template + ảnh của sản phẩm, worker dựng video
+        $this->channel->update(['video_percent' => 100]);
+        $refs = $this->images(3);
+        $product = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Cao gót đỏ']);
+        $empty = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Chưa có ảnh']);
+        Generation::query()->whereKey((int) explode('-', substr($refs[0], 1))[0])->update(['product_id' => $product->id]);
+        \App\Models\VideoTemplate::query()->create(['user_id' => $this->shop->id, 'name' => 'Mẫu 3 ảnh',
+            'video_url' => 'https://www.tiktok.com/@a/video/1', 'image_count' => 3]);
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'video_type_01', 'percent' => 100]]])->assertCreated();
+        $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
+        $context = $this->context();
+        $this->assertSame([], array_values(array_diff($context['missing'], ['persona'])));
+        $planId = $context['plan']['id'];
+        $this->assertSame(['video'], array_values(array_unique(array_column($context['plan']['slots'], 'format'))));
+        // Không gửi hook: A51 lấy tiêu đề làm hook (bài không chữ trên video)
+        $base = ['sample_key' => 'video_type_01', 'title' => 'Đi tiệc là phải đỏ', 'hashtags' => ['tet2027']];
+
+        $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$base, 'slot_index' => 0, 'topic' => ['name' => 'Chủ đề slot 0'], 'product_id' => $product->id],
+            [...$base, 'slot_index' => 1, 'topic' => ['name' => 'Chủ đề slot 1'], 'title' => 'Tiêu đề 2', 'product_id' => $empty->id],
+            [...$base, 'slot_index' => 2, 'topic' => ['name' => 'Chủ đề slot 2'], 'title' => '', 'product_id' => $product->id],
+        ]])->assertOk()->json('data');
+        $this->assertSame([0], $res['accepted']);
+        $this->assertStringContainsString('dùng tiêu đề làm hook', implode(' ', $res['rejected'][1]['errors']));
+        $this->assertStringContainsString('không đủ cho video template', implode(' ', $res['rejected'][0]['errors']));
+
+        $item = ContentPlanItem::query()->where('plan_id', $planId)->firstOrFail();
+        $this->assertSame('Đi tiệc là phải đỏ', $item->hook);
+        $this->assertCount(3, $item->images);
+        $this->assertNotNull($item->video_template_id);
+
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        $post = SocialPost::query()->where('plan_item_id', $item->id)->firstOrFail();
+        $this->assertSame('video', $post->type);
+        $this->assertSame('Mẫu 3 ảnh', $post->video_template_name);
+        $this->assertSame($product->id, $post->product_id);
+        $this->assertSame(3, $post->images()->count());
+        $this->assertSame(SocialPostStatus::Queued, $post->status);
+        $this->assertNotContains('video_type_01', \App\Models\ChannelTextTemplate::sampleKeyOptions());
+    }
+
     public function test_slots_spread_video_and_skip_past_times(): void
     {
         $this->channel->update(['plan_days' => 1, 'posts_per_day' => 4, 'video_percent' => 50]);

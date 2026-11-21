@@ -34,7 +34,7 @@ final class PostSamples
      * Làm xong 1 bài (a90-fe note/xay-kenh-tiktok/bai-viet-mau/<key>.txt "ĐÃ LÀM") thì thêm key vào đây.
      * config ai90.post_samples_enabled ghi đè (vd test: ['*'] = bật hết).
      */
-    public const READY = ['top_n', 'lookbook', 'outfit_by_day', 'unboxing'];
+    public const READY = ['top_n', 'lookbook', 'outfit_by_day', 'unboxing', 'video_type_01'];
 
     /** @return array<string, array> key => bài viết mẫu (cả bài chưa bật), có cờ enabled */
     public static function all(): array
@@ -42,7 +42,7 @@ final class PostSamples
         static $samples = null;
         $samples ??= collect(self::definitions())->keyBy('key')->all();
 
-        return array_map(fn ($s) => [...$s, 'enabled' => self::isEnabled($s['key'])], $samples);
+        return array_map(fn ($s) => [...$s, 'enabled' => self::isEnabled($s['key']), 'hook_from_title' => self::hookFromTitle($s)], $samples);
     }
 
     /** @return array<string, array> chỉ bài viết mẫu đang bật */
@@ -89,6 +89,15 @@ final class PostSamples
 
     public const SOURCE_PRODUCT_BATCH = 'product_batch';
 
+    /** Video từ ảnh có sẵn của 1 sản phẩm: lệnh chỉ chọn sản phẩm, A51 chọn video template + ảnh như "Tạo video" (video_type_01). */
+    public const SOURCE_PRODUCT_VIDEO = 'product_video';
+
+    /** Bài không in chữ lên ảnh / video (lô ảnh sản phẩm, video): hook = tiêu đề, lệnh không viết hook riêng. */
+    public static function hookFromTitle(array $sample): bool
+    {
+        return in_array($sample['image_source'] ?? self::SOURCE_LIBRARY, [self::SOURCE_PRODUCT_BATCH, self::SOURCE_PRODUCT_VIDEO], true);
+    }
+
     /** Độ dài tối đa 1 nhãn ngày in lên ảnh outfit (bài có 'outfit_labels' => true, vd outfit_by_day). */
     public const LABEL_MAX = 30;
 
@@ -126,7 +135,7 @@ final class PostSamples
             // làm ảnh của bài, ảnh KHÔNG chữ. a90-fe note/xay-kenh-tiktok/bai-viet-mau/unboxing.txt
             self::sample('unboxing', 'Đập hộp', 'showcase', 'sale', $photo, 1, \App\Models\SocialPost::MAX_IMAGES, [
                 self::rule('each', 'product', false, 'Ảnh lô tự động của sản phẩm (mỗi Creative trong nhóm 1 ảnh), không chữ'),
-            ], true, 'Không chọn ảnh có sẵn, không chữ trên ảnh. Chọn 1 sản phẩm hợp chủ đề (kehoach.py products theo tag chủ đề, ưu tiên used thấp / lâu chưa dùng) -> product_batch.product_id; duyệt kỳ A51 tạo lô tự động (sản phẩm x 1 nhóm Creative) làm ảnh. Hook = ý chính của bài theo chủ đề (không in lên ảnh, dùng để viết tiêu đề, không trùng hook bài khác). Tiêu đề nêu dịp / tình huống của chủ đề + điểm nổi bật của đôi giày (theo nhãn + tag), giọng chân dung khách hàng.', self::SOURCE_PRODUCT_BATCH),
+            ], true, 'Không chọn ảnh có sẵn, không chữ trên ảnh. Chọn 1 sản phẩm hợp chủ đề (kehoach.py products theo tag chủ đề, ưu tiên used thấp / lâu chưa dùng) -> product_batch.product_id; duyệt kỳ A51 tạo lô tự động (sản phẩm x 1 nhóm Creative) làm ảnh. KHÔNG viết hook: chỉ viết tiêu đề, A51 lấy tiêu đề làm hook (không trùng tiêu đề + sản phẩm bài khác). Tiêu đề nêu dịp / tình huống của chủ đề + điểm nổi bật của đôi giày (theo nhãn + tag), giọng chân dung khách hàng.', self::SOURCE_PRODUCT_BATCH),
             self::sample('closeup', 'Soi cận cảnh', 'showcase', 'trust', $photo, 2, 4, [
                 self::rule('first', 'product', true, 'Toàn cảnh + hook "Soi kỹ trước khi mua"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 chi tiết: đường may, đế, lót, logo'),
@@ -139,6 +148,14 @@ final class PostSamples
                 self::rule('first', 'product', true, 'Hook "Bạn chọn màu nào?"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 màu của cùng kiểu, chữ = tên màu'),
             ], false, 'Dùng khi có nhiều ảnh cùng kiểu khác màu. Kéo comment chọn màu.'),
+
+            // Bài VIDEO giữ nguyên luồng video hiện nay (người dùng chốt 2026-11-21, tên "Video - Type 01"): lệnh chọn 1 sản
+            // phẩm hợp chủ đề (product_id), A51 chọn video template đang bật (ngẫu nhiên trong các template sản phẩm đủ ảnh) +
+            // ảnh của sản phẩm (ít dùng cho video trước, mới trước) như nút "Tạo video"; worker đăng bài dựng video từ ảnh rồi
+            // đăng. a90-fe note/xay-kenh-tiktok/bai-viet-mau/video_type_01.txt
+            self::sample('video_type_01', 'Video - Type 01', 'showcase', 'sale', ['video'], 1, \App\Models\SocialPost::MAX_IMAGES, [
+                self::rule('each', 'product', false, 'Ảnh của 1 sản phẩm, A51 chọn theo video template, không chữ'),
+            ], true, 'Chỉ dùng cho slot VIDEO. Không chọn ảnh, không chọn template: gửi product_id = 1 sản phẩm hợp chủ đề (kehoach.py products theo tag chủ đề, ưu tiên used thấp / lâu chưa dùng); A51 tự chọn video template + ảnh của sản phẩm, worker đăng bài dựng video rồi đăng. KHÔNG viết hook: chỉ viết tiêu đề, A51 lấy tiêu đề làm hook. Tiêu đề nêu dịp / tình huống + điểm nổi bật của đôi giày.', self::SOURCE_PRODUCT_VIDEO),
 
             // ---- So sánh, chọn lựa ----
             self::sample('this_or_that', 'A hay B', 'compare', 'engagement', $photo, 2, 3, [
