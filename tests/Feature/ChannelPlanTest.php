@@ -364,6 +364,42 @@ class ChannelPlanTest extends TestCase
         ], ['Accept' => 'application/json'])->assertStatus(409);
     }
 
+    public function test_redo_button_queues_plan_job_for_dispatcher(): void
+    {
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->item(0, $refs), $this->item(1, $refs, ['hook' => 'Hook 1']),
+        ]])->assertOk();
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        [$a, $b] = SocialPost::query()->where('channel_id', $this->channel->id)->orderBy('id')->pluck('id')->all();
+
+        // Chưa gắn worker điều phối: chỉ đánh dấu, không tạo việc
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$a}/redo")->assertOk();
+        $this->assertSame(0, \App\Models\PlanJob::query()->count());
+        $this->actingAs($this->shop)->deleteJson("/api/v1/creator/channel-posts/{$a}/redo")->assertOk();
+
+        [$dispatcher, $token] = Worker::register('dieu-phoi-'.Str::random(4), Worker::TYPE_DISPATCH);
+        $dispatcher->users()->attach($this->shop->id);
+        // Bấm "Làm lại" 2 bài liền: 1 việc làm lại (việc đang chờ dùng chung)
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$a}/redo")->assertOk();
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$b}/redo")->assertOk();
+        $this->assertSame(1, \App\Models\PlanJob::query()->count());
+        $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/plan-job")
+            ->assertJsonPath('data.job.redo', true)->assertJsonPath('data.job.status', 'queued');
+
+        $this->app['auth']->forgetGuards();
+        $this->withToken($token)->getJson('/api/v1/worker-jobs?types=plan')->assertOk()
+            ->assertJsonPath('data.type', 'plan')->assertJsonPath('data.request.redo', true);
+        // Context chế độ làm lại: không giữ slot kỳ mới, có 2 bài cần làm lại
+        $this->app['auth']->forgetGuards();
+        $context = $this->api('GET', "channels/{$this->channel->id}/context?redo_only=1")->assertOk()->json('data');
+        $this->assertNull($context['plan']);
+        $this->assertCount(2, $context['redo_requests']);
+        $this->assertSame(0, ContentPlan::query()->where('status', ContentPlan::PREPARING)->count());
+    }
+
     public function test_edit_overlay_text_supersedes_old_job(): void
     {
         $refs = $this->images(2);

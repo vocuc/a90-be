@@ -30,6 +30,31 @@ class PlanJobService
         return PlanJob::query()->where('channel_id', $channel->id)->latest('id')->first();
     }
 
+    /**
+     * Chủ shop bấm "Làm lại" 1 bài (người dùng 2026-11-22: bấm làm lại mà điều phối không nhận việc): tạo việc plan chế độ
+     * LÀM LẠI (payload redo) để worker điều phối chạy /lap-ke-hoach --lam-lai (chỉ soạn lại các bài đang đánh dấu). Kênh đã
+     * có việc plan đang chờ (chưa worker nhận) thì dùng chung việc đó (lấy context lúc nhận nên thấy cả bài vừa đánh dấu).
+     * Shop chưa gắn worker điều phối: null (bài vẫn đánh dấu, lượt lập kế hoạch sau làm lại).
+     */
+    public function queueRedo(Channel $channel): ?PlanJob
+    {
+        if (! self::hasWorker($channel->user_id)) {
+            return null;
+        }
+
+        return DB::transaction(function () use ($channel) {
+            Channel::query()->lockForUpdate()->find($channel->id);
+            $queued = PlanJob::query()->where('channel_id', $channel->id)->where('status', WorkerJob::QUEUED)->latest('id')->first();
+
+            return $queued ?? PlanJob::query()->create([
+                'user_id' => $channel->user_id,
+                'channel_id' => $channel->id,
+                'status' => WorkerJob::QUEUED,
+                'payload' => ['note' => null, 'plan_id' => null, 'redo' => true],
+            ]);
+        });
+    }
+
     /** $fill: TẠO BỔ SUNG cho kỳ này (chờ duyệt / đã duyệt, còn slot thiếu bài) thay vì lập kỳ mới. */
     public function create(Channel $channel, ?string $note, ?ContentPlan $fill = null): PlanJob
     {
@@ -110,6 +135,8 @@ class PlanJobService
             'note' => $job->payload['note'] ?? null,
             // Có: TẠO BỔ SUNG cho kỳ này (skill chạy /lap-ke-hoach <id kênh> --bo-sung <plan_id>)
             'plan_id' => $job->payload['plan_id'] ?? null,
+            // Chế độ LÀM LẠI: skill chạy /lap-ke-hoach <id kênh> --lam-lai (chỉ làm lại bài chủ shop đánh dấu)
+            'redo' => (bool) ($job->payload['redo'] ?? false),
         ];
     }
 

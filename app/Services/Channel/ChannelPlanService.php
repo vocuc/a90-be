@@ -68,7 +68,7 @@ class ChannelPlanService
      * $fill (chế độ TẠO BỔ SUNG, a90-fe note/xay-kenh-tiktok/worker-lap-ke-hoach.txt mục 5): plan = kỳ đó (chờ duyệt / đã
      * duyệt) với slots = CHỈ các slot còn thiếu bài (missingSlots), không tạo kỳ preparing.
      */
-    public function context(Channel $channel, ?ContentPlan $fill = null): array
+    public function context(Channel $channel, ?ContentPlan $fill = null, bool $redoOnly = false): array
     {
         $channel->loadMissing('worker', 'user');
         $missing = $channel->missing();
@@ -80,7 +80,7 @@ class ChannelPlanService
             }
             // Tính lại slot theo cấu hình hiện tại (đã đổi số bài / khung giờ) rồi lưu để gửi bài đúng index
             $plan = $this->refitSlots($fill);
-        } elseif (! $draft && ! array_intersect($missing, ['worker', 'time_slots', 'lineup', 'text_templates'])) {
+        } elseif (! $redoOnly && ! $draft && ! array_intersect($missing, ['worker', 'time_slots', 'lineup', 'text_templates'])) {
             $plan = $this->preparingPlan($channel);
         }
         $lineup = $channel->approvedLineup();
@@ -1293,6 +1293,10 @@ class ChannelPlanService
             }
             $post->save();
         });
+        // Giao worker điều phối làm lại ngay (không chờ lượt lập kế hoạch sau)
+        if ($on) {
+            app(PlanJobService::class)->queueRedo($post->channel()->firstOrFail());
+        }
 
         return $post->refresh();
     }

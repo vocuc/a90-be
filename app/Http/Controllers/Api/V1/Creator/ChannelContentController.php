@@ -81,6 +81,8 @@ class ChannelContentController extends Controller
             'note' => $job->payload['note'] ?? null,
             // Lượt TẠO BỔ SUNG cho kỳ này (null = lập kỳ mới)
             'fill_plan_id' => $job->payload['plan_id'] ?? null,
+            // Lượt LÀM LẠI bài (tự tạo khi bấm "Làm lại")
+            'redo' => (bool) ($job->payload['redo'] ?? false),
             // { summary, plan_id, plan_status } khi xong
             'result' => $job->result,
             'error_message' => $job->error_message,
