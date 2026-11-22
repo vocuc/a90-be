@@ -16,6 +16,7 @@ use App\Models\SocialPost;
 use App\Models\TopicJob;
 use App\Services\Channel\ChannelPlanService;
 use App\Services\Channel\ChannelTopicService;
+use App\Services\Channel\ChannelRescheduleService;
 use App\Services\Channel\PlanJobService;
 use App\Services\Channel\TopicJobService;
 use App\Services\MediaStorage;
@@ -39,6 +40,7 @@ class ChannelContentController extends Controller
         private ChannelTopicService $topics,
         private TopicJobService $topicJobs,
         private PlanJobService $planJobs,
+        private ChannelRescheduleService $reschedule,
     ) {}
 
     // ---- Lập kế hoạch mới bằng worker (a90-fe note/xay-kenh-tiktok/worker-lap-ke-hoach.txt) ----
@@ -238,6 +240,15 @@ class ChannelContentController extends Controller
      * Dời lịch giữ nguyên giờ đăng: không gửi item_ids = dời cả kỳ (date = ngày đầu kỳ mới); có item_ids = dời các bài đó
      * sang ngày date. 409 PLAN_CLOSED | ITEM_PUBLISHING | TIME_CONFLICT; 422 TIME_PASSED | SAME_DATE | ITEM_NOT_FOUND.
      */
+    /** "Làm mới giờ đăng": đặt lại giờ các bài của kỳ theo khung giờ hiện tại của kênh (giữ ngày). */
+    public function resetPlanTimes(Request $request, int $channel, int $plan): JsonResponse
+    {
+        $model = $this->channel($request, $channel)->plans()->findOrFail($plan);
+        $result = $this->reschedule->redistribute($model);
+
+        return response()->json(['data' => [...$this->planDetail($model->fresh()), ...$result]]);
+    }
+
     public function reschedulePlan(Request $request, int $channel, int $plan): JsonResponse
     {
         $model = $this->channel($request, $channel)->plans()->findOrFail($plan);

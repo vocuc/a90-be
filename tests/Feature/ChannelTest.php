@@ -56,20 +56,19 @@ class ChannelTest extends TestCase
             ->assertJsonPath('data.missing', ['persona', 'time_slots', 'lineup', 'text_templates']);
         $this->assertSame(3000, mb_strlen($first->json('data.requirements')), 'Yêu cầu cũ cắt về 3000 ký tự');
 
-        // Kênh thứ hai: cài đặt mặc định, không chép lại
-        $this->createChannel($shop, $this->publishWorker($shop), 'Kênh phụ')
-            ->assertCreated()
-            ->assertJsonPath('data.title_max', 90)
-            ->assertJsonPath('data.hashtags', []);
+        // Kênh thứ hai: cài đặt mặc định, không chép lại (bỏ qua khi đang giới hạn 1 kênh / shop)
+        if (Channel::MAX_PER_SHOP > 1) {
+            $this->createChannel($shop, $this->publishWorker($shop), 'Kênh phụ')
+                ->assertCreated()
+                ->assertJsonPath('data.title_max', 90)
+                ->assertJsonPath('data.hashtags', []);
+        }
     }
 
     public function test_worker_must_be_assigned_and_free(): void
     {
         $shop = $this->creator();
         $worker = $this->publishWorker($shop);
-        $this->createChannel($shop, $worker)->assertCreated();
-
-        $this->createChannel($shop, $worker, 'Trùng worker')->assertStatus(422)->assertJsonValidationErrors('worker_id');
 
         [$foreign] = Worker::register('khong-gan', Worker::TYPE_PUBLISH);
         $this->createChannel($shop, $foreign)->assertStatus(422)->assertJsonValidationErrors('worker_id');
@@ -77,6 +76,13 @@ class ChannelTest extends TestCase
         [$image] = Worker::register('tao-anh', Worker::TYPE_IMAGE);
         $image->users()->attach($shop->id);
         $this->createChannel($shop, $image)->assertStatus(422)->assertJsonValidationErrors('worker_id');
+
+        $this->createChannel($shop, $worker)->assertCreated();
+
+        // Worker đã thuộc kênh: shop khác cùng được gắn worker đó cũng không dùng được
+        $other = $this->creator();
+        $worker->users()->attach($other->id);
+        $this->createChannel($other, $worker, 'Trùng worker')->assertStatus(422)->assertJsonValidationErrors('worker_id');
 
         $this->actingAs($shop)->getJson('/api/v1/creator/channel-workers')
             ->assertOk()
