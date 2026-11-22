@@ -363,21 +363,20 @@ class ChannelContentController extends Controller
 
         return response()->json(['data' => [
             'topics' => array_map(fn ($t) => [...$t, 'hooks' => $hooks[$t['id']] ?? []], $this->topics->listFor($channel)),
-            'tag_options' => ProductTags::options(),
             'topic_worker' => TopicJobService::hasWorker($channel->user_id),
             'job' => $this->topicJob($this->topicJobs->latest($channel)),
             'count' => ['min' => TopicJob::COUNT_MIN, 'max' => TopicJob::COUNT_MAX, 'default' => TopicJob::COUNT_DEFAULT],
         ]]);
     }
 
-    /** Xây dựng chủ đề THỦ CÔNG: { name, tags? } -> 201 { data: Topic } (nguồn owner, bật sẵn). */
+    /** Xây dựng chủ đề THỦ CÔNG: { name, note? } -> 201 { data: Topic } (nguồn owner, bật sẵn). */
     public function storeTopic(Request $request, int $channel): JsonResponse
     {
         $channel = $this->channel($request, $channel);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:'.ChannelTopic::NAME_MAX],
-            'tags' => ['nullable', 'array'],
-        ]);
+            'note' => ['nullable', 'string', 'max:'.ChannelTopic::NOTE_MAX],
+        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.']);
         $name = ChannelTopic::cleanName($data['name']);
         if ($name === '') {
             throw ValidationException::withMessages(['name' => 'Tên chủ đề không được trống.']);
@@ -385,11 +384,7 @@ class ChannelContentController extends Controller
         if ($channel->topics()->where('name', $name)->exists()) {
             throw ValidationException::withMessages(['name' => 'Kênh đã có chủ đề tên này.']);
         }
-        [$tags, $errors] = ProductTags::cleanFilter($data['tags'] ?? []);
-        if ($errors) {
-            throw ValidationException::withMessages(['tags' => $errors]);
-        }
-        $topic = $channel->topics()->create(['name' => $name, 'tags' => $tags ?: null, 'source' => ProductTags::SOURCE_OWNER, 'status' => ChannelTopic::ACTIVE]);
+        $topic = $channel->topics()->create(['name' => $name, 'note' => ChannelTopic::cleanNote($data['note'] ?? null), 'source' => ProductTags::SOURCE_OWNER, 'status' => ChannelTopic::ACTIVE]);
 
         return response()->json(['data' => collect($this->topics->listFor($channel))->firstWhere('id', $topic->id)], 201);
     }
@@ -425,16 +420,16 @@ class ChannelContentController extends Controller
         ] : null;
     }
 
-    /** { name?, tags?: {kieu: [], got: [], ...}, status?: active|paused } Chủ shop sửa tên / tags -> nguồn owner. */
+    /** { name?, note?, status?: active|paused } Chủ shop sửa tên / ghi chú -> nguồn owner. */
     public function updateTopic(Request $request, int $channel, int $topic): JsonResponse
     {
         $channel = $this->channel($request, $channel);
         $model = $channel->topics()->findOrFail($topic);
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:'.ChannelTopic::NAME_MAX],
-            'tags' => ['sometimes', 'nullable', 'array'],
+            'note' => ['sometimes', 'nullable', 'string', 'max:'.ChannelTopic::NOTE_MAX],
             'status' => ['sometimes', 'required', 'in:'.ChannelTopic::ACTIVE.','.ChannelTopic::PAUSED],
-        ]);
+        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.']);
         $changes = [];
         if (array_key_exists('name', $data)) {
             $name = ChannelTopic::cleanName($data['name']);
@@ -446,12 +441,8 @@ class ChannelContentController extends Controller
             }
             $changes['name'] = $name;
         }
-        if (array_key_exists('tags', $data)) {
-            [$tags, $errors] = ProductTags::cleanFilter($data['tags'] ?? []);
-            if ($errors) {
-                throw ValidationException::withMessages(['tags' => $errors]);
-            }
-            $changes['tags'] = $tags ?: null;
+        if (array_key_exists('note', $data)) {
+            $changes['note'] = ChannelTopic::cleanNote($data['note']);
         }
         if ($changes) {
             $changes['source'] = ProductTags::SOURCE_OWNER;

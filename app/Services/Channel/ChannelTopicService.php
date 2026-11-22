@@ -18,7 +18,7 @@ use Illuminate\Support\Str;
 class ChannelTopicService
 {
     /**
-     * Kiểm tra chủ đề của 1 bài (không ghi DB). Trả {id: ?int (null = chủ đề mới), name, tags} hoặc null nếu lỗi.
+     * Kiểm tra chủ đề của 1 bài (không ghi DB). Trả {id: ?int (null = chủ đề mới), name, note} hoặc null nếu lỗi.
      */
     public function check(Channel $channel, array $raw, string $sampleKey, CarbonImmutable $at, array &$errors,
         ?int $exceptPostId = null, ?int $exceptItemId = null): ?array
@@ -63,7 +63,7 @@ class ChannelTopicService
             return null;
         }
 
-        return ['id' => $topic->id, 'name' => $topic->name, 'tags' => $topic->tags];
+        return ['id' => $topic->id, 'name' => $topic->name, 'note' => $topic->note];
     }
 
     /** Cùng chủ đề + cùng loại bài đã có bài đăng / bài kế hoạch chưa duyệt trong ± REPEAT_DAYS ngày quanh $at. */
@@ -95,7 +95,7 @@ class ChannelTopicService
         }
 
         return $channel->topics()->firstOrCreate(['name' => $topic['name']], [
-            'tags' => $topic['tags'],
+            'note' => $topic['note'] ?? null,
             'source' => ProductTags::SOURCE_AI,
             'status' => ChannelTopic::ACTIVE,
         ])->id;
@@ -104,7 +104,7 @@ class ChannelTopicService
     /**
      * Chủ đề của kênh kèm số bài theo loại bài + lần dùng gần nhất (bài đăng còn lại + bài kế hoạch chưa duyệt).
      *
-     * @return array<int, array{id: int, name: string, tags: ?array, source: string, status: string, posts: array<string, int>, last_used: array<string, string>}>
+     * @return array<int, array{id: int, name: string, note: ?string, source: string, status: string, posts: array<string, int>, last_used: array<string, string>}>
      */
     public function listFor(Channel $channel, bool $activeOnly = false): array
     {
@@ -131,7 +131,7 @@ class ChannelTopicService
             return [
                 'id' => $t->id,
                 'name' => $t->name,
-                'tags' => $t->tags,
+                'note' => $t->note,
                 'source' => $t->source,
                 'status' => $t->status,
                 'posts' => (object) $counts,

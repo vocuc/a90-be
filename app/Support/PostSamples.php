@@ -140,10 +140,7 @@ final class PostSamples
                 self::rule('first', 'product', true, 'Toàn cảnh + hook "Soi kỹ trước khi mua"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 chi tiết: đường may, đế, lót, logo'),
             ], true, 'Chứng minh chất lượng. Chữ mỗi slide nêu đúng 1 chi tiết, ngắn (<= 8 từ).'),
-            self::sample('new_arrival', 'Hàng mới về', 'showcase', 'sale', $both, 3, 8, [
-                self::rule('first', 'product', true, 'Ảnh đẹp nhất + hook "Lô ... vừa về"'),
-                self::rule('each', 'product', true, 'Mỗi slide 1 mẫu KHÁC NHAU, chữ = tên kiểu giày ngắn'),
-            ], false, 'Nhiều mẫu khác nhau. Tạo cảm giác mới, số lượng có hạn.'),
+            // new_arrival (Hàng mới về): đã bỏ 2026-11-22 (người dùng chốt), chưa từng có bài / tuyến dùng
             self::sample('color_options', '1 mẫu nhiều màu', 'showcase', 'sale', $photo, 2, 6, [
                 self::rule('first', 'product', true, 'Hook "Bạn chọn màu nào?"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 màu của cùng kiểu, chữ = tên màu'),

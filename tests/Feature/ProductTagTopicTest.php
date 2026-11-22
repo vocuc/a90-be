@@ -186,11 +186,15 @@ class ProductTagTopicTest extends TestCase
         $planId = $context['plan']['id'];
 
         // Chủ shop xây dựng chủ đề thủ công (lệnh chỉ dùng chủ đề có sẵn)
-        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topics", ['name' => '  Đi chúc Tết ', 'tags' => ['dip' => ['tet']]])
-            ->assertCreated()->assertJsonPath('data.name', 'Đi chúc Tết')->assertJsonPath('data.source', 'owner');
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topics", ['name' => '  Đi chúc Tết ', 'note' => ' Sang mà đi cả ngày được ', 'tags' => ['dip' => ['tet']]])
+            ->assertCreated()->assertJsonPath('data.name', 'Đi chúc Tết')->assertJsonPath('data.source', 'owner')
+            ->assertJsonPath('data.note', 'Sang mà đi cả ngày được')->assertJsonMissingPath('data.tags');
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topics", ['name' => 'đi chúc tết'])->assertStatus(422);
-        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topics", ['name' => 'Tag sai', 'tags' => ['dip' => ['khong_co']]])->assertStatus(422);
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/topics", ['name' => 'Ghi chú dài', 'note' => str_repeat('a', 1001)])
+            ->assertStatus(422)->assertJsonValidationErrors('note');
         $topic = ChannelTopic::query()->sole();
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['note' => '  '])
+            ->assertOk()->assertJsonPath('data.note', null);
 
         $byName = ['topic' => ['name' => 'Đi chúc Tết']];
         $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
@@ -221,10 +225,11 @@ class ProductTagTopicTest extends TestCase
 
         // Chủ shop xem / sửa / tạm tắt chủ đề
         $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/topics")->assertOk()
-            ->assertJsonPath('data.topics.0.name', 'Đi chúc Tết')->assertJsonPath('data.tag_options.kieu.0', 'cao_got');
-        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['status' => 'paused', 'tags' => ['dip' => 'tet,di_tiec']])
+            ->assertJsonPath('data.topics.0.name', 'Đi chúc Tết')->assertJsonPath('data.topics.0.note', null)
+            ->assertJsonMissingPath('data.tag_options');
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['status' => 'paused', 'note' => 'Ưu tiên cao gót vừa, màu đỏ / kem'])
             ->assertOk()->assertJsonPath('data.status', 'paused')->assertJsonPath('data.source', 'owner');
-        $this->assertEquals(['dip' => ['tet', 'di_tiec']], $topic->fresh()->tags);
+        $this->assertSame('Ưu tiên cao gót vừa, màu đỏ / kem', $topic->fresh()->note);
         $this->assertSame([], $this->api('GET', "channels/{$this->channel->id}/context")->json('data.topics'));
     }
 

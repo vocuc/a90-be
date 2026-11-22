@@ -28,6 +28,7 @@ use App\Services\ImageBatchService;
 use App\Services\OutfitBatchService;
 use App\Services\Social\VideoPostService;
 use App\Support\PostSamples;
+use App\Support\ProductTags;
 use App\Support\VietnamHolidays;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
@@ -133,7 +134,9 @@ class ChannelPlanService
             // Không gửi ảnh / sản phẩm (tối ưu token, chu-de-va-tag-san-pham.txt mục 5): lệnh lấy sản phẩm đã gắn tag
             // qua GET channels/{id}/products?<tag>=...; product_tags nhắc chạy /gan-tag-san-pham khi còn sản phẩm chưa gắn
             'product_tags' => $this->productTags->counts($channel->user),
-            // Chủ đề đang bật của kênh + số bài / lần dùng gần nhất theo loại bài (mọi bài cần chủ đề)
+            // Giá trị tag dùng được khi lọc sản phẩm: lệnh tự chọn tag theo ghi chú chủ đề (chủ đề không còn bộ lọc tag)
+            'tag_options' => ProductTags::options(),
+            // Chủ đề đang bật của kênh {name, note} + số bài / lần dùng gần nhất theo loại bài (mọi bài cần chủ đề)
             'topics' => $this->topics->listFor($channel, true),
             'topic_repeat_days' => ChannelTopic::REPEAT_DAYS,
             'video_templates' => VideoTemplate::query()->where('user_id', $channel->user_id)->usable()->orderBy('name')

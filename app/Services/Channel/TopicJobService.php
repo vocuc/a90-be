@@ -115,16 +115,16 @@ class TopicJobService
                 ->map(fn ($k) => ['key' => $k, 'name' => PostSamples::get($k)['name']])->values()->all(),
             'holidays' => VietnamHolidays::between($today, $today->addDays(self::HOLIDAY_DAYS)),
             // Chủ đề đã có (kể cả đang tắt): không tạo trùng / gần trùng
-            'existing_topics' => array_map(fn ($t) => ['name' => $t['name'], 'tags' => $t['tags'], 'status' => $t['status']],
+            'existing_topics' => array_map(fn ($t) => ['name' => $t['name'], 'note' => $t['note'], 'status' => $t['status']],
                 $this->topics->listFor($channel)),
-            // Bộ lọc tag sản phẩm của chủ đề chỉ dùng các giá trị này; product_tags = số sản phẩm đã gắn tag theo từng giá trị
+            // Tham khảo khi viết ghi chú chủ đề (chủ đề không còn bộ lọc tag): giá trị tag + số sản phẩm đã gắn theo từng giá trị
             'tag_options' => ProductTags::options(),
             'product_tags' => $this->productTags->summary($channel->user),
         ];
     }
 
     /**
-     * Worker trả chủ đề: [{name, tags}]. Chủ đề hợp lệ, chưa có (không phân biệt hoa thường) -> tạo (nguồn ai, bật sẵn).
+     * Worker trả chủ đề: [{name, note?}] (note: yêu cầu / định hướng cho lệnh lập kế hoạch, tối đa ChannelTopic::NOTE_MAX). Chủ đề hợp lệ, chưa có (không phân biệt hoa thường) -> tạo (nguồn ai, bật sẵn).
      *
      * @return array{created: string[], skipped: string[], errors: array<int, array{name: mixed, errors: string[]}>}
      */
@@ -143,18 +143,16 @@ class TopicJobService
 
                     continue;
                 }
-                [$tags, $tagErrors] = ProductTags::cleanFilter(is_array($row['tags'] ?? null) ? $row['tags'] : []);
-                if ($tagErrors) {
-                    $errors[] = ['name' => $name, 'errors' => $tagErrors];
-
-                    continue;
+                $note = ChannelTopic::cleanNote(is_string($row['note'] ?? null) ? $row['note'] : null);
+                if ($note !== null && mb_strlen($note) > ChannelTopic::NOTE_MAX) {
+                    $note = mb_substr($note, 0, ChannelTopic::NOTE_MAX);
                 }
                 if ($channel->topics()->where('name', $name)->exists()) {
                     $skipped[] = $name;
 
                     continue;
                 }
-                $channel->topics()->create(['name' => $name, 'tags' => $tags ?: null, 'source' => ProductTags::SOURCE_AI, 'status' => ChannelTopic::ACTIVE]);
+                $channel->topics()->create(['name' => $name, 'note' => $note, 'source' => ProductTags::SOURCE_AI, 'status' => ChannelTopic::ACTIVE]);
                 $created[] = $name;
             }
             $result = ['created' => $created, 'skipped' => $skipped, 'errors' => $errors];

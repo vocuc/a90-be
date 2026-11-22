@@ -70,21 +70,23 @@ class TopicWorkerTest extends TestCase
         $this->worker($token, 'GET', '')->assertNoContent();
 
         $res = $this->worker($token, 'POST', "/{$job['id']}", ['status' => 'completed', 'topics' => [
-            ['name' => 'Đi chúc Tết', 'tags' => ['dip' => ['tet'], 'phong_cach' => ['sang_chanh']]],
-            ['name' => 'đi làm', 'tags' => []],                       // trùng chủ đề có sẵn -> bỏ qua
-            ['name' => 'Tag sai', 'tags' => ['dip' => ['khong_co']]],
+            ['name' => 'Đi chúc Tết', 'note' => '  Đi chúc Tết nhà nội ngoại, sang mà đi cả ngày được  '],
+            ['name' => 'đi làm', 'note' => 'x'],                      // trùng chủ đề có sẵn -> bỏ qua
+            ['name' => 'Đi hẹn hò'],                                  // không ghi chú -> lệnh sáng tạo tự do
+            ['name' => str_repeat('a', 81)],
             ['name' => ''],
         ]])->assertOk()->json('data');
-        $this->assertSame(['Đi chúc Tết'], $res['result']['created']);
+        $this->assertSame(['Đi chúc Tết', 'Đi hẹn hò'], $res['result']['created']);
         $this->assertSame(['đi làm'], $res['result']['skipped']);
         $this->assertCount(2, $res['result']['errors']);
 
         $topic = ChannelTopic::query()->where('name', 'Đi chúc Tết')->sole();
         $this->assertSame('ai', $topic->source);
         $this->assertSame('active', $topic->status);
-        $this->assertEquals(['dip' => ['tet'], 'phong_cach' => ['sang_chanh']], $topic->tags);
+        $this->assertSame('Đi chúc Tết nhà nội ngoại, sang mà đi cả ngày được', $topic->note);
+        $this->assertNull(ChannelTopic::query()->where('name', 'Đi hẹn hò')->value('note'));
         $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/topics")->assertOk()
-            ->assertJsonPath('data.job.status', 'completed')->assertJsonPath('data.job.result.created', 1);
+            ->assertJsonPath('data.job.status', 'completed')->assertJsonPath('data.job.result.created', 2);
         // Đã xong -> bấm lượt mới được
         $this->start()->assertCreated();
     }
