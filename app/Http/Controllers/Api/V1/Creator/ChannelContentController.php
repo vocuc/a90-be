@@ -234,6 +234,23 @@ class ChannelContentController extends Controller
         return response()->json(['data' => $this->planDetail($model->fresh())]);
     }
 
+    /**
+     * Dời lịch giữ nguyên giờ đăng: không gửi item_ids = dời cả kỳ (date = ngày đầu kỳ mới); có item_ids = dời các bài đó
+     * sang ngày date. 409 PLAN_CLOSED | ITEM_PUBLISHING | TIME_CONFLICT; 422 TIME_PASSED | SAME_DATE | ITEM_NOT_FOUND.
+     */
+    public function reschedulePlan(Request $request, int $channel, int $plan): JsonResponse
+    {
+        $model = $this->channel($request, $channel)->plans()->findOrFail($plan);
+        $data = $request->validate([
+            'date' => ['required', 'date_format:Y-m-d'],
+            'item_ids' => ['nullable', 'array', 'min:1', 'max:200'],
+            'item_ids.*' => ['integer'],
+        ]);
+        $moved = $this->plans->reschedule($model, $data['date'], $data['item_ids'] ?? null);
+
+        return response()->json(['data' => [...$this->planDetail($model->fresh()), 'moved' => $moved]]);
+    }
+
     /** Xoá hẳn kỳ đã huỷ. 409 PLAN_NOT_CANCELLED. */
     public function deletePlan(Request $request, int $channel, int $plan): JsonResponse
     {

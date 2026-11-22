@@ -15,13 +15,16 @@ use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\Hashtag;
 use App\Models\ImageBatch;
+use App\Models\PlanJob;
 use App\Models\Product;
 use App\Models\SocialPost;
 use App\Models\SocialPostImage;
 use App\Models\VideoTemplate;
 use App\Models\Worker;
+use App\Models\WorkerJob;
 use App\Services\AuditLogger;
 use App\Services\AutoBatchService;
+use App\Services\ImageBatchService;
 use App\Services\OutfitBatchService;
 use App\Services\Social\VideoPostService;
 use App\Support\PostSamples;
@@ -1184,9 +1187,118 @@ class ChannelPlanService
                 $this->cancelItemInside($item);
             }
             $plan->update(['status' => ContentPlan::CANCELLED]);
+            $this->supersedeFillJobs($plan);
             $this->audit->log('content_plan.cancel', $plan);
 
             return $plan;
+        });
+    }
+
+    /**
+     * Dời lịch (người dùng chốt 2026-11-22), GIỮ NGUYÊN GIỜ đăng của từng bài:
+     * - $itemIds null: dời CẢ KỲ sang ngày $date (ngày đầu kỳ mới): ngày đầu kỳ, slot giờ, mọi bài + bài đăng cùng lệch số
+     *   ngày. Kỳ có bài worker đã nhận / đã đăng -> 409 (chọn từng bài để dời).
+     * - $itemIds: các bài chọn sang ngày $date (giờ cũ); kỳ giữ ngày, giờ cũ thành thiếu bài ("Tạo bổ sung"). Bài worker
+     *   đã nhận / đã đăng -> 409 ITEM_PUBLISHING.
+     * Giờ mới phải sau now + LEAD_MINUTES và cách bài khác của kênh >= MIN_GAP_MINUTES. Trả số bài đã dời.
+     */
+    public function reschedule(ContentPlan $plan, string $date, ?array $itemIds): int
+    {
+        return DB::transaction(function () use ($plan, $date, $itemIds) {
+            $plan = ContentPlan::query()->lockForUpdate()->findOrFail($plan->id);
+            if (! in_array($plan->status, [ContentPlan::DRAFT, ContentPlan::APPROVED], true)) {
+                throw new BusinessException('PLAN_CLOSED', 'Chỉ dời lịch được kỳ chờ duyệt / đã duyệt.', 409);
+            }
+            $tz = config('app.timezone');
+            $target = CarbonImmutable::parse($date, $tz)->startOfDay();
+            $whole = $itemIds === null;
+            $delta = $whole ? (int) CarbonImmutable::parse($plan->start_date->toDateString(), $tz)->diffInDays($target, false) : 0;
+            if ($whole && $delta === 0) {
+                throw new BusinessException('SAME_DATE', 'Kỳ đã ở ngày này rồi.', 422);
+            }
+
+            $query = $plan->items()->with('post')->where('status', '!=', ContentPlanItem::CANCELLED);
+            if (! $whole) {
+                $query->whereIn('id', array_map('intval', $itemIds));
+            }
+            $items = $query->get();
+            if (! $whole && $items->count() !== count(array_unique($itemIds))) {
+                throw new BusinessException('ITEM_NOT_FOUND', 'Có bài không thuộc kỳ hoặc đã bị xoá.', 422);
+            }
+            $editable = [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued];
+            // Bài đã thành bài đăng mà bài đăng bị xoá: không còn giờ đăng, dời theo kỳ nhưng không kiểm tra giờ
+            $live = $items->filter(fn (ContentPlanItem $i) => $i->status === ContentPlanItem::DRAFT || $i->post);
+            $locked = $live->filter(fn (ContentPlanItem $i) => $i->post && ! in_array($i->post->status, $editable, true));
+            if ($locked->isNotEmpty()) {
+                throw new BusinessException('ITEM_PUBLISHING', $whole
+                    ? "Kỳ có {$locked->count()} bài worker đã nhận đăng / đã đăng, không dời cả kỳ được. Chọn từng bài còn lại để dời."
+                    : 'Có bài worker đã nhận đăng / đã đăng, không dời được.', 409);
+            }
+
+            $newAt = fn (CarbonImmutable $at) => $whole
+                ? $at->setTimezone($tz)->addDays($delta)
+                : $target->setTimeFromTimeString($at->setTimezone($tz)->format('H:i:s'));
+            $moves = $items->mapWithKeys(fn (ContentPlanItem $i) => [$i->id => $newAt(CarbonImmutable::parse($i->scheduled_at))]);
+
+            // Kiểm tra giờ mới của bài còn dùng: chưa qua, không sát bài khác của kênh (kể cả các bài cùng dời)
+            $earliest = now()->addMinutes(self::LEAD_MINUTES);
+            $liveIds = $live->pluck('id')->all();
+            $movedPostIds = $live->pluck('social_post_id')->filter()->all();
+            $fmt = fn (CarbonImmutable $at) => $at->setTimezone($tz)->format('H:i d/m/Y');
+            $past = $live->filter(fn (ContentPlanItem $i) => $moves[$i->id]->lte($earliest));
+            if ($past->isNotEmpty()) {
+                throw new BusinessException('TIME_PASSED', 'Giờ đăng mới đã qua hoặc quá sát hiện tại (cần sau '.self::LEAD_MINUTES.' phút): '
+                    .$past->map(fn ($i) => $fmt($moves[$i->id]))->implode(', ').'.', 422);
+            }
+            $newTimes = $live->map(fn ($i) => $moves[$i->id])->values();
+            if ($newTimes->isNotEmpty()) {
+                $gap = self::MIN_GAP_MINUTES;
+                $from = $newTimes->min()->subMinutes($gap);
+                $to = $newTimes->max()->addMinutes($gap);
+                $channel = $plan->channel()->firstOrFail();
+                $others = $channel->posts()->whereIn('status', $editable)->whereNotIn('id', $movedPostIds ?: [0])
+                    ->whereBetween('scheduled_at', [$from, $to])->pluck('scheduled_at')
+                    ->merge(ContentPlanItem::query()->where('status', ContentPlanItem::DRAFT)->whereNotIn('id', $liveIds ?: [0])
+                        ->whereHas('plan', fn ($q) => $q->where('channel_id', $channel->id)->whereIn('status', [ContentPlan::DRAFT, ContentPlan::APPROVED]))
+                        ->whereBetween('scheduled_at', [$from, $to])->pluck('scheduled_at'))
+                    ->map(fn ($at) => CarbonImmutable::parse($at))->merge($newTimes)->sort()->values();
+                $clash = [];
+                for ($k = 1; $k < $others->count(); $k++) {
+                    if ($others[$k - 1]->diffInMinutes($others[$k]) < $gap
+                        && ($newTimes->contains(fn ($t) => $t->eq($others[$k])) || $newTimes->contains(fn ($t) => $t->eq($others[$k - 1])))) {
+                        $clash[] = $fmt($others[$k]);
+                    }
+                }
+                if ($clash) {
+                    throw new BusinessException('TIME_CONFLICT', "Giờ đăng mới sát bài khác của kênh (cần cách nhau >= {$gap} phút): "
+                        .implode(', ', array_unique($clash)).'.', 409);
+                }
+            }
+
+            // Dời: bài kế hoạch + slot giờ + bài đăng
+            $slots = collect($plan->slots ?? []);
+            foreach ($items as $item) {
+                $at = $moves[$item->id];
+                $item->update(['scheduled_at' => $at]);
+                $item->post?->update(['scheduled_at' => $at]);
+                $slots = $slots->map(fn ($s) => (int) $s['index'] === (int) $item->slot_index ? [...$s, 'at' => $at->toIso8601String()] : $s);
+            }
+            if ($whole) {
+                // Slot trống (chưa có bài / bài đã huỷ) cũng lệch theo kỳ
+                $itemSlots = $items->pluck('slot_index')->map(fn ($i) => (int) $i)->all();
+                $slots = $slots->map(fn ($s) => in_array((int) $s['index'], $itemSlots, true)
+                    ? $s : [...$s, 'at' => CarbonImmutable::parse($s['at'])->setTimezone($tz)->addDays($delta)->toIso8601String()]);
+                $plan->items()->where('status', ContentPlanItem::CANCELLED)->get()
+                    ->each(fn (ContentPlanItem $i) => $i->update(['scheduled_at' => CarbonImmutable::parse($i->scheduled_at)->addDays($delta)]));
+                $plan->start_date = $target->toDateString();
+            }
+            $plan->slots = $slots->sortBy('at')->values()->all();
+            $plan->save();
+            $this->audit->log('content_plan.reschedule', $plan, [
+                'date' => $target->toDateString(), 'whole' => $whole, 'item_ids' => $items->pluck('id')->all(),
+            ]);
+
+            return $items->count();
         });
     }
 
@@ -1219,7 +1331,9 @@ class ChannelPlanService
                 throw new BusinessException('ITEM_PUBLISHING', 'Bài đã được worker nhận đăng / đã đăng, không xoá được.', 409);
             }
             $plan = $item->plan()->firstOrFail();
-            $post?->delete();
+            if ($post) {
+                $this->deletePostWithJobs($post);
+            }
             $this->audit->log('content_plan.delete_item', $plan, ['item_id' => $item->id, 'slot_index' => $item->slot_index, 'post_id' => $post?->id]);
             $item->delete();
             if ($plan->status === ContentPlan::DRAFT && ($lineup = $plan->channel()->firstOrFail()->approvedLineup())) {
@@ -1235,9 +1349,36 @@ class ChannelPlanService
             if ($post && ! in_array($post->status, [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued], true)) {
                 return; // worker đã nhận / đã đăng: giữ nguyên
             }
-            $post?->delete();
+            if ($post) {
+                $this->deletePostWithJobs($post);
+            }
         }
         $item->update(['status' => ContentPlanItem::CANCELLED, 'social_post_id' => null]);
+    }
+
+    /**
+     * Xoá bài đăng của kỳ (huỷ kỳ / nút X) để worker KHÔNG nhận việc của bài nữa (người dùng yêu cầu 2026-11-22):
+     * - việc dựng bài (content) / đăng bài (publish): xoá theo bài (worker_jobs.social_post_id cascade), worker đang làm
+     *   gửi kết quả bị từ chối;
+     * - ảnh lô phối đồ / lô ảnh sản phẩm tạo riêng cho bài khi duyệt: ảnh còn chờ (chưa worker nhận) huỷ luôn, hoàn lượt
+     *   như "Hủy ảnh đang chờ". Ảnh worker đang tạo dở thì để xong (nằm lại ở lô).
+     */
+    private function deletePostWithJobs(SocialPost $post): void
+    {
+        if ($post->source === SocialPost::SOURCE_PLAN && $post->image_batch_id
+            && ($batch = ImageBatch::query()->with('user')->find($post->image_batch_id))) {
+            app(ImageBatchService::class)->cancelQueued($batch->user, $batch);
+        }
+        $post->delete();
+    }
+
+    /** Huỷ kỳ: việc "Tạo bổ sung" của kỳ chưa xong (chờ / đang chạy) thành superseded, worker điều phối không nhận nữa. */
+    private function supersedeFillJobs(ContentPlan $plan): void
+    {
+        PlanJob::query()->where('channel_id', $plan->channel_id)
+            ->whereIn('status', [WorkerJob::QUEUED, WorkerJob::PROCESSING])
+            ->where('payload->plan_id', $plan->id)
+            ->update(['status' => WorkerJob::SUPERSEDED, 'lease_expires_at' => null, 'finished_at' => now()]);
     }
 
     /** Chủ shop sửa bài draft trước khi duyệt (cùng luật kiểm tra). */
