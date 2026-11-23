@@ -18,7 +18,8 @@ use Illuminate\Support\Facades\DB;
  * Tạo lô tự động (note/auto-tao-lo.txt ở repo frontend): người dùng bấm "Tạo tự động" với số lô, mỗi lô = 1 sản phẩm
  * x các creative của 1 nhóm (mỗi creative 1 ảnh), ảnh sản phẩm điền vào trường ảnh có key = field_key.
  *
- * Không xét hashtag: mọi sản phẩm ghép được với mọi nhóm.
+ * Không xét hashtag: mọi sản phẩm ghép được với mọi nhóm. Theo kênh: nhóm dùng chung (channel_id null) + nhóm riêng của
+ * kênh đang tạo; không theo kênh thì chỉ nhóm dùng chung.
  *
  * Chọn (xem AutoBatchPlanner): sản phẩm ít ảnh đã tạo nhất trước, mỗi sản phẩm ghép nhóm có ít lượt tạo nhất với sản phẩm
  * đó; bằng nhau thì ngẫu nhiên. Không lặp sản phẩm / nhóm nên số lô tối đa bằng min(số sản phẩm, số nhóm).
@@ -39,35 +40,35 @@ class AutoBatchService
     /**
      * Xem trước $count lô sẽ tạo (cùng quy tắc, không tạo, không xét số dư). Không gửi seed thì random seed mới;
      * gửi seed trả về khi tạo thật để ra đúng các lô đã xem. $productIds: chỉ dùng các sản phẩm này (người dùng chọn tay),
-     * null = mọi sản phẩm.
+     * null = mọi sản phẩm. $channelId: tạo cho kênh nào -> nhóm dùng chung + nhóm riêng của kênh đó; null = chỉ nhóm dùng chung.
      *
      * @param  int[]|null  $productIds
      * @return array{plans: array<int, array{product: Product, group: CreativeGroup, items: array}>, seed: int}
      */
-    public function preview(User $user, int $count, ?int $seed = null, ?array $productIds = null): array
+    public function preview(User $user, int $count, ?int $seed = null, ?array $productIds = null, ?int $channelId = null): array
     {
         $seed ??= random_int(1, self::MAX_SEED);
 
-        return ['plans' => $this->planner($user, $productIds)->plan($count, $seed), 'seed' => $seed];
+        return ['plans' => $this->planner($user, $productIds, $channelId)->plan($count, $seed), 'seed' => $seed];
     }
 
     /**
      * Tạo tối đa $count lô. Mỗi lô có idempotency_key riêng "auto:{key}:{n}": gửi lại cùng key thì trả đúng các lô
      * đã tạo, không tạo lại lần nữa. Không gửi seed thì seed lấy từ idempotency key (gửi lại vẫn chọn như lần đầu).
      *
-     * $productIds: như preview.
+     * $productIds, $channelId: như preview.
      *
      * @param  int[]|null  $productIds
      * @return array{batches: ImageBatch[], stopped: ?string}
      */
-    public function create(User $user, int $count, bool $insertLogo, string $idempotencyKey, ?int $seed = null, ?int $workerId = null, ?array $productIds = null): array
+    public function create(User $user, int $count, bool $insertLogo, string $idempotencyKey, ?int $seed = null, ?int $workerId = null, ?array $productIds = null, ?int $channelId = null): array
     {
         // Hai request cùng lúc của một người dùng (vd. gửi lại cùng idempotency key) không tạo trùng lô
         $lock = Cache::lock("auto-batch:{$user->id}", 120);
         $lock->block(30);
 
         try {
-            $plans = $this->planner($user, $productIds)->plan($count, $seed ?? crc32($idempotencyKey) % self::MAX_SEED);
+            $plans = $this->planner($user, $productIds, $channelId)->plan($count, $seed ?? crc32($idempotencyKey) % self::MAX_SEED);
             $created = [];
             $stopped = null;
 
@@ -112,7 +113,7 @@ class AutoBatchService
     }
 
     /** @param  int[]|null  $productIds */
-    private function planner(User $user, ?array $productIds = null): AutoBatchPlanner
+    private function planner(User $user, ?array $productIds = null, ?int $channelId = null): AutoBatchPlanner
     {
         $products = Product::query()
             ->accessibleBy($user)
@@ -124,6 +125,7 @@ class AutoBatchService
             ->get();
         $groups = CreativeGroup::query()
             ->where('user_id', $user->id)
+            ->forChannel($channelId)
             ->with(['creatives.config', 'creatives.model'])
             ->orderBy('id')
             ->get();

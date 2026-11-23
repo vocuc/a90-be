@@ -22,6 +22,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -117,10 +118,11 @@ class ImageBatchController extends Controller
             // Chọn sản phẩm thủ công; không gửi = mọi sản phẩm. Id không thuộc người dùng thì bị bỏ qua
             'product_ids' => ['nullable', 'array', 'max:'.AutoBatchService::MAX_COUNT],
             'product_ids.*' => ['integer'],
+            ...self::channelRule($request),
         ]);
         $user = $request->user();
         $media = app(MediaStorage::class);
-        $preview = $auto->preview($user, (int) $data['count'], isset($data['seed']) ? (int) $data['seed'] : null, self::productIds($data));
+        $preview = $auto->preview($user, (int) $data['count'], isset($data['seed']) ? (int) $data['seed'] : null, self::productIds($data), self::channelId($data));
 
         $plans = array_map(fn (array $plan) => [
             'product' => self::productSummary($plan['product'], $media),
@@ -148,12 +150,13 @@ class ImageBatchController extends Controller
             'worker_id' => ['nullable', 'integer'],
             'product_ids' => ['nullable', 'array', 'max:'.AutoBatchService::MAX_COUNT],
             'product_ids.*' => ['integer'],
+            ...self::channelRule($request),
         ]);
 
         $seed = isset($data['seed']) ? (int) $data['seed'] : null;
         $insertLogo = $this->insertLogo($request, $data);
         $workerId = Worker::imageWorkerIdFor($request->user()->id, $data['worker_id'] ?? null);
-        $result = $auto->create($request->user(), (int) $data['count'], $insertLogo, $data['idempotency_key'], $seed, $workerId, self::productIds($data));
+        $result = $auto->create($request->user(), (int) $data['count'], $insertLogo, $data['idempotency_key'], $seed, $workerId, self::productIds($data), self::channelId($data));
         $batches = ImageBatch::query()
             ->whereKey(array_map(fn (ImageBatch $b) => $b->id, $result['batches']))
             ->withSummary()
@@ -354,6 +357,17 @@ class ImageBatchController extends Controller
         }
 
         return $insertLogo;
+    }
+
+    /** Tạo lô tự động cho kênh (channel_id của chính người dùng): nhóm dùng chung + nhóm riêng của kênh; không gửi = chỉ nhóm dùng chung. */
+    private static function channelRule(Request $request): array
+    {
+        return ['channel_id' => ['nullable', 'integer', Rule::exists('channels', 'id')->where('user_id', $request->user()->id)]];
+    }
+
+    private static function channelId(array $data): ?int
+    {
+        return isset($data['channel_id']) ? (int) $data['channel_id'] : null;
     }
 
     /** @return int[]|null */

@@ -12,21 +12,25 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 /**
  * Nhóm creative cho tạo lô tự động (note/auto-tao-lo.txt ở repo frontend). Nhóm của người khác -> 404.
  * Chỉ chứa creative của chính người dùng (mọi trạng thái, lúc chạy chỉ dùng Đang bán); một creative chỉ ở một nhóm.
+ * Nhóm chọn kênh (channel_id) chỉ dùng cho kênh đó; không chọn kênh = dùng chung mọi kênh.
  */
 class CreativeGroupController extends Controller
 {
-    private const RELATIONS = ['creatives.images'];
+    private const RELATIONS = ['creatives.images', 'channel:id,name'];
 
-    /** Cũ nhất trước: đúng thứ tự tạo lô tự động. */
+    /** Cũ nhất trước: đúng thứ tự tạo lô tự động. ?channel_id=: chỉ nhóm dùng được cho kênh đó (dùng chung + riêng). */
     public function index(Request $request): AnonymousResourceCollection
     {
+        $data = $request->validate(['channel_id' => ['nullable', 'integer']]);
         $groups = CreativeGroup::query()
             ->where('user_id', $request->user()->id)
+            ->when(isset($data['channel_id']), fn ($q) => $q->forChannel((int) $data['channel_id']))
             ->with(self::RELATIONS)
             ->orderBy('id')
             ->get();
@@ -61,7 +65,7 @@ class CreativeGroupController extends Controller
     {
         try {
             DB::transaction(function () use ($group, $data) {
-                $group->fill(['name' => $data['name']])->save();
+                $group->fill(['name' => $data['name'], 'channel_id' => $data['channel_id'] ?? null])->save();
                 $group->creatives()->sync(collect($data['creative_ids'])
                     ->mapWithKeys(fn ($id, $position) => [(int) $id => ['position' => $position]])
                     ->all());
@@ -79,10 +83,13 @@ class CreativeGroupController extends Controller
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
+            // Không gửi / null = dùng chung mọi kênh; có = chỉ dùng cho kênh đó (kênh của chính người dùng)
+            'channel_id' => ['nullable', 'integer', Rule::exists('channels', 'id')->where('user_id', $request->user()->id)],
             'creative_ids' => ['required', 'array', 'min:1', 'list'],
             'creative_ids.*' => ['integer', 'distinct'],
         ], [
             'name.required' => 'Vui lòng nhập tên nhóm.',
+            'channel_id.exists' => 'Kênh không tồn tại.',
             'creative_ids.required' => 'Vui lòng chọn ít nhất 1 creative.',
             'creative_ids.*.distinct' => 'Creative bị chọn trùng.',
         ]);

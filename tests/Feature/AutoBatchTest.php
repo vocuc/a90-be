@@ -213,6 +213,69 @@ class AutoBatchTest extends TestCase
             ->assertJsonPath('data.0.group.name', 'Nhóm 1');
     }
 
+    public function test_group_channel_must_be_own_and_channel_delete_makes_group_shared(): void
+    {
+        $user = $this->creator();
+        $channel = $this->channelFor($user);
+        $otherChannel = $this->channelFor($this->creator());
+        $creative = $this->publishedCreative($user);
+
+        $this->actingAs($user)->postJson('/api/v1/creator/creative-groups', ['name' => 'G', 'channel_id' => $otherChannel->id, 'creative_ids' => [$creative->id]])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('channel_id');
+
+        $id = $this->actingAs($user)->postJson('/api/v1/creator/creative-groups', ['name' => 'G', 'channel_id' => $channel->id, 'creative_ids' => [$creative->id]])
+            ->assertCreated()
+            ->assertJsonPath('data.channel.id', $channel->id)
+            ->assertJsonPath('data.channel.name', $channel->name)
+            ->json('data.id');
+
+        // Sửa không gửi channel_id -> thành dùng chung
+        $this->actingAs($user)->putJson("/api/v1/creator/creative-groups/{$id}", ['name' => 'G', 'creative_ids' => [$creative->id]])
+            ->assertOk()
+            ->assertJsonPath('data.channel', null);
+
+        CreativeGroup::query()->whereKey($id)->update(['channel_id' => $channel->id]);
+        $channel->delete();
+        $this->assertNull(CreativeGroup::query()->findOrFail($id)->channel_id);
+    }
+
+    public function test_channel_groups_only_used_for_their_channel(): void
+    {
+        $user = $this->creator();
+        $a = $this->channelFor($user);
+        $b = $this->channelFor($user);
+        $shared = $this->group($user, [$this->publishedCreative($user)], 'Chung');
+        $onlyA = $this->group($user, [$this->publishedCreative($user)], 'Riêng A');
+        $onlyA->update(['channel_id' => $a->id]);
+        $onlyB = $this->group($user, [$this->publishedCreative($user)], 'Riêng B');
+        $onlyB->update(['channel_id' => $b->id]);
+        foreach (range(1, 5) as $i) {
+            $this->product($user);
+        }
+
+        $groupsFor = fn (?int $channelId) => collect(range(1, 10))->flatMap(fn (int $seed) => array_column(array_column(
+            $this->actingAs($user)->getJson('/api/v1/image-batches/auto/preview?count=5&seed='.$seed.($channelId ? "&channel_id={$channelId}" : ''))
+                ->assertOk()->json('data.batches'), 'group'), 'id'))->unique()->sort()->values()->all();
+
+        // Không theo kênh: chỉ nhóm dùng chung; theo kênh: dùng chung + riêng của kênh đó
+        $this->assertSame([$shared->id], $groupsFor(null));
+        $this->assertSame([$shared->id, $onlyA->id], $groupsFor($a->id));
+        $this->assertSame([$shared->id, $onlyB->id], $groupsFor($b->id));
+
+        $this->auto($user, 5, ['channel_id' => $a->id])->assertCreated()->assertJsonCount(2, 'data.batches');
+        $this->assertEqualsCanonicalizing([$shared->id, $onlyA->id], array_column($this->pairs($user), 1));
+
+        // Kênh của người khác -> 422
+        $this->actingAs($user)->getJson('/api/v1/image-batches/auto/preview?count=1&channel_id='.$this->channelFor($this->creator())->id)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('channel_id');
+
+        // Lọc danh sách nhóm theo kênh
+        $this->assertEqualsCanonicalizing([$shared->id, $onlyB->id],
+            array_column($this->actingAs($user)->getJson("/api/v1/creator/creative-groups?channel_id={$b->id}")->assertOk()->json('data'), 'id'));
+    }
+
     // ---- Tạo tự động ----
 
     public function test_picks_distinct_random_products_and_groups_like_preview(): void

@@ -22,6 +22,8 @@ class CreativeGroupResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            // null = dùng chung mọi kênh
+            'channel' => $this->channel ? ['id' => $this->channel->id, 'name' => $this->channel->name] : null,
             'creatives' => $this->creatives->map(fn (AiCreative $creative) => [
                 'id' => $creative->id,
                 'slug' => $creative->slug,

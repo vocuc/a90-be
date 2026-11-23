@@ -18,11 +18,20 @@ use Illuminate\Support\Str;
 class ChannelTopicService
 {
     /**
+     * Khoá trong $raw (chỉ server đặt): bài có chủ đề đã bị xoá, chủ shop sửa bài không chọn chủ đề -> giữ "không xác định".
+     */
+    public const NO_TOPIC = '_no_topic';
+
+    /**
      * Kiểm tra chủ đề của 1 bài (không ghi DB). Trả {id: ?int (null = chủ đề mới), name, note} hoặc null nếu lỗi.
+     * $raw[NO_TOPIC]: trả {id: null, name: null, note: null} = không xác định.
      */
     public function check(Channel $channel, array $raw, string $sampleKey, CarbonImmutable $at, array &$errors,
         ?int $exceptPostId = null, ?int $exceptItemId = null): ?array
     {
+        if (! empty($raw[self::NO_TOPIC])) {
+            return ['id' => null, 'name' => null, 'note' => null];
+        }
         $topic = null;
         if (! empty($raw['topic_id'])) {
             $model = $channel->topics()->find((int) $raw['topic_id']);
@@ -87,11 +96,14 @@ class ChannelTopicService
             ->exists();
     }
 
-    /** Id chủ đề đã kiểm tra (chủ đề luôn có sẵn; giữ nhánh tạo cho dữ liệu cũ). */
-    public function resolve(Channel $channel, array $topic): int
+    /** Id chủ đề đã kiểm tra (chủ đề luôn có sẵn; giữ nhánh tạo cho dữ liệu cũ). null = không xác định (chủ đề đã xoá). */
+    public function resolve(Channel $channel, array $topic): ?int
     {
         if ($topic['id']) {
             return $topic['id'];
+        }
+        if ($topic['name'] === null) {
+            return null;
         }
 
         return $channel->topics()->firstOrCreate(['name' => $topic['name']], [

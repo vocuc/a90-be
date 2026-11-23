@@ -25,6 +25,7 @@ use App\Support\ProductTags;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -418,6 +419,17 @@ class ChannelContentController extends Controller
             'created_at' => $job->created_at,
             'finished_at' => $job->finished_at,
         ] : null;
+    }
+
+    /**
+     * Xoá chủ đề, kể cả chủ đề đã có bài (người dùng chốt 2026-11-23): bài đăng / bài kế hoạch của chủ đề giữ nguyên, chủ đề
+     * thành "không xác định" (topic_id null, FK nullOnDelete). Không chặn worker lập chủ đề tạo lại chủ đề cùng tên. -> 204
+     */
+    public function destroyTopic(Request $request, int $channel, int $topic): Response
+    {
+        $this->channel($request, $channel)->topics()->findOrFail($topic)->delete();
+
+        return response()->noContent();
     }
 
     /** { name?, note?, status?: active|paused } Chủ shop sửa tên / ghi chú -> nguồn owner. */

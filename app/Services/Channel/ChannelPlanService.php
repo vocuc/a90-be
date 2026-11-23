@@ -891,7 +891,8 @@ class ChannelPlanService
 
     /**
      * Bài lấy ảnh bằng lô tự động mới (unboxing): product_batch.product_id = sản phẩm đang bật của shop ghép được với ít
-     * nhất 1 nhóm Creative (cùng luật "Tạo tự động" ở trang lô). Shop phải được gắn worker tạo ảnh. Chỉ bài ảnh.
+     * nhất 1 nhóm Creative dùng cho kênh (dùng chung + riêng của kênh; cùng luật "Tạo tự động" ở trang lô). Shop phải
+     * được gắn worker tạo ảnh. Chỉ bài ảnh.
      *
      * @return array{product_id: int}
      */
@@ -915,8 +916,8 @@ class ChannelPlanService
         $user = $channel->user()->firstOrFail();
         if (! Product::query()->accessibleBy($user)->active()->whereKey($productId)->exists()) {
             $errors[] = "product_batch.product_id {$productId} không phải sản phẩm đang bật của shop.";
-        } elseif (! $this->autoBatches->preview($user, 1, 1, [$productId])['plans']) {
-            $errors[] = "Sản phẩm {$productId} không ghép được với nhóm Creative nào đang bán (thiếu ảnh đúng trường nguyên liệu). Chọn sản phẩm khác.";
+        } elseif (! $this->autoBatches->preview($user, 1, 1, [$productId], $channel->id)['plans']) {
+            $errors[] = "Sản phẩm {$productId} không ghép được với nhóm Creative nào đang bán dùng cho kênh này (thiếu ảnh đúng trường nguyên liệu). Chọn sản phẩm khác.";
         }
 
         return ['product_id' => $productId];
@@ -1132,11 +1133,11 @@ class ChannelPlanService
         return $post;
     }
 
-    /** Tạo 1 lô tự động cho sản phẩm (planner chọn nhóm Creative ít lượt tạo nhất với sản phẩm), chèn logo nếu shop có logo. */
+    /** Tạo 1 lô tự động cho sản phẩm (planner chọn nhóm Creative của kênh ít lượt tạo nhất với sản phẩm), chèn logo nếu shop có logo. */
     private function createProductBatch(Channel $channel, array $spec, string $key): ImageBatch
     {
         $user = $channel->user()->firstOrFail();
-        $result = $this->autoBatches->create($user, 1, (bool) $user->logoPath(), $key, null, null, [(int) $spec['product_id']]);
+        $result = $this->autoBatches->create($user, 1, (bool) $user->logoPath(), $key, null, null, [(int) $spec['product_id']], $channel->id);
 
         return $result['batches'][0] ?? throw new BusinessException('AUTO_NOTHING_TO_CREATE', 'Không tạo được lô ảnh cho sản phẩm.', 422);
     }
@@ -1401,8 +1402,14 @@ class ChannelPlanService
             $raw['product_batch'] = $item->product_batch;
         }
         // Chủ shop sửa trên A51 không gửi chủ đề: giữ chủ đề cũ
-        if (empty($raw['topic_id']) && empty($raw['topic']) && $item->topic_id) {
-            $raw['topic_id'] = $item->topic_id;
+        if (empty($raw['topic_id']) && empty($raw['topic'])) {
+            if ($item->topic_id) {
+                $raw['topic_id'] = $item->topic_id;
+            } else {
+                // Chủ đề của bài đã bị xoá: giữ "không xác định" (ChannelTopicService::NO_TOPIC; $raw đã qua validate nên
+                // client không tự gửi được khoá này)
+                $raw[ChannelTopicService::NO_TOPIC] = true;
+            }
         }
         [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $item->format, $signatures,
             CarbonImmutable::parse($item->scheduled_at), null, $item->id);

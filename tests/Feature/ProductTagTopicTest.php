@@ -233,6 +233,47 @@ class ProductTagTopicTest extends TestCase
         $this->assertSame([], $this->api('GET', "channels/{$this->channel->id}/context")->json('data.topics'));
     }
 
+    public function test_delete_topic_with_posts_leaves_posts_without_topic(): void
+    {
+        $this->channel->update(['auto_approve_plan' => false]);
+        $this->approveLineup(['closeup']);
+        $refs = $this->images(null, 4);
+        $topic = $this->channel->topics()->create(['name' => 'Đi làm', 'source' => 'ai', 'status' => 'active']);
+        $other = $this->channel->topics()->create(['name' => 'Đi tiệc', 'source' => 'ai', 'status' => 'active']);
+        $old = SocialPost::query()->create([
+            'user_id' => $this->shop->id, 'channel_id' => $this->channel->id, 'sample_key' => 'closeup', 'topic_id' => $topic->id,
+            'hook' => 'cũ', 'type' => 'photo', 'status' => 'published', 'source' => SocialPost::SOURCE_PLAN, 'scheduled_at' => now()->subDays(20),
+            'title' => 'cũ', 'content' => '', 'hashtags' => [], 'platforms' => ['tiktok'], 'idempotency_key' => 'old-del',
+        ]);
+        $planId = $this->api('GET', "channels/{$this->channel->id}/context")->json('data.plan.id');
+        $this->assertSame([0], $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->unboxing(0, $refs, ['topic_id' => $topic->id]),
+        ]])->json('data.accepted'));
+        $base = "/api/v1/creator/channels/{$this->channel->id}";
+        $item = $this->actingAs($this->shop)->getJson("{$base}/plans/{$planId}")->assertOk()->json('data.items.0');
+        $this->assertSame('Đi làm', $item['topic']);
+
+        // Kênh của shop khác -> 404
+        $this->actingAs($this->creator())->deleteJson("{$base}/topics/{$topic->id}")->assertNotFound();
+
+        $this->actingAs($this->shop)->deleteJson("{$base}/topics/{$topic->id}")->assertNoContent();
+        $this->assertNull(ChannelTopic::query()->find($topic->id));
+        $this->assertNotNull($other->fresh());
+        // Bài đăng / bài kế hoạch giữ nguyên, chủ đề không xác định
+        $this->assertNull($old->fresh()->topic_id);
+        $this->actingAs($this->shop)->getJson("{$base}/plans/{$planId}")->assertOk()->assertJsonPath('data.items.0.topic', null);
+
+        // Chủ shop sửa bài kế hoạch không chọn chủ đề: vẫn lưu được, chủ đề vẫn không xác định
+        $this->actingAs($this->shop)->putJson("{$base}/plans/{$planId}/items/{$item['id']}", [
+            'sample_key' => 'closeup', 'hook' => 'Hook mới', 'title' => 'Tiêu đề mới', 'hashtags' => [],
+            'images' => [['ref' => $refs[0], 'text' => 'Đập hộp'], ['ref' => $refs[1]]],
+        ])->assertOk()->assertJsonPath('data.topic', null)->assertJsonPath('data.hook', 'Hook mới');
+
+        // Duyệt kỳ: bài đăng tạo ra không có chủ đề
+        $this->actingAs($this->shop)->postJson("{$base}/plans/{$planId}/approve")->assertOk();
+        $this->assertNull(SocialPost::query()->where('plan_item_id', $item['id'])->sole()->topic_id);
+    }
+
     public function test_topic_can_repeat_after_14_days(): void
     {
         $this->approveLineup(['closeup']);

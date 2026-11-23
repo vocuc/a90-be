@@ -154,6 +154,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             // Xây dựng chủ đề tự động: tạo việc cho worker lập chủ đề (a90-fe note/xay-kenh-tiktok/worker-lap-chu-de.txt)
             Route::post('channels/{channel}/topic-jobs', [ChannelContentController::class, 'startTopicJob'])->whereNumber('channel');
             Route::put('channels/{channel}/topics/{topic}', [ChannelContentController::class, 'updateTopic'])->whereNumber(['channel', 'topic']);
+            // Xoá chủ đề (kể cả đã có bài): bài đăng / bài kế hoạch của chủ đề thành "không xác định" (topic_id null)
+            Route::delete('channels/{channel}/topics/{topic}', [ChannelContentController::class, 'destroyTopic'])->whereNumber(['channel', 'topic']);
             Route::put('channel-posts/{post}/overlays', [ChannelContentController::class, 'updateOverlays'])->whereNumber('post');
             Route::post('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');
             Route::delete('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');

@@ -681,7 +681,8 @@ class ChannelPlanTest extends TestCase
             'name' => 'Không ghép được', 'hashtags' => ['giay'],
             'images' => [['file' => UploadedFile::fake()->image('q.png', 32, 32), 'field_key' => 'khac']],
         ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
-        $this->actingAs($this->shop)->postJson('/api/v1/creator/creative-groups', ['name' => 'Studio', 'creative_ids' => [$creative->id]])->assertCreated();
+        $groupId = $this->actingAs($this->shop)->postJson('/api/v1/creator/creative-groups', ['name' => 'Studio', 'creative_ids' => [$creative->id]])
+            ->assertCreated()->json('data.id');
         $this->app['auth']->forgetGuards();
 
         $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'unboxing', 'percent' => 100]]])->assertCreated();
@@ -701,6 +702,15 @@ class ChannelPlanTest extends TestCase
         $this->assertStringContainsString('worker tạo ảnh', implode(' ', $rejected[0]['errors']));
         [$imageWorker] = Worker::register('anh-'.Str::random(4), Worker::TYPE_IMAGE);
         $imageWorker->users()->attach($this->shop->id);
+
+        // Nhóm Creative riêng của kênh khác: không dùng cho kênh này
+        \App\Models\CreativeGroup::query()->whereKey($groupId)->update(['channel_id' => $this->channelFor($this->shop)->id]);
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$base, 'slot_index' => 0, 'product_batch' => ['product_id' => $productId]],
+        ]])->assertOk()->json('data.rejected');
+        $this->assertStringContainsString('dùng cho kênh này', implode(' ', $rejected[0]['errors']));
+        // Nhóm riêng của chính kênh này thì dùng được
+        \App\Models\CreativeGroup::query()->whereKey($groupId)->update(['channel_id' => $this->channel->id]);
 
         $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
             [...$base, 'slot_index' => 0, 'product_batch' => ['product_id' => $productId]],
