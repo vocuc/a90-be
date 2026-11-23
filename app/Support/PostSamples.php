@@ -13,15 +13,12 @@ namespace App\Support;
  */
 final class PostSamples
 {
+    /** Nhóm theo cách sản xuất (người dùng chốt 2026-11-23): bài ra video -> video (kể cả dựng từ ảnh phối đồ); bài có
+     * ảnh phối đồ (kể cả lai ảnh sản phẩm) -> outfit; còn lại -> product. Mục đích bài xem field goal. */
     public const GROUPS = [
-        'showcase' => 'Trưng bày hàng',
-        'compare' => 'So sánh, chọn lựa',
         'outfit' => 'Phối đồ',
-        'story' => 'Kể chuyện, cảm xúc',
-        'tips' => 'Hữu ích, tư vấn',
-        'gift' => 'Gợi ý theo người nhận',
-        'series' => 'Chuỗi bài',
-        'promo' => 'Ưu đãi',
+        'product' => 'Ảnh sản phẩm',
+        'video' => 'Video',
     ];
 
     public const GOALS = ['reach', 'engagement', 'save', 'sale', 'trust'];
@@ -129,19 +126,19 @@ final class PostSamples
         $both = ['photo', 'video'];
 
         return [
-            // ---- Trưng bày hàng ----
+            // ---- Trưng bày hàng (nhóm product; video_type_01 nhóm video) ----
             // Kiểu bài ảnh chủ shop hay đăng (người dùng chốt 2026-11-21, giữ key unboxing): KHÔNG chọn ảnh có sẵn; bài kế
             // hoạch chỉ ghi 1 sản phẩm, duyệt kỳ -> A51 tạo LÔ TỰ ĐỘNG mới (sản phẩm x 1 nhóm Creative, mỗi Creative 1 ảnh)
             // làm ảnh của bài, ảnh KHÔNG chữ. a90-fe note/xay-kenh-tiktok/bai-viet-mau/unboxing.txt
-            self::sample('unboxing', 'Đập hộp', 'showcase', 'sale', $photo, 1, \App\Models\SocialPost::MAX_IMAGES, [
+            self::sample('unboxing', 'Đập hộp', 'product', 'sale', $photo, 1, \App\Models\SocialPost::MAX_IMAGES, [
                 self::rule('each', 'product', false, 'Ảnh lô tự động của sản phẩm (mỗi Creative trong nhóm 1 ảnh), không chữ'),
             ], true, 'Không chọn ảnh có sẵn, không chữ trên ảnh. Chọn 1 sản phẩm hợp chủ đề (kehoach.py products theo tag chủ đề, ưu tiên used thấp / lâu chưa dùng) -> product_batch.product_id; duyệt kỳ A51 tạo lô tự động (sản phẩm x 1 nhóm Creative) làm ảnh. KHÔNG viết hook: chỉ viết tiêu đề, A51 lấy tiêu đề làm hook (không trùng tiêu đề + sản phẩm bài khác). Tiêu đề nêu dịp / tình huống của chủ đề + điểm nổi bật của đôi giày (theo nhãn + tag), giọng chân dung khách hàng.', self::SOURCE_PRODUCT_BATCH),
-            self::sample('closeup', 'Soi cận cảnh', 'showcase', 'trust', $photo, 2, 4, [
+            self::sample('closeup', 'Soi cận cảnh', 'product', 'trust', $photo, 2, 4, [
                 self::rule('first', 'product', true, 'Toàn cảnh + hook "Soi kỹ trước khi mua"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 chi tiết: đường may, đế, lót, logo'),
             ], true, 'Chứng minh chất lượng. Chữ mỗi slide nêu đúng 1 chi tiết, ngắn (<= 8 từ).'),
             // new_arrival (Hàng mới về): đã bỏ 2026-11-22 (người dùng chốt), chưa từng có bài / tuyến dùng
-            self::sample('color_options', '1 mẫu nhiều màu', 'showcase', 'sale', $photo, 2, 6, [
+            self::sample('color_options', '1 mẫu nhiều màu', 'product', 'sale', $photo, 2, 6, [
                 self::rule('first', 'product', true, 'Hook "Bạn chọn màu nào?"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 màu của cùng kiểu, chữ = tên màu'),
             ], false, 'Dùng khi có nhiều ảnh cùng kiểu khác màu. Kéo comment chọn màu.'),
@@ -150,28 +147,28 @@ final class PostSamples
             // phẩm hợp chủ đề (product_id), A51 chọn video template đang bật (ngẫu nhiên trong các template sản phẩm đủ ảnh) +
             // ảnh của sản phẩm (ít dùng cho video trước, mới trước) như nút "Tạo video"; worker đăng bài dựng video từ ảnh rồi
             // đăng. a90-fe note/xay-kenh-tiktok/bai-viet-mau/video_type_01.txt
-            self::sample('video_type_01', 'Video - Type 01', 'showcase', 'sale', ['video'], 1, \App\Models\SocialPost::MAX_IMAGES, [
+            self::sample('video_type_01', 'Video - Type 01', 'video', 'sale', ['video'], 1, \App\Models\SocialPost::MAX_IMAGES, [
                 self::rule('each', 'product', false, 'Ảnh của 1 sản phẩm, A51 chọn theo video template, không chữ'),
             ], true, 'Chỉ dùng cho slot VIDEO. Không chọn ảnh, không chọn template: gửi product_id = 1 sản phẩm hợp chủ đề (kehoach.py products theo tag chủ đề, ưu tiên used thấp / lâu chưa dùng); A51 tự chọn video template + ảnh của sản phẩm, worker đăng bài dựng video rồi đăng. KHÔNG viết hook: chỉ viết tiêu đề, A51 lấy tiêu đề làm hook. Tiêu đề nêu dịp / tình huống + điểm nổi bật của đôi giày.', self::SOURCE_PRODUCT_VIDEO),
 
-            // ---- So sánh, chọn lựa ----
-            self::sample('this_or_that', 'A hay B', 'compare', 'engagement', $photo, 2, 3, [
+            // ---- So sánh, chọn lựa (nhóm product) ----
+            self::sample('this_or_that', 'A hay B', 'product', 'engagement', $photo, 2, 3, [
                 self::rule('first', 'product', true, 'Đôi A + câu hỏi "... chọn A hay B?"'),
                 self::rule('each', 'product', true, 'Chữ "A: ..." / "B: ..." mô tả ngắn'),
             ], false, '2 đôi khác kiểu cùng tầm giá / cùng màu để khó chọn. Hook theo tình huống (đi làm, hẹn hò, dịp lễ).'),
             // Bìa GHÉP (người dùng chốt 2026-11-21): lệnh chỉ gửi N ảnh #1..#N, CONTENT-WORKER dựng thêm bìa ghép các ảnh
             // đó + in hook (A51 không dựng). a90-fe note/xay-kenh-tiktok/bai-viet-mau/top_n.txt
-            [...self::sample('top_n', 'Top N', 'compare', 'save', $photo, 5, 8, [
+            [...self::sample('top_n', 'Top N', 'product', 'save', $photo, 5, 8, [
                 self::rule('first', 'product', true, 'Bìa GHÉP 4 ảnh đầu (N = 4-5) hoặc 6 ảnh đầu (N >= 6), content-worker dựng + hook "Top N đôi ..."'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 mẫu, chữ "#1 ...", "#2 ..." + lý do ngắn'),
             ], false, 'Danh sách xếp hạng theo 1 tiêu chí (đi chúc Tết, đi làm cả ngày, đi chơi...). Hook = "Top N đôi ..." với N = số ảnh gửi. CHỈ gửi N ảnh sản phẩm của N mẫu KHÁC NHAU (4-7, #1 trước), KHÔNG gửi ảnh bìa: content-worker tự dựng bìa ghép 4 ảnh đầu (N = 4-5) hoặc 6 ảnh đầu (N >= 6) + in hook. Chữ ảnh thứ k bắt đầu "#k " rồi kiểu giày + lý do 2-4 từ ("#1 Cao gót mũi nhọn, sang chảnh"). Không nêu giá nếu Yêu cầu kênh không có. Caption kiểu "Bạn chốt số mấy? Lưu lại để sắm".'),
                 'cover_collage' => true],
-            self::sample('which_suits_you', 'Bạn hợp đôi nào', 'compare', 'engagement', $photo, 3, 6, [
+            self::sample('which_suits_you', 'Bạn hợp đôi nào', 'product', 'engagement', $photo, 3, 6, [
                 self::rule('first', 'any', true, 'Hook "Bạn hợp đôi nào theo ...?"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 nhóm (phong cách / tính cách / cung) + 1 đôi'),
             ], false, 'Gắn giày với phong cách / tính cách. Người xem tag bạn bè, comment nhóm của mình.'),
 
-            // ---- Phối đồ ----
+            // ---- Phối đồ (nhóm outfit) ----
             // Ảnh lấy bằng LÔ PHỐI ĐỒ mới (người dùng chốt 2026-11-21): bài kế hoạch ghi số ảnh, duyệt kỳ -> tạo lô phối đồ,
             // worker phối đồ chạy như luồng hiện tại (ảnh 1 = bìa có hook do worker đặt, ảnh 2..N = outfit có "Outfit N")
             self::sample('lookbook', 'Phối đồ', 'outfit', 'save', $photo, 3, 9, [
@@ -195,56 +192,56 @@ final class PostSamples
             ], false, 'Không chọn ảnh có sẵn. Hook = "N ngày ... mặc gì?" (Tết, tuần đi làm, chuyến du lịch), in lên bìa. outfit.count = tổng số ảnh lô (gồm 1 bìa); outfit.labels = đúng outfit.count - 1 nhãn theo thứ tự ngày, dạng "<Ngày>: <mô tả 2-4 từ>" ("Mùng 1: Đi chúc Tết", "Thứ 2: Họp đầu tuần"; mô tả theo dịp, không tả món vì worker chọn outfit theo hashtag), tối đa '.self::LABEL_MAX.' ký tự, không emoji; outfit.tags = 1-5 hashtag chủ đề tìm outfit trên OOTD; outfit.product_id tuỳ chọn. Caption kiểu "Lưu lại kẻo ... đứng trước tủ đồ".', 'outfit_batch'),
                 'outfit_labels' => true],
 
-            // ---- Kể chuyện ----
-            self::sample('pov', 'POV', 'story', 'reach', $photo, 2, 3, [
+            // ---- Kể chuyện (nhóm product; before_after nhóm outfit) ----
+            self::sample('pov', 'POV', 'product', 'reach', $photo, 2, 3, [
                 self::rule('first', 'any', true, 'Câu "POV: ..." hài, dễ đồng cảm'),
                 self::rule('last', 'product', true, 'Lộ ra đôi giày + câu chốt vui'),
             ], false, 'Câu POV là trọng tâm, viết như người thật nói. Không quảng cáo lộ liễu ở slide đầu.'),
-            self::sample('meme_types', 'Meme "N kiểu người"', 'story', 'reach', $photo, 3, 5, [
+            self::sample('meme_types', 'Meme "N kiểu người"', 'product', 'reach', $photo, 3, 5, [
                 self::rule('first', 'any', true, 'Hook "Khách mua giày có N loại"'),
                 self::rule('each', 'any', true, 'Mỗi slide 1 kiểu người + 1 đôi giày hợp'),
             ], false, 'Hài nhẹ nhàng, không chê khách. Người xem tag bạn bè.'),
-            self::sample('before_after', 'Trước / sau', 'story', 'reach', $photo, 2, 4, [
+            self::sample('before_after', 'Trước / sau', 'outfit', 'reach', $photo, 2, 4, [
                 self::rule('first', 'any', true, '"Trước khi có đôi này..."'),
                 self::rule('last', 'outfit', true, '"...và sau khi có" (outfit đẹp)'),
             ], false, 'Đối lập rõ: trước (bình thường / lúng túng) và sau (xinh, tự tin).'),
 
-            // ---- Hữu ích ----
-            self::sample('size_guide', 'Chọn size', 'tips', 'trust', $photo, 2, 4, [
+            // ---- Hữu ích (nhóm product) ----
+            self::sample('size_guide', 'Chọn size', 'product', 'trust', $photo, 2, 4, [
                 self::rule('first', 'product', true, 'Hook "Mua giày online sợ sai size?"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 mẹo ngắn chọn size'),
             ], false, 'Mẹo thực tế, ngắn gọn. Chữ trên ảnh tối đa 2 dòng mỗi slide.'),
-            self::sample('care_tips', 'Bảo quản / mẹo', 'tips', 'save', $photo, 2, 5, [
+            self::sample('care_tips', 'Bảo quản / mẹo', 'product', 'save', $photo, 2, 5, [
                 self::rule('first', 'product', true, 'Hook mẹo (đi cao gót không đau, giữ giày trắng...)'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 mẹo'),
             ], false, 'Nội dung đáng lưu lại. Mỗi slide đúng 1 mẹo.'),
-            self::sample('faq', 'Hỏi đáp', 'tips', 'trust', $photo, 2, 5, [
+            self::sample('faq', 'Hỏi đáp', 'product', 'trust', $photo, 2, 5, [
                 self::rule('first', 'product', true, 'Câu hỏi khách hay hỏi'),
                 self::rule('each', 'product', true, 'Câu trả lời ngắn'),
             ], false, 'Lấy câu hỏi thật hay gặp (ship, đổi size, chất liệu). Trả lời thẳng.'),
 
-            // ---- Gợi ý theo người nhận ----
-            self::sample('gift_by_receiver', 'Quà theo người nhận', 'gift', 'sale', $photo, 3, 6, [
+            // ---- Gợi ý theo người nhận (nhóm product) ----
+            self::sample('gift_by_receiver', 'Quà theo người nhận', 'product', 'sale', $photo, 3, 6, [
                 self::rule('first', 'product', true, 'Hook "Hết đau đầu chọn quà ..."'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 người nhận: "Tặng mẹ: ...", "Tặng bạn thân: ..."'),
             ], false, 'Gắn mỗi đôi với 1 người nhận hợp tuổi / phong cách. Hợp mùa lễ, Tết, 8/3, 20/10.'),
-            self::sample('by_budget', 'Theo mức giá', 'gift', 'sale', $photo, 3, 6, [
+            self::sample('by_budget', 'Theo mức giá', 'product', 'sale', $photo, 3, 6, [
                 self::rule('first', 'product', true, 'Hook "Giày xinh dưới ...k"'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 mẫu trong tầm giá'),
             ], false, 'Chỉ dùng khi chân dung khách hàng có mức giá. Không bịa giá cụ thể nếu không có.'),
 
-            // ---- Chuỗi bài ----
-            self::sample('daily_drop', 'Mỗi ngày 1 mẫu / đếm ngược', 'series', 'engagement', $both, 1, 3, [
+            // ---- Chuỗi bài (nhóm video) ----
+            self::sample('daily_drop', 'Mỗi ngày 1 mẫu / đếm ngược', 'video', 'engagement', $both, 1, 3, [
                 self::rule('first', 'product', true, '"Còn N ngày nữa là ..." hoặc "Mẫu hôm nay"'),
                 self::rule('each', 'product', false, 'Góc khác của mẫu hôm nay'),
             ], true, 'Bài nối tiếp mỗi ngày, đếm ngược tới dịp lễ gần nhất trong kỳ. Số ngày phải đúng với ngày đăng.'),
-            self::sample('numbered', 'Đánh số tập', 'series', 'engagement', $both, 1, 4, [
+            self::sample('numbered', 'Đánh số tập', 'video', 'engagement', $both, 1, 4, [
                 self::rule('first', 'any', true, '"Outfit số N" / "Tập N: ..."'),
                 self::rule('each', 'any', false, ''),
             ], false, 'Số tập tăng dần theo các bài numbered trước của kênh.'),
 
-            // ---- Ưu đãi ----
-            self::sample('sale', 'Ưu đãi', 'promo', 'sale', $photo, 1, 4, [
+            // ---- Ưu đãi (nhóm product) ----
+            self::sample('sale', 'Ưu đãi', 'product', 'sale', $photo, 1, 4, [
                 self::rule('first', 'product', true, 'Hook ưu đãi / số lượng có hạn'),
                 self::rule('each', 'product', true, 'Mẫu + lợi ích ngắn'),
             ], false, 'Không bịa mức giảm giá cụ thể nếu Yêu cầu của kênh không nêu. Dùng ít (tỉ lệ thấp).'),
