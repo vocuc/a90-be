@@ -65,7 +65,8 @@ return [
     |
     */
 
-    'timezone' => 'UTC',
+    // Giờ Việt Nam (UTC+7): khung giờ đăng của kênh (time_slots "HH:MM") là giờ VN nên mọi tính giờ theo múi này
+    'timezone' => 'Asia/Ho_Chi_Minh',
 
     /*
     |--------------------------------------------------------------------------

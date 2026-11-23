@@ -60,9 +60,9 @@ class ChannelRedistributeTest extends TestCase
         $plan = $this->channel->plans()->create([
             'start_date' => '2026-11-21', 'days' => 1, 'status' => ContentPlan::APPROVED,
             'slots' => [
-                ['index' => 0, 'at' => '2026-11-21T11:30:00+00:00', 'format' => 'photo'],
-                ['index' => 1, 'at' => '2026-11-21T19:30:00+00:00', 'format' => 'photo'],
-                ['index' => 2, 'at' => '2026-11-21T21:00:00+00:00', 'format' => 'photo'],
+                ['index' => 0, 'at' => '2026-11-21T11:30:00+07:00', 'format' => 'photo'],
+                ['index' => 1, 'at' => '2026-11-21T19:30:00+07:00', 'format' => 'photo'],
+                ['index' => 2, 'at' => '2026-11-21T21:00:00+07:00', 'format' => 'photo'],
             ],
         ]);
         $draft = $this->item($plan, 0, '2026-11-21 11:30', ContentPlanItem::DRAFT);
@@ -109,7 +109,7 @@ class ChannelRedistributeTest extends TestCase
         $this->travelTo(CarbonImmutable::parse('2026-11-20 17:50:00'));
         $plan = $this->channel->plans()->create([
             'start_date' => '2026-11-20', 'days' => 1, 'status' => ContentPlan::APPROVED,
-            'slots' => [['index' => 0, 'at' => '2026-11-20T21:00:00+00:00', 'format' => 'photo']],
+            'slots' => [['index' => 0, 'at' => '2026-11-20T21:00:00+07:00', 'format' => 'photo']],
         ]);
         $late = $this->makePost('2026-11-20 21:00');
         $this->item($plan, 0, '2026-11-20 21:00', ContentPlanItem::POSTED, $late);
