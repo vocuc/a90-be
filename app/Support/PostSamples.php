@@ -130,7 +130,7 @@ final class PostSamples
             // Kiểu bài ảnh chủ shop hay đăng (người dùng chốt 2026-11-21, giữ key unboxing): KHÔNG chọn ảnh có sẵn; bài kế
             // hoạch chỉ ghi 1 sản phẩm, duyệt kỳ -> A51 tạo LÔ TỰ ĐỘNG mới (sản phẩm x 1 nhóm Creative, mỗi Creative 1 ảnh)
             // làm ảnh của bài, ảnh KHÔNG chữ. a90-fe note/xay-kenh-tiktok/bai-viet-mau/unboxing.txt
-            self::sample('unboxing', 'Đập hộp', 'product', 'sale', $photo, 1, \App\Models\SocialPost::MAX_IMAGES, [
+            self::sample('unboxing', 'Unbox - basic', 'product', 'sale', $photo, 1, \App\Models\SocialPost::MAX_IMAGES, [
                 self::rule('each', 'product', false, 'Ảnh lô tự động của sản phẩm (mỗi Creative trong nhóm 1 ảnh), không chữ'),
             ], true, 'Không chọn ảnh có sẵn, không chữ trên ảnh. Chọn 1 sản phẩm hợp chủ đề (kehoach.py products theo tag chủ đề, ưu tiên used thấp / lâu chưa dùng) -> product_batch.product_id; duyệt kỳ A51 tạo lô tự động (sản phẩm x 1 nhóm Creative) làm ảnh. KHÔNG viết hook: chỉ viết tiêu đề, A51 lấy tiêu đề làm hook (không trùng tiêu đề + sản phẩm bài khác). Tiêu đề nêu dịp / tình huống của chủ đề + điểm nổi bật của đôi giày (theo nhãn + tag), giọng chân dung khách hàng.', self::SOURCE_PRODUCT_BATCH),
             self::sample('closeup', 'Soi cận cảnh', 'product', 'trust', $photo, 2, 4, [
@@ -171,7 +171,7 @@ final class PostSamples
             // ---- Phối đồ (nhóm outfit) ----
             // Ảnh lấy bằng LÔ PHỐI ĐỒ mới (người dùng chốt 2026-11-21): bài kế hoạch ghi số ảnh, duyệt kỳ -> tạo lô phối đồ,
             // worker phối đồ chạy như luồng hiện tại (ảnh 1 = bìa có hook do worker đặt, ảnh 2..N = outfit có "Outfit N")
-            self::sample('lookbook', 'Phối đồ', 'outfit', 'save', $photo, 3, 9, [
+            self::sample('lookbook', 'Outfit - basic', 'outfit', 'save', $photo, 3, 9, [
                 self::rule('first', 'outfit', false, 'Ảnh bìa lô phối đồ: worker in đúng hook (chủ đề) của bài lên bìa'),
                 self::rule('each', 'outfit', false, 'Ảnh outfit của lô, đã in sẵn "Outfit N"'),
             ], false, 'Không chọn ảnh có sẵn. Gửi hook = CHỦ ĐỀ cả lô (in lên bìa, worker không tạo hook khác), outfit.tags = 1-5 hashtag chủ đề để worker tìm outfit trên OOTD (vd henho, sangchanh, tet), outfit.count = tổng số ảnh lô (gồm 1 bìa), outfit.product_id nếu muốn lô gắn 1 sản phẩm. Caption: kết bằng câu hỏi "Bạn chọn outfit số mấy?".', 'outfit_batch'),
