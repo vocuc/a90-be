@@ -31,7 +31,7 @@ final class PostSamples
      * Làm xong 1 bài (a90-fe note/xay-kenh-tiktok/bai-viet-mau/<key>.txt "ĐÃ LÀM") thì thêm key vào đây.
      * config ai90.post_samples_enabled ghi đè (vd test: ['*'] = bật hết).
      */
-    public const READY = ['top_n', 'lookbook', 'outfit_by_day', 'one_shoe_many_looks', 'unboxing', 'video_type_01'];
+    public const READY = ['top_n', 'shoe_by_outfit', 'lookbook', 'outfit_by_day', 'one_shoe_many_looks', 'unboxing', 'video_type_01'];
 
     /** @return array<string, array> key => bài viết mẫu (cả bài chưa bật), có cờ enabled */
     public static function all(): array
@@ -162,6 +162,14 @@ final class PostSamples
                 self::rule('first', 'product', true, 'Bìa GHÉP 4 ảnh đầu (N = 4-5) hoặc 6 ảnh đầu (N >= 6), content-worker dựng + hook "Top N đôi ..."'),
                 self::rule('each', 'product', true, 'Mỗi slide 1 mẫu, chữ "#1 ...", "#2 ..." + lý do ngắn'),
             ], false, 'Danh sách xếp hạng theo 1 tiêu chí (đi chúc Tết, đi làm cả ngày, đi chơi...). Hook = "Top N đôi ..." với N = số ảnh gửi. CHỈ gửi N ảnh sản phẩm của N mẫu KHÁC NHAU (4-7, #1 trước), KHÔNG gửi ảnh bìa: content-worker tự dựng bìa ghép 4 ảnh đầu (N = 4-5) hoặc 6 ảnh đầu (N >= 6) + in hook. Chữ ảnh thứ k bắt đầu "#k " rồi kiểu giày + lý do 2-4 từ ("#1 Cao gót mũi nhọn, sang chảnh"). Không nêu giá nếu Yêu cầu kênh không có. Caption kiểu "Bạn chốt số mấy? Lưu lại để sắm".'),
+                'cover_collage' => true],
+            // Chọn giày theo trang phục (người dùng chốt 2026-11-24, a90-fe note/xay-kenh-tiktok/bai-viet-mau/shoe_by_outfit.txt):
+            // lệnh gửi 3-6 ảnh giày (mỗi ảnh 1 sản phẩm khác nhau) + chữ "<trang phục> → <loại giày>, <lý do>"; CONTENT-WORKER
+            // dựng bìa theo mẫu bìa OOTD "05 · Tạp chí" (ảnh đầu + hook) và in chữ từng slide
+            [...self::sample('shoe_by_outfit', 'Chọn giày theo trang phục', 'product', 'save', $photo, 4, 7, [
+                self::rule('first', 'product', true, 'Bìa: content-worker dựng theo mẫu bìa "05 · Tạp chí" (ảnh giày đầu + hook)'),
+                self::rule('each', 'product', true, 'Mỗi slide 1 trang phục + 1 đôi giày shop: "<trang phục>: <loại giày>, <lý do>"'),
+            ], false, 'Hướng dẫn chọn giày theo trang phục. CHỈ gửi 3-6 ảnh giày của 3-6 sản phẩm KHÁC NHAU (thường khác loại giày), KHÔNG gửi ảnh bìa: content-worker tự dựng bìa từ ảnh đầu + hook. Mỗi ảnh có chữ "<trang phục>: <loại giày>, <lý do 2-5 từ>" (vd "Váy maxi: sandal quai mảnh, nhẹ chân"; không dùng mũi tên), trang phục mỗi slide khác nhau, <= 45 ký tự, không emoji. Hook hướng dẫn chung, không nêu màu / tên đôi cụ thể (vd "Mặc gì đi giày gì? Lưu lại kẻo quên"; cụm trong *...* tô hồng, không bắt buộc). Caption kiểu "Bạn hay mặc kiểu nào nhất? Lưu lại để phối".'),
                 'cover_collage' => true],
             self::sample('which_suits_you', 'Bạn hợp đôi nào', 'product', 'engagement', $photo, 3, 6, [
                 self::rule('first', 'any', true, 'Hook "Bạn hợp đôi nào theo ...?"'),

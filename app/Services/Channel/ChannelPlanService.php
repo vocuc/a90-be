@@ -774,7 +774,9 @@ class ChannelPlanService
             $errors[] = "Bài viết mẫu \"{$sampleKey}\" cần mọi ảnh cùng 1 sản phẩm.";
         }
         if ($collage && $format === ContentPlanItem::FORMAT_PHOTO) {
-            $this->validateRanking($hook, $parsed, $groupKeys, $errors);
+            $sampleKey === 'shoe_by_outfit'
+                ? $this->validateShoeByOutfit($parsed, $groupKeys, $errors)
+                : $this->validateRanking($hook, $parsed, $groupKeys, $errors);
         }
         if ($format === ContentPlanItem::FORMAT_PHOTO && ContentJobService::needsBuild($sampleKey, $hasText)
             && ! ContentJobService::hasWorker($channel->user_id)) {
@@ -979,6 +981,23 @@ class ChannelPlanService
         }
         if (count(array_unique($groupKeys)) < count($groupKeys)) {
             $errors[] = 'Top N cần mỗi ảnh là 1 mẫu KHÁC NHAU.';
+        }
+    }
+
+    /** Chọn giày theo trang phục: mỗi ảnh có chữ "<trang phục>: <loại giày>", mỗi ảnh 1 sản phẩm khác nhau, chữ không trùng. */
+    private function validateShoeByOutfit(array $parsed, array $groupKeys, array &$errors): void
+    {
+        foreach ($parsed as $i => $p) {
+            if ($p['text'] === null) {
+                $errors[] = 'Ảnh #'.($i + 1).': cần chữ "<trang phục>: <loại giày>, <lý do>" (vd "Váy maxi: sandal quai mảnh, nhẹ chân").';
+            }
+        }
+        if (count(array_unique($groupKeys)) < count($groupKeys)) {
+            $errors[] = 'Chọn giày theo trang phục cần mỗi ảnh là 1 sản phẩm KHÁC NHAU.';
+        }
+        $texts = array_filter(array_map(fn ($p) => mb_strtolower((string) $p['text']), $parsed));
+        if (count(array_unique($texts)) < count($texts)) {
+            $errors[] = 'Chữ các ảnh không được trùng nhau (mỗi slide 1 trang phục khác).';
         }
     }
 

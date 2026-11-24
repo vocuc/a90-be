@@ -745,7 +745,7 @@ class ChannelPlanTest extends TestCase
         $samples = collect($this->actingAs($this->shop)->getJson('/api/v1/creator/channels/post-samples')->assertOk()->json('data'))->keyBy('key');
         $this->assertTrue($samples['lookbook']['enabled']);
         $this->assertFalse($samples['closeup']['enabled']);
-        $this->assertSame(['top_n', 'lookbook', 'one_shoe_many_looks', 'outfit_by_day'], \App\Models\ChannelTextTemplate::sampleKeyOptions());
+        $this->assertSame(['top_n', 'shoe_by_outfit', 'lookbook', 'one_shoe_many_looks', 'outfit_by_day'], \App\Models\ChannelTextTemplate::sampleKeyOptions());
     }
 
     public function test_unboxing_creates_auto_batch_on_approve(): void
@@ -846,6 +846,47 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(SocialPostStatus::Queued, $post->status);
         $this->assertNull($post->last_error);
         $this->assertSame('Tiêu đề mới', $post->title);
+    }
+
+    public function test_shoe_by_outfit_sends_shoes_with_outfit_text_and_content_worker_adds_cover(): void
+    {
+        // Chọn giày theo trang phục (2026-11-24): 3-6 ảnh giày khác sản phẩm, mỗi ảnh chữ "<trang phục> → <giày>"; bìa do
+        // content-worker thêm (mẫu bìa 05 · Tạp chí)
+        $refs = [...$this->images(1), ...$this->images(1), ...$this->images(1)];
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'shoe_by_outfit', 'percent' => 100]]])->assertCreated();
+        $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
+        $this->api('POST', "channels/{$this->channel->id}/text-templates", ['templates' => [[...$this->templateBody(), 'sample_keys' => ['shoe_by_outfit']]]])->assertCreated();
+        $this->channel->textTemplates()->update(['status' => 'approved']);
+        $planId = $this->context()['plan']['id'];
+        $with = fn (array $texts, ?array $r = null) => array_map(fn ($ref, $t) => ['ref' => $ref, 'text' => $t], $r ?? array_slice($refs, 0, count($texts)), $texts);
+        $item = ['slot_index' => 0, 'sample_key' => 'shoe_by_outfit', 'topic' => ['name' => 'Chủ đề slot 0'], 'hook' => 'Mặc gì đi giày gì?',
+            'images' => $with(['Váy maxi → sandal quai mảnh', 'Quần ống rộng → mule mũi nhọn', 'Đầm tiệc → cao gót mũi nhọn']),
+            'title' => 'Bạn hay mặc kiểu nào nhất?', 'hashtags' => ['tet2027']];
+
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$item, 'slot_index' => 1, 'hook' => 'Thiếu chữ', 'images' => $with(['Váy maxi → sandal', null, 'Đầm → cao gót'])],
+            [...$item, 'slot_index' => 2, 'hook' => 'Trùng chữ', 'images' => $with(['Váy → sandal', 'váy → sandal', 'Đầm → cao gót'])],
+            [...$item, 'slot_index' => 3, 'hook' => 'Ít ảnh', 'images' => $with(['Váy → sandal', 'Đầm → cao gót'])],
+        ]])->json('data.rejected');
+        $this->assertStringContainsString('Ảnh #2: cần chữ', implode(' ', $rejected[0]['errors']));
+        $this->assertStringContainsString('không được trùng', implode(' ', $rejected[1]['errors']));
+        $this->assertStringContainsString('3-6 ảnh', implode(' ', $rejected[2]['errors']));
+
+        $r = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$item]])->assertOk();
+        $this->assertSame([0], $r->json('data.accepted'), json_encode($r->json('data.rejected'), JSON_UNESCAPED_UNICODE));
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
+        $this->assertSame(3, $post->images()->count());
+
+        $this->app['auth']->forgetGuards();
+        $job = $this->withToken($this->contentToken)->getJson('/api/v1/worker-jobs')->assertOk()
+            ->assertJsonPath('data.request.sample_key', 'shoe_by_outfit')
+            ->assertJsonPath('data.request.cover_collage', true)->json('data');
+        $this->assertSame('Quần ống rộng → mule mũi nhọn', $job['request']['images'][1]['text']);
+        $this->withToken($this->contentToken)->post("/api/v1/worker-jobs/{$job['id']}", ['status' => 'completed',
+            'files' => array_map(fn ($i) => UploadedFile::fake()->image("s{$i}.jpg", 30, 40), range(1, 4))], ['Accept' => 'application/json'])->assertOk();
+        $this->assertSame(4, $post->fresh()->images()->count());
+        $this->assertSame(SocialPostStatus::Queued, $post->fresh()->status);
     }
 
     public function test_top_n_gets_collage_cover_from_content_worker(): void
