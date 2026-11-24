@@ -187,7 +187,7 @@ final class PostSamples
             // cùng loại giày với sản phẩm (tags.kieu), vẽ bằng Google Flow với ĐÚNG đôi giày của ảnh sản phẩm, không chữ. Lô
             // KHÔNG có ảnh bìa: ảnh outfit xong -> CONTENT-WORKER dựng bìa = 1 ảnh lịch sử tạo ảnh của sản phẩm + hook in phía
             // trên kiểu bìa tạp chí (cover_collage: thêm bìa ở đầu). a90-fe note/xay-kenh-tiktok/bai-viet-mau/one_shoe_many_looks.txt
-            [...self::sample('one_shoe_many_looks', 'Outfit - theo sản phẩm', 'outfit', 'save', $photo, 3, 6, [
+            [...self::sample('one_shoe_many_looks', 'Outfit - theo sản phẩm', 'outfit', 'save', $photo, 4, 6, [
                 self::rule('first', 'product', false, 'Bìa: content-worker lấy 1 ảnh lịch sử tạo ảnh của sản phẩm, in hook theo mẫu bìa OOTD "05 · Tạp chí"'),
                 self::rule('each', 'outfit', false, 'Ảnh outfit mang ĐÚNG đôi giày sản phẩm (Flow vẽ), không chữ'),
             ], true, 'Không chọn ảnh có sẵn. BẮT BUỘC outfit.product_id = 1 sản phẩm đã có tag kieu (loại giày, chạy /gan-tag-san-pham nếu thiếu). Hook kiểu HƯỚNG DẪN PHỐI ĐỒ THEO LOẠI GIÀY: nêu loại giày của sản phẩm (cao gót, sneaker, sandal, dép quai...), KHÔNG nêu màu / tên / hãng đôi cụ thể, ~45 ký tự, vd "Cao gót mặc gì cho sang?", "Mix đồ với dép quai: *4 cách* đi chơi" (cụm trong *...* tô hồng, không bắt buộc); content-worker in lên bìa (ảnh lịch sử tạo ảnh của sản phẩm) theo mẫu bìa "05 · Tạp chí": nhãn "LOOK CỦA TUẦN", tiêu đề chữ có chân căn trái, dòng phụ "N cách phối • kéo sang xem →". outfit.count = tổng số ảnh lô (gồm 1 bìa); outfit.tags = 1-5 hashtag chủ đề tìm outfit trên OOTD (worker lọc thêm outfit cùng loại giày với sản phẩm). Caption kết bằng "Bạn thích kiểu số mấy?".', 'outfit_batch'),
