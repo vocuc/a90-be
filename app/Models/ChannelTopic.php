@@ -26,16 +26,18 @@ class ChannelTopic extends Model
      * Nhóm chủ đề tạo sẵn khi kênh chưa có nhóm nào (người dùng chốt 2026-11-24). Nhóm do chủ shop quản lý (bảng
      * channel_topic_categories); chủ đề không thuộc nhóm nào hiện ở "Khác".
      */
-    public const DEFAULT_CATEGORIES = ['Sự kiện', 'Đi làm', 'Du lịch', 'Hằng ngày'];
+    public const DEFAULT_CATEGORIES = ['Sự kiện', 'Theo mùa', 'Đi làm', 'Du lịch', 'Hằng ngày'];
 
     public const OTHER_CATEGORY = 'Khác';
 
-    /** Từ khoá đoán nhóm (tên nhóm mặc định) khi chủ đề tạo mà không chọn nhóm. */
+    /** Từ khoá đoán nhóm (tên nhóm mặc định) khi chủ đề tạo mà không chọn nhóm; thứ tự = ưu tiên khi khớp nhiều nhóm. */
     private const CATEGORY_WORDS = [
         'Sự kiện' => ['tết', 'tiệc', 'valentine', 'noel', 'giáng sinh', 'trung thu', '8/3', '20/10', '20/11', '14/2', 'cưới', 'sinh nhật',
             'lễ', 'mùng', 'du xuân', 'chơi xuân', 'kỷ niệm', 'black friday', 'sale', 'cuối năm', 'tất niên', 'halloween', 'tốt nghiệp'],
         'Đi làm' => ['đi làm', 'công sở', 'văn phòng', 'phỏng vấn', 'họp', 'đi học'],
         'Du lịch' => ['du lịch', 'đà lạt', 'biển', 'phượt', 'nghỉ dưỡng', 'sapa', 'hội an', 'phú quốc', 'vali', 'chuyến đi'],
+        // Sau Du lịch ("Đi biển mùa hè" -> Du lịch), trước Hằng ngày
+        'Theo mùa' => ['mùa', 'trời lạnh', 'se lạnh', 'rét', 'nắng nóng', 'trời nóng', 'trời mưa', 'ngày mưa', 'thu đông', 'xuân hè'],
         'Hằng ngày' => ['hằng ngày', 'hàng ngày', 'đi chơi', 'cafe', 'cà phê', 'dạo phố', 'hẹn hò', 'cuối tuần', 'mua sắm', 'ở nhà'],
     ];
 

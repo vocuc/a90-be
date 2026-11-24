@@ -774,9 +774,7 @@ class ChannelPlanService
             $errors[] = "Bài viết mẫu \"{$sampleKey}\" cần mọi ảnh cùng 1 sản phẩm.";
         }
         if ($collage && $format === ContentPlanItem::FORMAT_PHOTO) {
-            $sampleKey === 'shoe_by_outfit'
-                ? $this->validateShoeByOutfit($parsed, $groupKeys, $errors)
-                : $this->validateRanking($hook, $parsed, $groupKeys, $errors);
+            $this->validateRanking($hook, $parsed, $groupKeys, $errors);
         }
         if ($format === ContentPlanItem::FORMAT_PHOTO && ContentJobService::needsBuild($sampleKey, $hasText)
             && ! ContentJobService::hasWorker($channel->user_id)) {
@@ -984,23 +982,6 @@ class ChannelPlanService
         }
     }
 
-    /** Chọn giày theo trang phục: mỗi ảnh có chữ "<trang phục>: <loại giày>", mỗi ảnh 1 sản phẩm khác nhau, chữ không trùng. */
-    private function validateShoeByOutfit(array $parsed, array $groupKeys, array &$errors): void
-    {
-        foreach ($parsed as $i => $p) {
-            if ($p['text'] === null) {
-                $errors[] = 'Ảnh #'.($i + 1).': cần chữ "<trang phục>: <loại giày>, <lý do>" (vd "Váy maxi: sandal quai mảnh, nhẹ chân").';
-            }
-        }
-        if (count(array_unique($groupKeys)) < count($groupKeys)) {
-            $errors[] = 'Chọn giày theo trang phục cần mỗi ảnh là 1 sản phẩm KHÁC NHAU.';
-        }
-        $texts = array_filter(array_map(fn ($p) => mb_strtolower((string) $p['text']), $parsed));
-        if (count(array_unique($texts)) < count($texts)) {
-            $errors[] = 'Chữ các ảnh không được trùng nhau (mỗi slide 1 trang phục khác).';
-        }
-    }
-
     /** Nhãn ngày của ảnh outfit: đúng $need nhãn, bỏ emoji / khoảng trắng thừa, mỗi nhãn 1..LABEL_MAX ký tự, không trùng. */
     private function validateLabels(mixed $raw, int $need, array &$errors): array
     {
@@ -1036,7 +1017,8 @@ class ChannelPlanService
 
     public static function signature(string $sampleKey, string $hook, array $outputIds): string
     {
-        return $sampleKey.'|'.mb_strtolower(trim($hook)).'|'.implode(',', $outputIds);
+        // Gộp khoảng trắng / xuống dòng: hook bìa lô phối đồ có xuống dòng planner ngắt sẵn (2026-11-24) vẫn tính trùng như không ngắt
+        return $sampleKey.'|'.mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', $hook))).'|'.implode(',', $outputIds);
     }
 
     /** Chữ ký 1 bài kế hoạch: bài lô ảnh sản phẩm (chưa có ảnh) tính theo sản phẩm, còn lại theo bộ ảnh. */

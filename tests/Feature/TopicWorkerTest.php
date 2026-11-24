@@ -65,7 +65,7 @@ class TopicWorkerTest extends TestCase
         $this->assertSame(5, $job['request']['count']);
         $this->assertSame('Tập trung Tết', $job['request']['note']);
         $this->assertSame('Đi làm', $job['request']['existing_topics'][0]['name']);
-        $this->assertSame(['Sự kiện', 'Đi làm', 'Du lịch', 'Hằng ngày'], $job['request']['categories']);
+        $this->assertSame(['Sự kiện', 'Theo mùa', 'Đi làm', 'Du lịch', 'Hằng ngày'], $job['request']['categories']);
         $this->assertSame(1, $job['request']['product_tags']['counts']['kieu']['giaycaogot']);
         $this->assertNotEmpty($job['request']['holidays']);
         $this->worker($token, 'GET', '')->assertNoContent();

@@ -220,8 +220,8 @@ class ProductTagTopicTest extends TestCase
         // Nhóm chủ đề (chủ shop quản lý, 2026-11-24): kênh có sẵn 4 nhóm mặc định; không gửi nhóm -> đoán theo tên ("Tết" -> Sự kiện)
         $base = "/api/v1/creator/channels/{$this->channel->id}";
         $tab = $this->actingAs($this->shop)->getJson("{$base}/topics")->assertOk()->json('data');
-        $this->assertSame(['Sự kiện', 'Đi làm', 'Du lịch', 'Hằng ngày'], array_column($tab['categories'], 'name'));
-        [$event, $work] = $tab['categories'];
+        $this->assertSame(['Sự kiện', 'Theo mùa', 'Đi làm', 'Du lịch', 'Hằng ngày'], array_column($tab['categories'], 'name'));
+        [$event, , $work] = $tab['categories'];
         $this->assertSame($event['id'], $topic->fresh()->category_id);
         $this->assertSame('Sự kiện', $tab['topics'][0]['category']);
         $this->assertSame(1, $tab['categories'][0]['topics']);
