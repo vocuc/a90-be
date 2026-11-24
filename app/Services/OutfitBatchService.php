@@ -77,12 +77,12 @@ class OutfitBatchService
     /**
      * $lockedHook / $outfitTags (bài kế hoạch lookbook, 2026-11-21): lô có sẵn tiêu đề = hook, hook_locked = true, worker
      * không tạo hook mới và tìm outfit theo $outfitTags. $textTemplateId: template chữ của kênh để worker in hook lên ảnh bìa.
-     * $outfitLabels (bài outfit_by_day): nhãn ngày in lên từng ảnh outfit thay "Outfit N" (phần tử i = ảnh vị trí i + 2).
+     * $outfitLabels (outfit.texts của bài, 2026-11-24): chữ in lên từng ảnh outfit theo thứ tự ("" = không chữ).
      * $outfitMode (bài one_shoe_many_looks): ImageBatch::OUTFIT_MODE_PRODUCT -> worker chọn outfit cùng loại giày, vẽ bằng Flow.
      */
     public function create(User $user, int $count, int $images, bool $insertLogo, string $idempotencyKey, int $workerId,
         ?array $productIds = null, bool $useProduct = true, ?string $lockedHook = null, array $outfitTags = [],
-        ?int $textTemplateId = null, ?array $outfitLabels = null, ?string $outfitMode = null): array
+        ?int $textTemplateId = null, ?array $outfitLabels = null, ?string $outfitMode = null, ?array $imageProductIds = null): array
     {
         $lock = Cache::lock("outfit-batch:{$user->id}", 120);
         $lock->block(30);
@@ -101,9 +101,13 @@ class OutfitBatchService
                 $products = collect(array_fill(0, min($count, self::MAX_COUNT), null));
             }
             $creative = $this->systemCreative($user);
+            // Bài "Outfit - theo sản phẩm" (2026-11-24): mỗi ảnh outfit 1 sản phẩm KHÁC NHAU ($imageProductIds theo thứ tự ảnh)
+            $imageProducts = $imageProductIds
+                ? Product::query()->with('images')->whereKey($imageProductIds)->get()->keyBy('id')
+                : collect();
             $created = [];
             foreach ($products->values() as $n => $product) {
-                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags, $textTemplateId, $outfitLabels, $outfitMode) {
+                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags, $textTemplateId, $outfitLabels, $outfitMode, $imageProductIds, $imageProducts) {
                     $batch = ImageBatch::query()->create([
                         'user_id' => $user->id,
                         'idempotency_key' => "outfit:{$idempotencyKey}:{$n}",
@@ -117,8 +121,9 @@ class OutfitBatchService
                     // content-worker dựng khi ảnh outfit xong (ảnh lịch sử sản phẩm + hook kiểu bìa tạp chí)
                     $noCover = $product && $outfitMode === ImageBatch::OUTFIT_MODE_PRODUCT;
                     for ($pos = 1; $pos <= ($noCover ? $images - 1 : $images); $pos++) {
+                        $own = $noCover && $imageProductIds ? $imageProducts->get((int) ($imageProductIds[$pos - 1] ?? 0)) : null;
                         $generation = $this->newGeneration($user, $creative, $pos === 1 && ! $noCover ? Generation::KIND_OUTFIT_COVER : Generation::KIND_OUTFIT,
-                            $paths, $product?->id, $workerId, $insertLogo, "outfit:{$batch->id}:{$pos}");
+                            $own ? $own->images->pluck('path', 'field_key')->all() : $paths, $own?->id ?? $product?->id, $workerId, $insertLogo, "outfit:{$batch->id}:{$pos}");
                         $batch->images()->create([
                             'generation_id' => $generation->id,
                             'output_id' => $generation->outputs->first()->id,

@@ -136,7 +136,7 @@ class ChannelPlanService
             'product_tags' => $this->productTags->counts($channel->user),
             // Giá trị tag dùng được khi lọc sản phẩm: lệnh tự chọn tag theo ghi chú chủ đề (chủ đề không còn bộ lọc tag)
             'tag_options' => ProductTags::options(),
-            // Chủ đề đang bật của kênh {name, note} + số bài / lần dùng gần nhất theo loại bài (mọi bài cần chủ đề)
+            // Chủ đề đang bật của kênh {name, note} + số bài / lần dùng gần nhất theo loại bài (chủ đề tuỳ chọn: bài không gửi chủ đề = không chủ đề, 2026-11-24)
             'topics' => $this->topics->listFor($channel, true),
             'topic_repeat_days' => ChannelTopic::REPEAT_DAYS,
             'video_templates' => VideoTemplate::query()->where('user_id', $channel->user_id)->usable()->orderBy('name')
@@ -854,8 +854,8 @@ class ChannelPlanService
      * Bài lấy ảnh bằng lô phối đồ: outfit.count = tổng số ảnh của lô (gồm 1 bìa), trong khoảng slide của bài viết mẫu và
      * giới hạn lô phối đồ; outfit.product_id (không bắt buộc) = sản phẩm đang hoạt động có ảnh của shop. Shop phải được
      * gắn worker phối đồ. Chỉ bài ảnh, A51 không chèn chữ: worker phối đồ in hook lên ảnh bìa theo text_template_id của bài.
-     * Bài viết mẫu có 'outfit_labels' (outfit_by_day): outfit.labels = đúng count - 1 nhãn ngày, worker in lên ảnh outfit
-     * thay "Outfit N".
+     * outfit.texts (tuỳ chọn, mọi bài lô phối đồ, 2026-11-24; tên cũ outfit.labels): đúng count - 1 chữ theo thứ tự ảnh
+     * outfit, "" = ảnh không chữ; worker in theo template chữ.
      *
      * @return array{count: int, product_id: ?int, tags: string[], labels?: string[]}
      */
@@ -887,17 +887,38 @@ class ChannelPlanService
         $outfit = ['count' => $count, 'product_id' => $productId ?: null, 'tags' => $tags];
         // Bài "Outfit - theo sản phẩm" (one_shoe_many_looks): bắt buộc 1 sản phẩm có tag kieu (hashtag loại giày dùng chung
         // với OOTD, ProductTags::SHOE_TYPES) để worker chọn outfit cùng loại giày và Flow vẽ đúng đôi giày đó
+        // (2026-11-24 sửa lại) mỗi ảnh outfit 1 sản phẩm KHÁC NHAU: outfit.product_ids = 4-6 sản phẩm theo thứ tự slide, mỗi
+        // sản phẩm có tag kieu; outfit.count = số sản phẩm + 1 (bìa do content-worker dựng từ sản phẩm đầu)
         if (($sample['outfit_mode'] ?? null) === ImageBatch::OUTFIT_MODE_PRODUCT) {
             $outfit['mode'] = ImageBatch::OUTFIT_MODE_PRODUCT;
-            $kieu = $productId ? (Product::query()->whereKey($productId)->value('tags')['kieu'] ?? null) : null;
-            if (! $productId) {
-                $errors[] = 'Bài này bắt buộc outfit.product_id (đôi giày được phối).';
-            } elseif (! ProductTags::shoeMatch($kieu)) {
-                $errors[] = "Sản phẩm {$productId} chưa có tag kieu (loại giày): chạy /gan-tag-san-pham hoặc chọn sản phẩm khác.";
+            $ids = collect(is_array($raw['outfit']['product_ids'] ?? null) ? $raw['outfit']['product_ids'] : [])
+                ->map(fn ($id) => (int) $id)->filter()->values()->all();
+            if (count($ids) < self::PRODUCT_LOOKS_MIN || count($ids) > self::PRODUCT_LOOKS_MAX) {
+                $errors[] = 'Bài này cần outfit.product_ids = '.self::PRODUCT_LOOKS_MIN.'-'.self::PRODUCT_LOOKS_MAX.' sản phẩm (mỗi ảnh outfit 1 sản phẩm).';
+            } elseif (count(array_unique($ids)) !== count($ids)) {
+                $errors[] = 'outfit.product_ids không được trùng sản phẩm.';
+            } elseif ($count !== count($ids) + 1) {
+                $errors[] = 'outfit.count phải = số sản phẩm + 1 (bìa) = '.(count($ids) + 1).'.';
+            } else {
+                $products = Product::query()->where('user_id', $channel->user_id)->active()->whereHas('images')->whereKey($ids)
+                    ->get(['id', 'tags'])->keyBy('id');
+                foreach ($ids as $id) {
+                    if (! $products->has($id)) {
+                        $errors[] = "Sản phẩm {$id} không phải sản phẩm đang hoạt động (có ảnh) của shop.";
+                    } elseif (! ProductTags::shoeMatch($products[$id]->tags['kieu'] ?? null)) {
+                        $errors[] = "Sản phẩm {$id} chưa có tag kieu (loại giày): chạy /gan-tag-san-pham hoặc chọn sản phẩm khác.";
+                    }
+                }
             }
+            $outfit['product_ids'] = $ids;
+            $outfit['product_id'] = $ids[0] ?? null;
         }
-        if ($sample['outfit_labels'] ?? false) {
-            $outfit['labels'] = $this->validateLabels($raw['outfit']['labels'] ?? null, $count - 1, $errors);
+        $texts = $raw['outfit']['texts'] ?? $raw['outfit']['labels'] ?? null;
+        if ($texts !== null) {
+            $texts = $this->validateTexts($texts, $count - 1, $errors);
+            if (array_filter($texts, fn ($t) => $t !== '')) {
+                $outfit['labels'] = $texts;
+            }
         }
 
         return $outfit;
@@ -982,30 +1003,36 @@ class ChannelPlanService
         }
     }
 
-    /** Nhãn ngày của ảnh outfit: đúng $need nhãn, bỏ emoji / khoảng trắng thừa, mỗi nhãn 1..LABEL_MAX ký tự, không trùng. */
-    private function validateLabels(mixed $raw, int $need, array &$errors): array
+    /** Chữ từng ảnh outfit: đúng $need phần tử, bỏ emoji / khoảng trắng thừa, mỗi chữ 0..LABEL_MAX ký tự ("" = không chữ), không trùng. */
+    private function validateTexts(mixed $raw, int $need, array &$errors): array
     {
         $labels = collect(is_array($raw) ? array_values($raw) : [])
             ->map(fn ($l) => trim(preg_replace(['/[\x{1F000}-\x{1FFFF}\x{2600}-\x{27BF}\x{FE0F}\x{200D}]/u', '/\s+/u'], ['', ' '], (string) $l)))
             ->all();
         if (count($labels) !== $need) {
-            $errors[] = "outfit.labels cần đúng {$need} nhãn ngày (= outfit.count - 1, mỗi ảnh outfit 1 nhãn), đang có ".count($labels).'.';
+            $errors[] = "outfit.texts cần đúng {$need} phần tử (= outfit.count - 1, mỗi ảnh outfit 1 chữ, rỗng = không chữ), đang có ".count($labels).'.';
 
             return $labels;
         }
         foreach ($labels as $i => $label) {
-            if ($label === '' || mb_strlen($label) > PostSamples::LABEL_MAX) {
-                $errors[] = 'outfit.labels #'.($i + 1).' phải có 1-'.PostSamples::LABEL_MAX.' ký tự (không emoji).';
+            if (mb_strlen($label) > PostSamples::LABEL_MAX) {
+                $errors[] = 'outfit.texts #'.($i + 1).' tối đa '.PostSamples::LABEL_MAX.' ký tự (không emoji).';
             }
         }
-        if (count(array_unique(array_map('mb_strtolower', $labels))) !== count($labels)) {
-            $errors[] = 'outfit.labels không được trùng nhau.';
+        $filled = array_filter($labels, fn ($l) => $l !== '');
+        if (count(array_unique(array_map('mb_strtolower', $filled))) !== count($filled)) {
+            $errors[] = 'outfit.texts không được trùng nhau.';
         }
 
         return $labels;
     }
 
     public const OUTFIT_TAGS_MAX = 5;
+
+    /** Bài "Outfit - theo sản phẩm": số sản phẩm (= số ảnh outfit) mỗi bài. */
+    public const PRODUCT_LOOKS_MIN = 4;
+
+    public const PRODUCT_LOOKS_MAX = 6;
 
     /** Như Hashtag::normalize của OOTD: "Đi tiệc" -> "ditiec". */
     public static function ootdTag(string $tag): string
@@ -1168,7 +1195,7 @@ class ChannelPlanService
         $productId = ! empty($outfit['product_id']) ? (int) $outfit['product_id'] : null;
         $batches = $this->outfitBatches->create($user, 1, (int) $outfit['count'], (bool) $user->logoPath(), $key, $workerId,
             $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? [], $textTemplateId, $outfit['labels'] ?? null,
-            $outfit['mode'] ?? null);
+            $outfit['mode'] ?? null, $outfit['product_ids'] ?? null);
 
         return $batches[0] ?? throw new BusinessException('OUTFIT_NO_PRODUCT', 'Không tạo được lô phối đồ.', 422);
     }

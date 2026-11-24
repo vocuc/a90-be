@@ -325,6 +325,14 @@ class WorkerJobController extends Controller
         return ['id' => $first->id, 'url' => $media->url($first->image_path)];
     }
 
+    /** Ảnh outfit thứ mấy của lô (lô theo sản phẩm không có bìa trong lô: vị trí 1 = outfit 1) + chữ in lên ảnh đó. */
+    private function outfitText(?ImageBatch $batch, int $position): array
+    {
+        $index = $position - ($batch?->outfit_mode === ImageBatch::OUTFIT_MODE_PRODUCT ? 1 : 2);
+
+        return ['outfit_index' => max(1, $index + 1), 'text' => $index >= 0 ? (string) ($batch?->outfit_labels[$index] ?? '') : ''];
+    }
+
     private function batchInfo(ImageBatchImage $image): array
     {
         $batch = ImageBatch::query()->find($image->image_batch_id, ['id', 'title', 'hook_locked', 'outfit_tags', 'outfit_labels', 'outfit_mode', 'text_template_id']);
@@ -340,9 +348,10 @@ class WorkerJobController extends Controller
             // outfit_tags: hashtag chủ đề để tìm outfit trên OOTD (a90-fe note/xay-kenh-tiktok/bai-viet-mau/lookbook.txt)
             'hook_locked' => (bool) $batch?->hook_locked,
             'outfit_tags' => $batch?->outfit_tags ?? [],
-            // Bài outfit_by_day: nhãn ngày in lên ảnh outfit thay "Outfit N" (phần tử 0 = ảnh vị trí 2), worker in theo
-            // text_template; rỗng = lô thường (note/xay-kenh-tiktok/bai-viet-mau/outfit_by_day.txt)
+            // Chữ từng ảnh outfit (outfit.texts của bài, 2026-11-24): phần tử 0 = ảnh outfit đầu tiên; worker in theo
+            // text_template. outfit_index = thứ tự ảnh outfit (1..), text = chữ của ảnh này ("" = không chữ)
             'outfit_labels' => $batch?->outfit_labels ?? [],
+            ...$this->outfitText($batch, $image->position),
             // 'product' (bài "Outfit - theo sản phẩm", 2026-11-24): chọn outfit OOTD cùng loại giày với product.shoe_type, vẽ
             // bằng Google Flow (ảnh sản phẩm + ảnh gốc outfit), giày đúng theo ảnh sản phẩm; null = lô thường (ChatGPT)
             'outfit_mode' => $batch?->outfit_mode,

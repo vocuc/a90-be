@@ -25,7 +25,7 @@ class ChannelTopicService
 
     /**
      * Kiểm tra chủ đề của 1 bài (không ghi DB). Trả {id: ?int (null = chủ đề mới), name, note} hoặc null nếu lỗi.
-     * $raw[NO_TOPIC]: trả {id: null, name: null, note: null} = không xác định.
+     * $raw[NO_TOPIC] hoặc không gửi chủ đề (chủ đề tuỳ chọn, 2026-11-24): trả {id: null, name: null, note: null} = không chủ đề.
      */
     public function check(Channel $channel, array $raw, string $sampleKey, CarbonImmutable $at, array &$errors,
         ?int $exceptPostId = null, ?int $exceptItemId = null): ?array
@@ -57,9 +57,8 @@ class ChannelTopicService
                 return null;
             }
         } else {
-            $errors[] = 'Bài cần chủ đề có sẵn của kênh: topic_id (hoặc topic {name} trùng tên chủ đề có sẵn).';
-
-            return null;
+            // Chủ đề TUỲ CHỌN (người dùng chốt 2026-11-24): không gửi topic_id / topic -> bài không chủ đề (topic_id null)
+            return ['id' => null, 'name' => null, 'note' => null];
         }
 
         if ($topic->status !== ChannelTopic::ACTIVE) {

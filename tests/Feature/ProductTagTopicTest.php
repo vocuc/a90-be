@@ -197,7 +197,7 @@ class ProductTagTopicTest extends TestCase
 
     // ---- Chủ đề ----
 
-    public function test_every_item_needs_topic_and_topic_repeat_is_blocked_for_14_days(): void
+    public function test_topic_is_optional_and_topic_repeat_is_blocked_for_14_days(): void
     {
         $this->approveLineup(['closeup', 'this_or_that']);
         $refs = $this->images(null, 4);
@@ -247,17 +247,17 @@ class ProductTagTopicTest extends TestCase
 
         $byName = ['topic' => ['name' => 'Đi chúc Tết']];
         $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
-            $this->unboxing(0, $refs, []),                           // thiếu chủ đề
+            $this->unboxing(0, [$refs[1], $refs[0]], ['topic' => ['name' => 'Chủ đề AI tự nghĩ', 'tags' => ['dip' => ['tet']]]]),
+            $this->unboxing(0, $refs, []),                           // không chủ đề: được (chủ đề tuỳ chọn, 2026-11-24)
             $this->unboxing(1, $refs, ['topic_id' => $topic->id]),
             $this->unboxing(2, [$refs[2], $refs[3]], $byName),        // cùng chủ đề + cùng loại bài -> lặp
             [...$this->unboxing(3, [$refs[2], $refs[3]], $byName), 'sample_key' => 'this_or_that', 'hook' => 'Đi chúc Tết chọn A hay B?'],
-            $this->unboxing(0, [$refs[1], $refs[0]], ['topic' => ['name' => 'Chủ đề AI tự nghĩ', 'tags' => ['dip' => ['tet']]]]),
         ]])->assertOk()->json('data');
-        $this->assertSame([1, 3], $res['accepted']);
+        $this->assertSame([0, 1, 3], $res['accepted']);
         $errors = collect($res['rejected'])->pluck('errors')->map(fn ($e) => implode(' ', $e))->all();
-        $this->assertStringContainsString('Bài cần chủ đề', $errors[0]);
+        $this->assertStringContainsString('TOPIC_NOT_FOUND', $errors[0]);
         $this->assertStringContainsString('TOPIC_REPEATED', $errors[1]);
-        $this->assertStringContainsString('TOPIC_NOT_FOUND', $errors[2]);
+        $this->assertSame(1, SocialPost::query()->whereNull('topic_id')->count(), 'Bài không chủ đề');
         $this->assertSame(1, ChannelTopic::query()->count(), 'Lệnh không tự tạo chủ đề');
 
         // Kỳ được tự duyệt -> bài đăng có topic_id; context đếm bài theo loại bài
