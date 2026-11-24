@@ -54,6 +54,9 @@ class ChannelPlanService
     /** Không lập slot quá gần hiện tại (phút). */
     public const LEAD_MINUTES = 30;
 
+    /** Bước dò giờ trống khi "Tạo bổ sung" (phút). */
+    public const FILL_STEP_MINUTES = 5;
+
     /** Tỉ lệ thực tế lệch tuyến quá số điểm % này thì cảnh báo. */
     public const LINEUP_TOLERANCE = 15;
 
@@ -204,6 +207,9 @@ class ChannelPlanService
         $windows = collect($channel->time_slots ?? [])->sortBy('start')->values();
         $perDay = (int) $channel->posts_per_day;
         $missing = [];
+        // Bài còn thiếu mà không xếp được giờ: noRoom = khung giờ hết chỗ, past = ngày / khung đã qua giờ
+        $noRoom = 0;
+        $past = 0;
         $start = CarbonImmutable::parse($plan->start_date->toDateString(), $tz);
         for ($d = 0; $d < $plan->days; $d++) {
             $day = $start->addDays($d);
@@ -234,26 +240,44 @@ class ChannelPlanService
                     $need--;
                 }
             }
-            // 2. Giờ mới: giữa mỗi phần của khung giờ hiện tại (chia posts_per_day vào các khung như computeSlots)
-            if ($need > 0 && $windows->isNotEmpty()) {
-                $per = array_fill(0, $windows->count(), intdiv($perDay, $windows->count()));
-                for ($i = 0; $i < $perDay % $windows->count(); $i++) {
-                    $per[$i]++;
+            // 2. Giờ mới trong khung giờ hiện tại: dò mọi giờ (bước FILL_STEP_MINUTES), mỗi lần lấy giờ XA bài gần nhất nhất
+            // (rải đều vào chỗ trống). Trước đây chỉ thử vài điểm cố định giữa khung nên tăng số bài / ngày (vd 15 -> 20) thì
+            // điểm nào cũng sát bài cũ < MIN_GAP_MINUTES -> không bổ sung được bài nào (người dùng báo 2026-11-25).
+            $candidates = [];
+            foreach ($windows as $window) {
+                $from = $day->setTimeFromTimeString($window['start'])->second(0);
+                $to = $day->setTimeFromTimeString($window['end']);
+                for ($at = $from; $at->lte($to); $at = $at->addMinutes(self::FILL_STEP_MINUTES)) {
+                    $candidates[] = $at;
                 }
-                foreach ($windows as $w => $window) {
-                    $from = $day->setTimeFromTimeString($window['start']);
-                    $to = $day->setTimeFromTimeString($window['end']);
-                    $count = max(1, $per[$w]);
-                    $segment = intdiv(max(0, (int) $from->diffInMinutes($to)), $count);
-                    for ($k = 0; $k < $count && $need > 0; $k++) {
-                        $at = $from->addMinutes($segment * $k + intdiv($segment, 2))->second(0);
-                        if ($fits($at)) {
-                            $missing[] = ['index' => $nextIndex++, 'at' => $at->toIso8601String(), 'format' => ContentPlanItem::FORMAT_PHOTO];
-                            $taken[] = $at;
-                            $need--;
-                        }
+            }
+            while ($need > 0) {
+                $best = null;
+                $bestGap = -1;
+                foreach ($candidates as $at) {
+                    if (! $fits($at)) {
+                        continue;
+                    }
+                    $gap = PHP_INT_MAX;
+                    foreach ($taken as $t) {
+                        $gap = min($gap, abs((int) $t->diffInMinutes($at, false)));
+                    }
+                    if ($gap > $bestGap) {
+                        [$best, $bestGap] = [$at, $gap];
                     }
                 }
+                if (! $best) {
+                    // Còn giờ chưa qua trong khung mà vẫn không xếp được = khung giờ hết chỗ (cách nhau < MIN_GAP_MINUTES)
+                    if (collect($candidates)->contains(fn ($at) => $at->gt($after))) {
+                        $noRoom += $need;
+                    } else {
+                        $past += $need;
+                    }
+                    break;
+                }
+                $missing[] = ['index' => $nextIndex++, 'at' => $best->toIso8601String(), 'format' => ContentPlanItem::FORMAT_PHOTO];
+                $taken[] = $best;
+                $need--;
             }
         }
         // Tỉ lệ video theo cấu hình hiện tại: slot mới thành video cho đủ số video cả kỳ
@@ -270,7 +294,20 @@ class ChannelPlanService
             }
         }
 
-        return ['active' => $active->all(), 'missing' => collect($missing)->sortBy('at')->values()->all()];
+        return ['active' => $active->all(), 'missing' => collect($missing)->sortBy('at')->values()->all(),
+            'no_room' => $noRoom, 'past' => $past];
+    }
+
+    /** Lý do không bổ sung được bài nào cho kỳ (nút "Tạo bổ sung"): khung giờ hết chỗ hay đã qua giờ. */
+    public function fillBlockedReason(ContentPlan $plan): string
+    {
+        $fit = $this->fillPlanSlots($plan);
+        if ($fit['no_room'] > 0) {
+            return "Khung giờ đăng không còn chỗ cho thêm {$fit['no_room']} bài (các bài phải cách nhau tối thiểu "
+                .self::MIN_GAP_MINUTES.' phút). Vào tab Cấu hình mở rộng / thêm khung giờ rồi bấm lại.';
+        }
+
+        return 'Kỳ đã đủ bài (các slot còn lại đã qua giờ đăng), không cần bổ sung.';
     }
 
     /** Slot đã có bài đang dùng: bài chờ duyệt, hoặc đã thành bài đăng mà bài đăng còn. */

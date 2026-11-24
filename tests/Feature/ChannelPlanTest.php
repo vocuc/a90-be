@@ -345,6 +345,41 @@ class ChannelPlanTest extends TestCase
         $this->api('POST', "plan-items/{$item->id}/redo", $this->item(0, $refs, ['hook' => 'Hook nữa']))->assertStatus(409);
     }
 
+    public function test_fill_after_raising_posts_per_day_finds_free_times_or_says_no_room(): void
+    {
+        // Người dùng 2026-11-25: tăng số bài / ngày (15 -> 20) rồi "Tạo bổ sung" bị báo "đã qua giờ đăng" dù còn khung giờ
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->item(0, $refs), $this->item(1, $refs, ['hook' => 'Hook 1']),
+            $this->item(2, $refs, ['hook' => 'Hook 2']), $this->item(3, $refs, ['hook' => 'Hook 3']),
+        ]])->assertOk()->assertJsonPath('data.accepted', [0, 1, 2, 3]);
+        $plan = ContentPlan::query()->findOrFail($planId);
+        $service = app(ChannelPlanService::class);
+
+        // 2 -> 8 bài / ngày: thêm 6 bài mỗi ngày, mọi bài trong khung giờ và cách nhau >= MIN_GAP_MINUTES
+        $this->channel->update(['posts_per_day' => 8]);
+        $missing = $service->missingSlots($plan);
+        $this->assertCount(12, $missing);
+        $all = collect([...$plan->slots, ...$missing])->map(fn ($s) => CarbonImmutable::parse($s['at']))
+            ->groupBy(fn ($at) => $at->toDateString());
+        foreach ($all as $times) {
+            $sorted = $times->sort()->values();
+            for ($i = 1; $i < $sorted->count(); $i++) {
+                $this->assertGreaterThanOrEqual(ChannelPlanService::MIN_GAP_MINUTES, $sorted[$i - 1]->diffInMinutes($sorted[$i]));
+            }
+            foreach ($sorted as $at) {
+                $hm = $at->format('H:i');
+                $this->assertTrue(($hm >= '11:00' && $hm <= '13:00') || ($hm >= '19:00' && $hm <= '22:00'), "{$hm} trong khung giờ");
+            }
+        }
+
+        // Khung giờ chỉ 1 phút: không còn chỗ -> báo đúng lý do, không phải "đã qua giờ đăng"
+        $this->channel->update(['posts_per_day' => 20, 'time_slots' => [['start' => '23:00', 'end' => '23:01']]]);
+        $this->assertStringContainsString('Khung giờ đăng không còn chỗ', $service->fillBlockedReason($plan->fresh()));
+    }
+
     public function test_fill_missing_slots_of_approved_plan(): void
     {
         $refs = $this->images(2);

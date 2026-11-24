@@ -74,8 +74,10 @@ class PlanJobService
             if (! in_array($fill->status, [ContentPlan::DRAFT, ContentPlan::APPROVED], true)) {
                 throw new BusinessException('PLAN_CLOSED', 'Chỉ bổ sung được kỳ chờ duyệt hoặc đã duyệt.', 409);
             }
-            if (! app(ChannelPlanService::class)->missingSlots($fill)) {
-                throw new BusinessException('PLAN_FULL', 'Kỳ đã đủ bài (các slot còn lại đã qua giờ đăng), không cần bổ sung.', 409);
+            $plans = app(ChannelPlanService::class);
+            if (! $plans->missingSlots($fill)) {
+                // Báo đúng lý do: khung giờ hết chỗ (tăng số bài / ngày mà khung giờ hẹp) hay đã qua giờ đăng
+                throw new BusinessException('PLAN_FULL', $plans->fillBlockedReason($fill), 409);
             }
         } elseif ($channel->plans()->where('status', ContentPlan::DRAFT)->exists()) {
             throw new BusinessException('PLAN_DRAFT_PENDING', 'Kỳ trước đang chờ duyệt, duyệt hoặc huỷ kỳ đó rồi lập kỳ mới.', 409);
