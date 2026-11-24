@@ -18,9 +18,39 @@ class ProductTags
 
     public const LABEL_MAX = 60;
 
-    /** Trường 1 giá trị (enum). */
+    /**
+     * Hashtag LOẠI GIÀY dùng chung A51 + OOTD (người dùng chốt 2026-11-24): tag kieu của sản phẩm = 1 hashtag dưới đây; skill
+     * /tao-outfit đọc danh sách qua GET /api/v1/shoe-types để gắn hashtag giày cho outfit OOTD; worker phối đồ ghép outfit
+     * cùng hashtag trước, cùng nhóm sau. Chỉ quy định loại giày, KHÔNG quy định màu. Hashtag viết liền không dấu như
+     * Hashtag::normalize của OOTD. tag => [tên, nhóm, cùng nghĩa (hashtag cũ / kieu cũ: đọc được nhưng không gắn mới)].
+     */
+    public const SHOE_TYPES = [
+        'giaycaogot' => ['Cao gót', 'giaycaogot', ['caogot']],
+        'giayslingback' => ['Slingback', 'giaycaogot', ['slingback']],
+        'giaymule' => ['Mule', 'giaymule', ['mule']],
+        'giaysandal' => ['Sandal', 'giaysandal', ['sandal']],
+        'giaybet' => ['Giày bệt', 'giaybet', []],
+        'giaybupbe' => ['Búp bê', 'giaybet', ['bupbe']],
+        'giaymaryjane' => ['Mary Jane', 'giaybet', ['maryjane']],
+        'giayloafer' => ['Loafer', 'giaybet', ['loafer']],
+        'giaythethao' => ['Sneaker / thể thao', 'giaythethao', ['sneaker', 'giaysneaker', 'giaydeutrainer']],
+        'giayboot' => ['Boot', 'giayboot', ['boot']],
+        'bootcaoco' => ['Boot cao cổ', 'giayboot', []],
+        'bootlong' => ['Boot cổ dài', 'giayboot', []],
+        'bootdui' => ['Boot đùi', 'giayboot', []],
+        'bootdituyet' => ['Boot đi tuyết', 'giayboot', ['boottuyet']],
+        'giaydep' => ['Dép', 'giaydep', ['dep']],
+        'depquai' => ['Dép quai', 'giaydep', []],
+        'depkep' => ['Dép kẹp', 'giaydep', []],
+        'deplong' => ['Dép lông', 'giaydep', []],
+    ];
+
+    /** Trường 1 giá trị (enum). kieu = đúng các khoá của SHOE_TYPES (test kiểm tra). */
     public const SINGLE = [
-        'kieu' => ['cao_got', 'sandal', 'bup_be', 'mule', 'sneaker', 'boot', 'dep', 'slingback'],
+        'kieu' => [
+            'giaycaogot', 'giayslingback', 'giaymule', 'giaysandal', 'giaybet', 'giaybupbe', 'giaymaryjane', 'giayloafer',
+            'giaythethao', 'giayboot', 'bootcaoco', 'bootlong', 'bootdui', 'bootdituyet', 'giaydep', 'depquai', 'depkep', 'deplong',
+        ],
         'got' => ['bet', 'thap', 'vua', 'cao'],
     ];
 
@@ -29,24 +59,6 @@ class ProductTags
         'mau' => [null, 2],
         'phong_cach' => [['sang_chanh', 'nhe_nhang', 'tre_trung', 'ca_tinh', 'basic'], 3],
         'dip' => [['di_lam', 'di_tiec', 'tet', 'hen_ho', 'di_choi', 'cafe'], 4],
-        // Hashtag giày theo từ vựng OOTD (nhóm Giày của skill /tao-outfit: loại + thiết kế + màu), vd giaycaogot muinhon
-        // gotnhon dabong giayden. A51 chọn outfit OOTD cho bài "Outfit - theo sản phẩm" theo trường này (2026-11-24,
-        // a90-fe note/xay-kenh-tiktok/bai-viet-mau/one_shoe_many_looks.txt). Kiểm tra riêng ở cleanOotd.
-        self::OOTD => [null, self::OOTD_MAX],
-    ];
-
-    public const OOTD = 'ootd';
-
-    public const OOTD_MAX = 10;
-
-    /**
-     * Hashtag LOẠI giày của OOTD (skill /tao-outfit mục 5: Giày — loại + Giày thêm). Tag ootd của sản phẩm phải có ít nhất 1;
-     * outfit chỉ được chọn khi có chung ít nhất 1 loại giày với sản phẩm.
-     */
-    public const OOTD_SHOE_TYPES = [
-        'giaysneaker', 'giaychunky', 'giaycaogot', 'giaysandal', 'giaybupbe', 'giayloafer', 'giaydecao', 'giaymaryjane',
-        'giaymule', 'giayclog', 'giaykhoa', 'giaysuc', 'giaytabi', 'giayboot', 'guocgo', 'slingback', 'depquai', 'depkep', 'deplong',
-        'bootcaoco', 'bootcongan', 'bootlong', 'bootdui', 'bootcaoboi', 'bootcaosu', 'bootcombat', 'bootbiker', 'boottuyet',
     ];
 
     public const MAU_MAX = 20;
@@ -71,48 +83,59 @@ class ProductTags
         return [...array_keys(self::SINGLE), ...array_keys(self::MULTI)];
     }
 
-    /** Trường dùng để LỌC sản phẩm / đếm theo giá trị (bỏ ootd: hashtag tự do, chỉ để chọn outfit). */
-    public static function filterFields(): array
-    {
-        return array_values(array_diff(self::tagFields(), [self::OOTD]));
-    }
-
     /** Như Hashtag::normalize của OOTD: "Giày cao gót" / "#giay_cao-got" -> "giaycaogot". */
     public static function ootdTag(string $tag): string
     {
         return str_replace('_', '', self::slug($tag));
     }
 
-    /** Loại giày OOTD trong danh sách hashtag. @return string[] */
-    public static function ootdShoeTypes(array $tags): array
+    /** Hashtag bất kỳ ("Giày cao gót", "#sneaker", kieu cũ "cao_got") -> hashtag loại giày trong SHOE_TYPES | null. */
+    public static function shoeType(string $value): ?string
     {
-        return array_values(array_intersect($tags, self::OOTD_SHOE_TYPES));
+        $tag = self::ootdTag($value);
+        if (isset(self::SHOE_TYPES[$tag])) {
+            return $tag;
+        }
+        foreach (self::SHOE_TYPES as $key => [, , $same]) {
+            if (in_array($tag, $same, true)) {
+                return $key;
+            }
+        }
+
+        return null;
     }
 
     /**
-     * Tag ootd: chuẩn hoá dạng OOTD, bỏ trùng, 1..OOTD_MAX hashtag, mỗi hashtag 2-30 ký tự, có ít nhất 1 loại giày.
+     * Danh sách loại giày cho API GET /api/v1/shoe-types.
      *
-     * @return array{0: ?string[], 1: ?string} [danh sách | null = xoá, lỗi]
+     * @return array<int, array{tag: string, ten: string, nhom: string, cung_nghia: string[]}>
      */
-    public static function cleanOotd(mixed $value): array
+    public static function shoeTypes(): array
     {
-        $list = collect(is_array($value) ? $value : ($value === null || $value === '' ? [] : preg_split('/[\s,]+/', (string) $value)))
-            ->map(fn ($v) => self::ootdTag((string) $v))->filter()->unique()->values();
-        if ($list->isEmpty()) {
-            return [null, null];
-        }
-        $bad = $list->filter(fn ($v) => strlen($v) < 2 || strlen($v) > 30);
-        if ($bad->isNotEmpty()) {
-            return [null, 'ootd không hợp lệ: '.$bad->implode(', ').' (2-30 ký tự).'];
-        }
-        if ($list->count() > self::OOTD_MAX) {
-            return [null, 'ootd tối đa '.self::OOTD_MAX.' hashtag.'];
-        }
-        if (! self::ootdShoeTypes($list->all())) {
-            return [null, 'ootd cần ít nhất 1 hashtag loại giày của OOTD ('.implode(', ', self::OOTD_SHOE_TYPES).').'];
-        }
+        return collect(self::SHOE_TYPES)
+            ->map(fn ($t, $tag) => ['tag' => $tag, 'ten' => $t[0], 'nhom' => $t[1], 'cung_nghia' => $t[2]])->values()->all();
+    }
 
-        return [$list->all(), null];
+    /**
+     * Loại giày của sản phẩm cho worker phối đồ ghép outfit OOTD: cung_tag = hashtag + cùng nghĩa (ghép trước), cung_nhom =
+     * mọi hashtag (kể cả cùng nghĩa) cùng nhóm (ghép sau). null = không phải loại giày.
+     */
+    public static function shoeMatch(?string $tag): ?array
+    {
+        if (! $tag || ! isset(self::SHOE_TYPES[$tag])) {
+            return null;
+        }
+        [$name, $group, $same] = self::SHOE_TYPES[$tag];
+        $groupTags = collect(self::SHOE_TYPES)->filter(fn ($t) => $t[1] === $group)
+            ->flatMap(fn ($t, $k) => [$k, ...$t[2]])->values()->all();
+
+        return ['tag' => $tag, 'ten' => $name, 'nhom' => $group, 'cung_tag' => [$tag, ...$same], 'cung_nhom' => $groupTags];
+    }
+
+    /** Giá trị trường 1 giá trị đã chuẩn hoá: kieu -> hashtag loại giày (chữ lạ giữ nguyên để báo lỗi), got -> slug. */
+    private static function single(string $field, string $value): string
+    {
+        return $field === 'kieu' ? (self::shoeType($value) ?? self::ootdTag($value)) : self::slug($value);
     }
 
     /** Màu dạng chữ thường không dấu, liền bằng "_": "Đỏ đô" -> "do_do". */
@@ -132,11 +155,8 @@ class ProductTags
         $out = [];
         $errors = [];
         foreach ($tags as $field => $value) {
-            if ($field === self::OOTD) {
-                [$list, $error] = self::cleanOotd($value);
-                $error ? $errors[] = $error : $out[$field] = $list;
-            } elseif (isset(self::SINGLE[$field])) {
-                $v = is_string($value) ? self::slug($value) : null;
+            if (isset(self::SINGLE[$field])) {
+                $v = is_string($value) ? self::single($field, $value) : null;
                 if ($v === null || $v === '') {
                     $out[$field] = null;
                 } elseif (! in_array($v, self::SINGLE[$field], true)) {
@@ -179,14 +199,15 @@ class ProductTags
         $out = [];
         $errors = [];
         foreach ($filter as $field => $value) {
-            $allowed = $field === self::OOTD ? false : (self::SINGLE[$field] ?? (isset(self::MULTI[$field]) ? self::MULTI[$field][0] : false));
+            $allowed = self::SINGLE[$field] ?? (isset(self::MULTI[$field]) ? self::MULTI[$field][0] : false);
             if ($allowed === false) {
                 $errors[] = "Không có trường tag \"{$field}\".";
 
                 continue;
             }
             $list = collect(is_array($value) ? $value : explode(',', (string) $value))
-                ->map(fn ($v) => self::slug((string) $v))->filter()->unique()->values();
+                ->map(fn ($v) => isset(self::SINGLE[$field]) ? self::single($field, (string) $v) : self::slug((string) $v))
+                ->filter()->unique()->values();
             $bad = $allowed ? $list->reject(fn ($v) => in_array($v, $allowed, true)) : collect();
             if ($bad->isNotEmpty()) {
                 $errors[] = "{$field} không hợp lệ: ".$bad->implode(', ').' ('.implode(', ', $allowed).').';

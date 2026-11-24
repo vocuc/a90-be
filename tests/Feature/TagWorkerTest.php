@@ -51,7 +51,7 @@ class TagWorkerTest extends TestCase
 
     private function tags(array $extra = []): array
     {
-        return ['kieu' => 'sandal', 'got' => 'thap', 'mau' => ['kem'], 'phong_cach' => ['nhe_nhang'], 'dip' => ['di_choi'], 'ootd' => ['giaysandal', 'giaykem'], ...$extra];
+        return ['kieu' => 'giaysandal', 'got' => 'thap', 'mau' => ['kem'], 'phong_cach' => ['nhe_nhang'], 'dip' => ['di_choi'], ...$extra];
     }
 
     public function test_choose_products_worker_tags_them(): void
@@ -87,7 +87,7 @@ class TagWorkerTest extends TestCase
         $this->assertEqualsCanonicalizing([$a->id, $b->id], $res['result']['updated']);
         $this->assertSame(['kieu'], $res['result']['skipped'][$b->id]);
         $this->assertSame('Sandal quai mảnh kem', $a->fresh()->ai_label);
-        $this->assertSame('boot', $b->fresh()->tags['kieu']);
+        $this->assertSame('giayboot', $b->fresh()->tags['kieu']);
         $this->assertNull($noField->fresh()->tags);
 
         $this->actingAs($this->shop)->getJson('/api/v1/creator/products/tag-jobs/latest')->assertOk()

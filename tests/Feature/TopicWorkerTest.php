@@ -53,7 +53,7 @@ class TopicWorkerTest extends TestCase
         $this->start()->assertStatus(409)->assertJsonPath('code', 'TOPIC_WORKER_REQUIRED');
         [, $token] = $this->topicWorker();
         $this->channel->topics()->create(['name' => 'Đi làm', 'source' => 'owner', 'status' => 'active']);
-        Product::query()->create(['user_id' => $this->shop->id, 'name' => 'A', 'tags' => ['kieu' => 'cao_got', 'dip' => ['tet']]]);
+        Product::query()->create(['user_id' => $this->shop->id, 'name' => 'A', 'tags' => ['kieu' => 'giaycaogot', 'dip' => ['tet']]]);
 
         $this->start(['count' => 0])->assertStatus(422);
         $this->start()->assertCreated()->assertJsonPath('data.status', 'queued')->assertJsonPath('data.count', 5);
@@ -65,7 +65,7 @@ class TopicWorkerTest extends TestCase
         $this->assertSame(5, $job['request']['count']);
         $this->assertSame('Tập trung Tết', $job['request']['note']);
         $this->assertSame('Đi làm', $job['request']['existing_topics'][0]['name']);
-        $this->assertSame(1, $job['request']['product_tags']['counts']['kieu']['cao_got']);
+        $this->assertSame(1, $job['request']['product_tags']['counts']['kieu']['giaycaogot']);
         $this->assertNotEmpty($job['request']['holidays']);
         $this->worker($token, 'GET', '')->assertNoContent();
 

@@ -27,6 +27,7 @@ use App\Services\MediaStorage;
 use App\Services\ShopImageLibrary;
 use App\Services\Social\SocialPublishJobService;
 use App\Services\WorkerJobService;
+use App\Support\ProductTags;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -342,7 +343,7 @@ class WorkerJobController extends Controller
             // Bài outfit_by_day: nhãn ngày in lên ảnh outfit thay "Outfit N" (phần tử 0 = ảnh vị trí 2), worker in theo
             // text_template; rỗng = lô thường (note/xay-kenh-tiktok/bai-viet-mau/outfit_by_day.txt)
             'outfit_labels' => $batch?->outfit_labels ?? [],
-            // 'product' (bài "Outfit - theo sản phẩm", 2026-11-24): chọn outfit OOTD cùng loại giày với product.tags.ootd, vẽ
+            // 'product' (bài "Outfit - theo sản phẩm", 2026-11-24): chọn outfit OOTD cùng loại giày với product.shoe_type, vẽ
             // bằng Google Flow (ảnh sản phẩm + ảnh gốc outfit), giày đúng theo ảnh sản phẩm; null = lô thường (ChatGPT)
             'outfit_mode' => $batch?->outfit_mode,
             // Worker phối đồ v2 in hook (title) lên ảnh bìa theo style này (style như ChannelTextTemplate); null = lô
@@ -373,9 +374,11 @@ class WorkerJobController extends Controller
                 'name' => $product->name,
                 'prompt_note' => $product->prompt_note,
                 'hashtags' => $product->hashtags->pluck('name')->values(),
-                // Tag AI (ProductTags): ai_label + tags.ootd = hashtag giày dạng OOTD để chọn outfit cùng loại giày
+                // Tag AI (ProductTags): ai_label + tags; shoe_type = loại giày (tags.kieu, hashtag dùng chung với OOTD):
+                // { tag, ten, nhom, cung_tag, cung_nhom } để worker chọn outfit cùng hashtag trước, cùng nhóm sau; null = chưa gắn
                 'ai_label' => $product->ai_label,
                 'tags' => $product->tags,
+                'shoe_type' => ProductTags::shoeMatch($product->tags['kieu'] ?? null),
                 'images' => $product->images->map(fn ($i) => ['field_key' => $i->field_key, 'url' => $media->url($i->path)])->values(),
             ] : null,
             // Ảnh trong lịch sử tạo ảnh của sản phẩm (ảnh creative đã xong, chưa tắt, mới nhất trước): worker chọn ảnh

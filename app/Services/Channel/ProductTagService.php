@@ -78,10 +78,10 @@ class ProductTagService
      */
     public function summary(User $shop): array
     {
-        $out = array_fill_keys(ProductTags::filterFields(), []);
+        $out = array_fill_keys(ProductTags::tagFields(), []);
         $products = Product::query()->accessibleBy($shop)->active()->whereNotNull('tags')->get(['id', 'tags']);
         foreach ($products as $p) {
-            foreach (ProductTags::filterFields() as $field) {
+            foreach (ProductTags::tagFields() as $field) {
                 foreach ((array) ($p->tags[$field] ?? []) as $value) {
                     $out[$field][$value] = ($out[$field][$value] ?? 0) + 1;
                 }
@@ -97,8 +97,7 @@ class ProductTagService
 
     private function untaggedCount(User $shop): int
     {
-        // Thiếu tag ootd (sản phẩm gắn tag trước 2026-11-24) cũng tính chưa gắn: cần gắn lại để chọn outfit theo giày
-        return Product::query()->ownedBy($shop)->active()->where(fn ($q) => $q->whereNull('tags')->orWhereNull('tags->'.ProductTags::OOTD))->whereHas('images', fn ($q) => $q->where('field_key', self::TAG_FIELD_KEY))->count();
+        return Product::query()->ownedBy($shop)->active()->whereNull('tags')->whereHas('images', fn ($q) => $q->where('field_key', self::TAG_FIELD_KEY))->count();
     }
 
     /** @return Collection<int, Collection<int, GenerationOutput>> product_id -> tối đa RECENT_IMAGES ảnh mới nhất */
@@ -148,7 +147,7 @@ class ProductTagService
     {
         return $this->taggable($shop, $ids)->get()
             ->each(fn (Product $p) => $p->setRelation('coverImage', $p->images->first()))
-            ->filter(fn (Product $p) => $all || ! $p->tags || empty($p->tags[ProductTags::OOTD]) || $p->tagged_image_id !== $p->coverImage->id)
+            ->filter(fn (Product $p) => $all || ! $p->tags || $p->tagged_image_id !== $p->coverImage->id)
             ->map(fn (Product $p) => [
                 'id' => $p->id,
                 'name' => $p->name,

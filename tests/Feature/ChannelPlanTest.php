@@ -652,7 +652,7 @@ class ChannelPlanTest extends TestCase
 
     public function test_one_shoe_many_looks_creates_product_outfit_batch_for_flow(): void
     {
-        // Bài "Outfit - theo sản phẩm" (2026-11-24): lô phối đồ gắn 1 sản phẩm có tag ootd, outfit_mode = product ->
+        // Bài "Outfit - theo sản phẩm" (2026-11-24): lô phối đồ gắn 1 sản phẩm có tag kieu (loại giày), outfit_mode = product ->
         // worker phối đồ chọn outfit cùng loại giày + vẽ bằng Flow
         $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'one_shoe_many_looks', 'percent' => 100]]])->assertCreated();
         $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
@@ -661,9 +661,9 @@ class ChannelPlanTest extends TestCase
         [$outfitWorker] = Worker::register('phoi-do-'.Str::random(4), Worker::TYPE_OUTFIT);
         $outfitWorker->users()->attach($this->shop->id);
         $shoe = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Cao gót đen', 'ai_label' => 'Cao gót mũi nhọn đen',
-            'tags' => ['kieu' => 'cao_got', 'ootd' => ['giaycaogot', 'muinhon', 'giayden']]]);
+            'tags' => ['kieu' => 'giaycaogot', 'got' => 'cao']]);
         \App\Models\ProductImage::query()->create(['product_id' => $shoe->id, 'path' => 'products/shoe.png', 'field_key' => 'anh_san_pham', 'position' => 1]);
-        $noOotd = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Chưa gắn ootd', 'tags' => ['kieu' => 'sneaker']]);
+        $noOotd = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Chưa gắn kiểu', 'tags' => ['got' => 'cao']]);
         \App\Models\ProductImage::query()->create(['product_id' => $noOotd->id, 'path' => 'products/x.png', 'field_key' => 'anh_san_pham', 'position' => 1]);
         $planId = $this->context()['plan']['id'];
         $item = ['slot_index' => 0, 'sample_key' => 'one_shoe_many_looks', 'topic' => ['name' => 'Chủ đề slot 0'],
@@ -672,10 +672,10 @@ class ChannelPlanTest extends TestCase
 
         $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
             [...$item, 'slot_index' => 1, 'hook' => 'không sản phẩm', 'outfit' => ['count' => 5, 'tags' => ['henho']]],
-            [...$item, 'slot_index' => 2, 'hook' => 'chưa có ootd', 'outfit' => ['count' => 5, 'tags' => ['henho'], 'product_id' => $noOotd->id]],
+            [...$item, 'slot_index' => 2, 'hook' => 'chưa có kiểu', 'outfit' => ['count' => 5, 'tags' => ['henho'], 'product_id' => $noOotd->id]],
         ]])->json('data.rejected');
         $this->assertStringContainsString('bắt buộc outfit.product_id', implode(' ', $rejected[0]['errors']));
-        $this->assertStringContainsString('chưa có tag ootd', implode(' ', $rejected[1]['errors']));
+        $this->assertStringContainsString('chưa có tag kieu', implode(' ', $rejected[1]['errors']));
 
         $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$item]])->assertOk();
         $this->assertSame([0], $res->json('data.accepted'), json_encode($res->json('data.rejected'), JSON_UNESCAPED_UNICODE));
@@ -689,12 +689,14 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(['henho'], $batch->outfit_tags);
         $this->assertSame([$shoe->id], Generation::query()->whereIn('id', $post->images()->pluck('generation_id'))->distinct()->pluck('product_id')->all());
 
-        // Bìa làm trước (như lô có sản phẩm); job gửi outfit_mode + tag ootd của sản phẩm
+        // Bìa làm trước (như lô có sản phẩm); job gửi outfit_mode + loại giày của sản phẩm
         $token = $outfitWorker->regenerateToken();
         $job = $this->withToken($token)->getJson('/api/v1/worker-jobs')->assertOk()->json('data');
         $this->assertSame(Generation::KIND_OUTFIT_COVER, $job['kind']);
         $this->assertSame('product', $job['batch']['outfit_mode']);
-        $this->assertSame(['giaycaogot', 'muinhon', 'giayden'], $job['product']['tags']['ootd']);
+        $this->assertSame('giaycaogot', $job['product']['shoe_type']['tag']);
+        $this->assertSame(['giaycaogot', 'caogot'], $job['product']['shoe_type']['cung_tag']);
+        $this->assertContains('slingback', $job['product']['shoe_type']['cung_nhom']);
         $this->assertSame('Cao gót mũi nhọn đen', $job['product']['ai_label']);
         $this->assertSame('anh_san_pham', $job['product']['images'][0]['field_key']);
     }

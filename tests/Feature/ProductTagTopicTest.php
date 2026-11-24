@@ -15,6 +15,7 @@ use App\Services\Channel\ChannelPlanService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
+use App\Support\ProductTags;
 use Tests\TestCase;
 
 /** Tag sản phẩm AI + sản phẩm lọc theo tag + chủ đề kênh (a90-fe note/xay-kenh-tiktok/chu-de-va-tag-san-pham.txt). */
@@ -75,7 +76,7 @@ class ProductTagTopicTest extends TestCase
 
     private function tags(array $extra = []): array
     {
-        return ['kieu' => 'cao_got', 'got' => 'vua', 'mau' => ['Đỏ'], 'phong_cach' => ['sang_chanh'], 'dip' => ['tet', 'di_tiec'], 'ootd' => ['giaycaogot', 'Mũi nhọn', '#giay_den'], ...$extra];
+        return ['kieu' => 'Cao gót', 'got' => 'vua', 'mau' => ['Đỏ'], 'phong_cach' => ['sang_chanh'], 'dip' => ['tet', 'di_tiec'], ...$extra];
     }
 
     private function tagRow(Product $p, array $tags = [], string $label = 'Cao gót mũi nhọn đỏ'): array
@@ -119,18 +120,18 @@ class ProductTagTopicTest extends TestCase
         ]])->assertOk()->json('data');
         $this->assertSame([$a->id], $result['updated']);
         $this->assertCount(2, $result['errors']);
-        $this->assertEquals(['kieu' => 'cao_got', 'got' => 'vua', 'mau' => ['do'], 'phong_cach' => ['sang_chanh'], 'dip' => ['tet', 'di_tiec'], 'ootd' => ['giaycaogot', 'muinhon', 'giayden']], $a->fresh()->tags);
+        $this->assertEquals(['kieu' => 'giaycaogot', 'got' => 'vua', 'mau' => ['do'], 'phong_cach' => ['sang_chanh'], 'dip' => ['tet', 'di_tiec']], $a->fresh()->tags);
         $this->assertSame([$b->id], array_column($this->api('GET', "shops/{$this->shop->id}/products/untagged")->json('data'), 'id'));
 
         // Chủ shop sửa kiểu + nhãn -> AI gắn lại không ghi đè 2 trường đó
         $this->actingAs($this->shop)->putJson("/api/v1/creator/products/{$a->id}/tags", ['ai_label' => 'Slingback đỏ', 'tags' => ['kieu' => 'slingback']])
-            ->assertOk()->assertJsonPath('data.tags.kieu', 'slingback')->assertJsonPath('data.tag_sources.kieu', 'owner');
+            ->assertOk()->assertJsonPath('data.tags.kieu', 'giayslingback')->assertJsonPath('data.tag_sources.kieu', 'owner');
         $this->actingAs($this->shop)->putJson("/api/v1/creator/products/{$a->id}/tags", ['tags' => ['kieu' => 'xyz']])->assertStatus(422);
         $again = $this->api('PUT', "shops/{$this->shop->id}/products/tags", ['items' => [$this->tagRow($a, ['got' => 'cao'], 'Cao gót')]])->json('data');
         $this->assertEqualsCanonicalizing(['ai_label', 'kieu'], $again['skipped'][$a->id]);
         $fresh = $a->fresh();
         $this->assertSame('Slingback đỏ', $fresh->ai_label);
-        $this->assertSame('slingback', $fresh->tags['kieu']);
+        $this->assertSame('giayslingback', $fresh->tags['kieu']);
         $this->assertSame('cao', $fresh->tags['got']);
 
         // Đổi ảnh bìa khác trường -> không cần gắn lại; thay ảnh anh_san_pham -> cần gắn lại
@@ -141,27 +142,25 @@ class ProductTagTopicTest extends TestCase
         $this->assertContains($a->id, array_column($this->api('GET', "shops/{$this->shop->id}/products/untagged")->json('data'), 'id'));
     }
 
-    public function test_ootd_tags_need_shoe_type_and_old_tags_need_retag(): void
+    public function test_kieu_is_shared_shoe_hashtag(): void
     {
-        // Tag ootd (hashtag giày OOTD, 2026-11-24): bắt buộc khi AI gắn, phải có >= 1 loại giày
+        // Tag kieu = hashtag loại giày dùng chung A51 + OOTD (2026-11-24): nhận tên / hashtag / kieu cũ, lưu hashtag
+        $this->assertSame(array_keys(ProductTags::SHOE_TYPES), ProductTags::SINGLE['kieu']);
+        $this->assertSame('giaythethao', ProductTags::shoeType('#sneaker'));
+        $this->assertSame('giaybupbe', ProductTags::shoeType('bup_be'));
+        $this->assertSame('depquai', ProductTags::shoeType('Dép quai'));
+        $this->assertNull(ProductTags::shoeType('giayxam'));
+        $this->assertSame('giayboot', ProductTags::shoeMatch('bootcaoco')['nhom']);
+        $this->assertContains('bootdituyet', ProductTags::shoeMatch('bootcaoco')['cung_nhom']);
+
         $a = $this->product('A');
-        $result = $this->api('PUT', "shops/{$this->shop->id}/products/tags", ['items' => [
-            $this->tagRow($a, ['ootd' => ['muinhon', 'giayden']]),
-        ]])->assertOk()->json('data');
-        $this->assertSame([], $result['updated']);
-        $this->assertStringContainsString('loại giày', implode(' ', $result['errors'][0]['errors']));
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/products/{$a->id}/tags", ['tags' => ['kieu' => 'Dép quai']])
+            ->assertOk()->assertJsonPath('data.tags.kieu', 'depquai');
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/products/{$a->id}/tags", ['tags' => ['kieu' => 'giayxam']])->assertStatus(422);
 
-        // Sản phẩm gắn tag trước khi có ootd -> vẫn nằm trong danh sách cần gắn, gắn xong thì hết
-        $a->update(['tags' => ['kieu' => 'cao_got'], 'tagged_image_id' => $a->images()->where('field_key', 'anh_san_pham')->value('id')]);
-        $this->assertContains($a->id, array_column($this->api('GET', "shops/{$this->shop->id}/products/untagged")->json('data'), 'id'));
-        $this->assertSame(1, app(\App\Services\Channel\ProductTagService::class)->counts($this->shop)['untagged']);
-        $this->api('PUT', "shops/{$this->shop->id}/products/tags", ['items' => [$this->tagRow($a)]])->assertOk()->assertJsonPath('data.updated', [$a->id]);
-        $this->assertNotContains($a->id, array_column($this->api('GET', "shops/{$this->shop->id}/products/untagged")->json('data'), 'id'));
-
-        // Chủ shop sửa ootd -> nguồn owner; thiếu loại giày -> 422
-        $this->actingAs($this->shop)->putJson("/api/v1/creator/products/{$a->id}/tags", ['tags' => ['ootd' => 'giaysneaker giaytrang']])
-            ->assertOk()->assertJsonPath('data.tags.ootd', ['giaysneaker', 'giaytrang'])->assertJsonPath('data.tag_sources.ootd', 'owner');
-        $this->actingAs($this->shop)->putJson("/api/v1/creator/products/{$a->id}/tags", ['tags' => ['ootd' => ['giaytrang']]])->assertStatus(422);
+        $types = $this->getJson('/api/v1/shoe-types')->assertOk()->json('data');
+        $this->assertSame(['tag' => 'giaythethao', 'ten' => 'Sneaker / thể thao', 'nhom' => 'giaythethao', 'cung_nghia' => ['sneaker', 'giaysneaker', 'giaydeutrainer']],
+            collect($types)->firstWhere('tag', 'giaythethao'));
     }
 
     public function test_products_filtered_by_tags_with_one_recent_ref(): void
@@ -172,7 +171,7 @@ class ProductTagTopicTest extends TestCase
         $untagged = $this->product('Chưa gắn tag');
         $this->api('PUT', "shops/{$this->shop->id}/products/tags", ['items' => [
             $this->tagRow($red),
-            $this->tagRow($flat, ['kieu' => 'bup_be', 'got' => 'bet', 'dip' => ['di_lam']], 'Búp bê nơ'),
+            $this->tagRow($flat, ['kieu' => 'giaybupbe', 'got' => 'bet', 'dip' => ['di_lam']], 'Búp bê nơ'),
             $this->tagRow($noImage),
         ]])->assertOk();
         $redRefs = $this->images($red, 3);

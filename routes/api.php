@@ -47,6 +47,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     Route::get('creatives', [MarketplaceController::class, 'creatives']);
     Route::get('creatives/{slug}', [MarketplaceController::class, 'creative']);
     Route::get('creators/{username}', [MarketplaceController::class, 'creator']);
+    // Hashtag loại giày dùng chung A51 + OOTD (skill /tao-outfit, /gan-tag-san-pham)
+    Route::get('shoe-types', [\App\Http\Controllers\Api\V1\ShoeTypeController::class, 'index']);
 
     Route::middleware(['auth:sanctum', 'active', 'full-token'])->group(function () {
 

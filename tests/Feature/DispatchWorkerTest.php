@@ -78,7 +78,7 @@ class DispatchWorkerTest extends TestCase
             ->assertOk()->assertJsonPath('data.result.created', ['Đi chúc Tết']);
         $this->worker($token, 'POST', "/{$tag['id']}", ['status' => 'completed', 'items' => [[
             'id' => $p->id, 'image_id' => $p->images()->value('id'), 'ai_label' => 'Sandal kem',
-            'tags' => ['kieu' => 'sandal', 'got' => 'thap', 'mau' => ['kem'], 'phong_cach' => ['basic'], 'dip' => ['di_choi'], 'ootd' => ['giaysandal']],
+            'tags' => ['kieu' => 'giaysandal', 'got' => 'thap', 'mau' => ['kem'], 'phong_cach' => ['basic'], 'dip' => ['di_choi']],
         ]]])->assertOk();
         $this->assertSame('Sandal kem', $p->fresh()->ai_label);
         $this->worker($token, 'POST', "/{$topic['id']}/extend")->assertStatus(409);

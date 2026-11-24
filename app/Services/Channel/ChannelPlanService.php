@@ -882,15 +882,15 @@ class ChannelPlanService
         }
 
         $outfit = ['count' => $count, 'product_id' => $productId ?: null, 'tags' => $tags];
-        // Bài "Outfit - theo sản phẩm" (one_shoe_many_looks): bắt buộc 1 sản phẩm có tag ootd (hashtag giày OOTD) để worker
-        // chọn outfit cùng loại giày và Flow vẽ đúng đôi giày đó
+        // Bài "Outfit - theo sản phẩm" (one_shoe_many_looks): bắt buộc 1 sản phẩm có tag kieu (hashtag loại giày dùng chung
+        // với OOTD, ProductTags::SHOE_TYPES) để worker chọn outfit cùng loại giày và Flow vẽ đúng đôi giày đó
         if (($sample['outfit_mode'] ?? null) === ImageBatch::OUTFIT_MODE_PRODUCT) {
             $outfit['mode'] = ImageBatch::OUTFIT_MODE_PRODUCT;
-            $ootd = $productId ? (Product::query()->whereKey($productId)->value('tags')['ootd'] ?? null) : null;
+            $kieu = $productId ? (Product::query()->whereKey($productId)->value('tags')['kieu'] ?? null) : null;
             if (! $productId) {
                 $errors[] = 'Bài này bắt buộc outfit.product_id (đôi giày được phối).';
-            } elseif (! ProductTags::ootdShoeTypes((array) $ootd)) {
-                $errors[] = "Sản phẩm {$productId} chưa có tag ootd (hashtag loại giày OOTD): chạy /gan-tag-san-pham hoặc chọn sản phẩm khác.";
+            } elseif (! ProductTags::shoeMatch($kieu)) {
+                $errors[] = "Sản phẩm {$productId} chưa có tag kieu (loại giày): chạy /gan-tag-san-pham hoặc chọn sản phẩm khác.";
             }
         }
         if ($sample['outfit_labels'] ?? false) {
