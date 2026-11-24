@@ -1619,13 +1619,32 @@ class ChannelPlanService
         return $on && (bool) app(PlanJobService::class)->queueRedo($item->plan->channel()->firstOrFail());
     }
 
+    /**
+     * Nút "AI viết lại cả kỳ" (người dùng 2026-11-25): đánh dấu / bỏ đánh dấu làm lại MỌI bài chưa duyệt của kỳ chờ duyệt,
+     * giữ giờ đăng; đánh dấu xong giao worker điều phối 1 việc làm lại. -> [số bài, đã giao việc].
+     *
+     * @return array{0: int, 1: bool}
+     */
+    public function requestPlanRedo(ContentPlan $plan, bool $on): array
+    {
+        if ($plan->status !== ContentPlan::DRAFT) {
+            throw new BusinessException('PLAN_NOT_DRAFT', 'Chỉ viết lại được kỳ đang chờ duyệt.', 409);
+        }
+        $count = $plan->items()->where('status', ContentPlanItem::DRAFT)->update(['redo_requested_at' => $on ? now() : null]);
+        if (! $on || ! $count) {
+            return [$count, false];
+        }
+
+        return [$count, (bool) app(PlanJobService::class)->queueRedo($plan->channel()->firstOrFail())];
+    }
+
     /** Bài chưa duyệt đang chờ làm lại của kênh (context chế độ làm lại). */
     private function itemRedoRequests(Channel $channel): Collection
     {
         return ContentPlanItem::query()
             ->whereIn('plan_id', $channel->plans()->where('status', ContentPlan::DRAFT)->select('id'))
             ->where('status', ContentPlanItem::DRAFT)->whereNotNull('redo_requested_at')
-            ->with('topic:id,name')->orderBy('scheduled_at')->get()
+            ->with(['topic:id,name', 'plan'])->orderBy('scheduled_at')->get()
             ->map(fn (ContentPlanItem $i) => [
                 'item_id' => $i->id,
                 'plan_id' => $i->plan_id,

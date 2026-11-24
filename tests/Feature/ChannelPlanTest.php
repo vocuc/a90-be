@@ -338,9 +338,18 @@ class ChannelPlanTest extends TestCase
         $this->assertNull($item->topic_id, 'Lệnh làm lại không gửi chủ đề = bài không chủ đề');
         $this->assertSame([], $this->api('GET', "channels/{$this->channel->id}/context?redo_only=1")->json('data.item_redo_requests'));
 
+        // Nút "AI viết lại cả kỳ": đánh dấu mọi bài chưa duyệt, bỏ đánh dấu được
+        $planUrl = "/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/redo";
+        $this->actingAs($this->shop)->postJson($planUrl)->assertOk()->assertJsonPath('data.items', 2)->assertJsonPath('data.redo_queued', true);
+        $this->app['auth']->forgetGuards();
+        $this->assertCount(2, $this->api('GET', "channels/{$this->channel->id}/context?redo_only=1")->assertOk()->json('data.item_redo_requests'));
+        $this->actingAs($this->shop)->deleteJson($planUrl)->assertOk()->assertJsonPath('data.redo_queued', false);
+        $this->assertSame(0, ContentPlanItem::query()->where('plan_id', $planId)->whereNotNull('redo_requested_at')->count());
+
         // Kỳ đã duyệt: không làm lại / không sửa được nữa
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
         $this->postJson("{$base}/redo")->assertStatus(409);
+        $this->postJson($planUrl)->assertStatus(409);
         $this->app['auth']->forgetGuards();
         $this->api('POST', "plan-items/{$item->id}/redo", $this->item(0, $refs, ['hook' => 'Hook nữa']))->assertStatus(409);
     }

@@ -324,6 +324,18 @@ class ChannelContentController extends Controller
         return response()->json(['data' => [...$this->item($model->fresh()), 'redo_queued' => $queued]]);
     }
 
+    /**
+     * Nút "AI viết lại cả kỳ": đánh dấu (POST) / bỏ đánh dấu (DELETE) mọi bài chưa duyệt của kỳ chờ duyệt.
+     * -> { data: { items: số bài, redo_queued } }. 409 PLAN_NOT_DRAFT.
+     */
+    public function redoPlan(Request $request, int $channel, int $plan): JsonResponse
+    {
+        $model = $this->channel($request, $channel)->plans()->findOrFail($plan);
+        [$count, $queued] = $this->plans->requestPlanRedo($model, $request->isMethod('post'));
+
+        return response()->json(['data' => ['items' => $count, 'redo_queued' => $queued]]);
+    }
+
     // ---- Lịch đăng ----
 
     public function calendar(Request $request, int $channel): JsonResponse
