@@ -199,6 +199,57 @@ class ChannelTopicService
         return (is_string($value) ? $find($value) : null) ?? $find(ChannelTopic::guessCategory($text));
     }
 
+    /**
+     * Lệnh /lap-ke-hoach tạo chủ đề theo yêu cầu người dùng (2026-11-24): [{name, category?, note?}], nguồn ai, bật sẵn.
+     * category = tên nhóm (không phân biệt hoa thường); kênh chưa có nhóm tên đó thì TẠO nhóm mới (còn chỗ, tối đa
+     * ChannelTopicCategory::MAX); không gửi = đoán theo tên + ghi chú. Trùng tên chủ đề đã có (kể cả đang tạm dừng) -> bỏ qua.
+     *
+     * @return array{created: array<int, array>, skipped: array<int, array{name: string, reason: string}>}
+     */
+    public function addTopics(Channel $channel, array $rows): array
+    {
+        $created = $skipped = [];
+        foreach ($rows as $row) {
+            $name = ChannelTopic::cleanName($row['name'] ?? '');
+            if ($name === '') {
+                $skipped[] = ['name' => (string) ($row['name'] ?? ''), 'reason' => 'Tên chủ đề trống.'];
+
+                continue;
+            }
+            if ($channel->topics()->where('name', $name)->exists()) {
+                $skipped[] = ['name' => $name, 'reason' => 'Kênh đã có chủ đề tên này.'];
+
+                continue;
+            }
+            $note = ChannelTopic::cleanNote($row['note'] ?? null);
+            $category = ChannelTopicCategory::cleanName($row['category'] ?? '');
+            $categoryId = $category === '' ? $this->resolveCategory($channel, null, $name.' '.$note)
+                : $this->categoryByName($channel, $category);
+            $topic = $channel->topics()->create(['name' => $name, 'note' => $note, 'category_id' => $categoryId,
+                'source' => ProductTags::SOURCE_AI, 'status' => ChannelTopic::ACTIVE]);
+            $created[] = ['id' => $topic->id, 'name' => $topic->name, 'note' => $topic->note,
+                'category' => $categoryId ? ChannelTopicCategory::query()->whereKey($categoryId)->value('name') : ChannelTopic::OTHER_CATEGORY];
+        }
+
+        return ['created' => $created, 'skipped' => $skipped];
+    }
+
+    /** Id nhóm tên $name của kênh; chưa có thì tạo cuối danh sách (hết chỗ -> null = "Khác"). */
+    private function categoryByName(Channel $channel, string $name): ?int
+    {
+        $name = mb_substr($name, 0, ChannelTopicCategory::NAME_MAX);
+        $categories = $this->categories($channel);
+        $found = $categories->first(fn (ChannelTopicCategory $c) => mb_strtolower($c->name) === mb_strtolower($name));
+        if ($found) {
+            return $found->id;
+        }
+        if (mb_strtolower($name) === mb_strtolower(ChannelTopic::OTHER_CATEGORY) || $categories->count() >= ChannelTopicCategory::MAX) {
+            return null;
+        }
+
+        return $channel->topicCategories()->create(['name' => $name, 'position' => (int) $categories->max('position') + 1])->id;
+    }
+
     /** Số hook gần nhất mỗi chủ đề trả cho tab Chủ đề. */
     public const HOOKS_PER_TOPIC = 50;
 

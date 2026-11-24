@@ -268,6 +268,7 @@ Route::prefix('v1/channel-plan')->middleware(['throttle:api', 'auth:sanctum', 'a
     Route::put('channels/{channel}/persona', [ChannelPlanApiController::class, 'persona'])->whereNumber('channel');
     Route::post('channels/{channel}/lineups', [ChannelPlanApiController::class, 'lineup'])->whereNumber('channel');
     Route::post('channels/{channel}/text-templates', [ChannelPlanApiController::class, 'textTemplates'])->whereNumber('channel');
+    Route::post('channels/{channel}/topics', [ChannelPlanApiController::class, 'topics'])->whereNumber('channel');
     Route::post('channels/{channel}/plans/{plan}/items', [ChannelPlanApiController::class, 'submitPlan'])->whereNumber(['channel', 'plan']);
     Route::post('posts/{post}/redo', [ChannelPlanApiController::class, 'redo'])->whereNumber('post');
     // Tag sản phẩm AI + sản phẩm lọc theo tag (a90-fe note/xay-kenh-tiktok/chu-de-va-tag-san-pham.txt mục 5, 6)

@@ -68,6 +68,26 @@ class ChannelPlanTest extends TestCase
         return $this->withToken($this->planToken)->json($method, "/api/v1/channel-plan/{$uri}", $body);
     }
 
+    public function test_plan_token_creates_topics_with_category_by_name(): void
+    {
+        // Lệnh /lap-ke-hoach tạo chủ đề theo yêu cầu người dùng (2026-11-24): nhóm theo tên, chưa có thì tạo; trùng tên bỏ qua
+        $this->channel->topics()->create(['name' => 'Hẹn hò', 'status' => 'paused', 'source' => 'owner']);
+        $data = $this->api('POST', "channels/{$this->channel->id}/topics", ['topics' => [
+            ['name' => 'Đi sinh nhật', 'category' => 'sự kiện', 'note' => 'Tiệc sinh nhật bạn bè'],
+            ['name' => 'Phối đồ với cao gót', 'category' => 'Phối đồ'],
+            ['name' => 'Du lịch Tà Xùa'],
+            ['name' => 'Hẹn hò', 'category' => 'Sự kiện'],
+        ]])->assertCreated()->json('data');
+
+        $this->assertSame(['Sự kiện', 'Phối đồ', 'Du lịch'], array_column($data['created'], 'category'));
+        $this->assertSame(['Hẹn hò'], array_column($data['skipped'], 'name'));
+        $topic = $this->channel->topics()->where('name', 'Đi sinh nhật')->firstOrFail();
+        $this->assertSame(['active', 'ai', 'Tiệc sinh nhật bạn bè'], [$topic->status, $topic->source, $topic->note]);
+        $this->assertTrue($this->channel->topicCategories()->where('name', 'Phối đồ')->exists());
+
+        $this->api('POST', "channels/{$this->channel->id}/topics", ['topics' => []])->assertUnprocessable();
+    }
+
     /** $count ảnh sản phẩm xong của shop: refs. */
     private function images(int $count, string $kind = Generation::KIND_CREATIVE): array
     {

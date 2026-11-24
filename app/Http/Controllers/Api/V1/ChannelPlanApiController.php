@@ -6,9 +6,11 @@ use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Models\Channel;
 use App\Models\ChannelTextTemplate;
+use App\Models\ChannelTopic;
 use App\Models\SocialPost;
 use App\Models\User;
 use App\Services\Channel\ChannelPlanService;
+use App\Services\Channel\ChannelTopicService;
 use App\Services\Channel\ProductTagService;
 use App\Support\ProductTags;
 use Illuminate\Http\JsonResponse;
@@ -21,7 +23,7 @@ use Illuminate\Validation\ValidationException;
  */
 class ChannelPlanApiController extends Controller
 {
-    public function __construct(private ChannelPlanService $plans, private ProductTagService $productTags) {}
+    public function __construct(private ChannelPlanService $plans, private ProductTagService $productTags, private ChannelTopicService $topics) {}
 
     /** ?fill_plan=<id kỳ>: chế độ TẠO BỔ SUNG, plan = kỳ đó với các slot còn thiếu bài. ?redo_only=1: chế độ LÀM LẠI (plan
      * null, không giữ slot kỳ mới). */
@@ -69,6 +71,22 @@ class ChannelPlanApiController extends Controller
 
         return response()->json(['data' => $saved->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'status' => $t->status,
             'sample_keys' => $t->sample_keys])], 201);
+    }
+
+    /**
+     * Tạo chủ đề cho kênh theo yêu cầu người dùng (2026-11-24): { topics: [{name, category?, note?}] } (1-30) ->
+     * 201 { data: { created: [{id, name, note, category}], skipped: [{name, reason}] } }. category = tên nhóm, chưa có thì tạo.
+     */
+    public function topics(Request $request, int $channel): JsonResponse
+    {
+        $data = $request->validate([
+            'topics' => ['required', 'array', 'min:1', 'max:30'],
+            'topics.*.name' => ['required', 'string', 'max:'.ChannelTopic::NAME_MAX],
+            'topics.*.category' => ['nullable', 'string', 'max:40'],
+            'topics.*.note' => ['nullable', 'string', 'max:'.ChannelTopic::NOTE_MAX],
+        ]);
+
+        return response()->json(['data' => $this->topics->addTopics($this->channel($channel), $data['topics'])], 201);
     }
 
     /** Gửi bài cho kỳ đang giữ slot (plan.id trong context). Gửi bổ sung slot trống: gọi lại cùng API. */
