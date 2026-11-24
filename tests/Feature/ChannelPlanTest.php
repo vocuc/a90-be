@@ -1053,6 +1053,14 @@ class ChannelPlanTest extends TestCase
         $this->assertStringContainsString('dùng tiêu đề làm hook', implode(' ', $res['rejected'][1]['errors']));
         $this->assertStringContainsString('không đủ cho video template', implode(' ', $res['rejected'][0]['errors']));
 
+        // Mỗi sản phẩm chỉ 1 bài / kỳ (2026-11-25): bài video thứ 2 cùng sản phẩm, khác chủ đề / tiêu đề -> bị từ chối
+        $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$base, 'slot_index' => 1, 'topic' => ['name' => 'Chủ đề slot 1'], 'title' => 'Làm phù dâu diện mule', 'product_id' => $product->id],
+        ]])->assertOk()->json('data');
+        $this->assertSame([], $res['accepted']);
+        $this->assertStringContainsString('đã có bài khác trong kỳ này', implode(' ', $res['rejected'][0]['errors']));
+        $this->assertSame([$product->id], $this->api('GET', "channels/{$this->channel->id}/context?fill_plan={$planId}")->json('data.plan.used_products'));
+
         $item = ContentPlanItem::query()->where('plan_id', $planId)->firstOrFail();
         $this->assertSame('Đi tiệc là phải đỏ', $item->hook);
         $this->assertCount(3, $item->images);

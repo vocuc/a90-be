@@ -161,6 +161,8 @@ class ChannelPlanService
                     ->orderBy('slot_index')->get()->map(fn (ContentPlanItem $i) => ['slot_index' => $i->slot_index,
                         'scheduled_at' => $i->scheduled_at?->toIso8601String(), 'sample_key' => $i->sample_key,
                         'topic' => $i->topic?->name, 'hook' => $i->hook])->all() : null,
+                // Sản phẩm chính các bài đang có của kỳ: bài mới KHÔNG dùng lại (mỗi sản phẩm 1 bài / kỳ, 2026-11-25)
+                'used_products' => array_keys($this->planProducts($plan)),
             ] : null,
             'draft_plan_id' => $draft?->id,
             'redo_requests' => $this->redoRequests($channel),
@@ -569,6 +571,7 @@ class ChannelPlanService
         $rejected = [];
         $taken = $this->activeSlotIndexes($plan);
         $signatures = $this->existingSignatures($channel, $plan);
+        $products = $this->planProducts($plan);
 
         foreach ($items as $raw) {
             $slotIndex = $raw['slot_index'] ?? null;
@@ -590,14 +593,18 @@ class ChannelPlanService
             }
             $at = CarbonImmutable::parse($slot['at']);
             [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $slot['format'], $signatures, $at);
+            if (! $errors && ($product = $data['_product'] ?? null) && isset($products[$product])) {
+                $errors = [self::productTakenError($product, $products[$product])];
+            }
             if ($errors) {
                 $rejected[] = ['slot_index' => $slotIndex, 'errors' => $errors];
 
                 continue;
             }
             $signature = $data['_signature'];
+            $product = $data['_product'] ?? null;
             $topicId = $this->topics->resolve($channel, $data['_topic']);
-            unset($data['_signature'], $data['_topic']);
+            unset($data['_signature'], $data['_topic'], $data['_product']);
             // Bổ sung slot có bài cũ đã huỷ / mất bài đăng: bỏ dòng cũ (slot_index duy nhất trong kỳ)
             $plan->items()->where('slot_index', (int) $slotIndex)->delete();
             $item = $plan->items()->create([
@@ -615,6 +622,9 @@ class ChannelPlanService
             }
             $taken[] = (int) $slotIndex;
             $signatures[] = $signature;
+            if ($product) {
+                $products[$product] = $slot['at'];
+            }
             $accepted[] = (int) $slotIndex;
         }
 
@@ -696,6 +706,7 @@ class ChannelPlanService
                 ...$this->caption($channel, $raw),
                 '_signature' => $signature,
                 '_topic' => $topic,
+                '_product' => $productBatch['product_id'],
             ], []];
         }
 
@@ -727,6 +738,8 @@ class ChannelPlanService
                 ...$this->caption($channel, $raw),
                 '_signature' => $signature,
                 '_topic' => $topic,
+                // Lô theo sản phẩm (nhiều sản phẩm) không tính 1 sản phẩm chính
+                '_product' => empty($outfit['product_ids']) ? ($outfit['product_id'] ?? null) : null,
             ], []];
         }
 
@@ -848,7 +861,52 @@ class ChannelPlanService
             ...$this->caption($channel, $raw),
             '_signature' => $signature,
             '_topic' => $topic,
+            '_product' => self::singleProduct($groupKeys),
         ], []];
+    }
+
+    /** Sản phẩm chính của bài ảnh / video: mọi ảnh cùng 1 sản phẩm -> id sản phẩm, còn lại (Top N, ảnh creative) null. */
+    private static function singleProduct(array $groupKeys): ?int
+    {
+        $keys = array_values(array_unique($groupKeys));
+
+        return count($keys) === 1 && str_starts_with($keys[0], 'p') ? (int) substr($keys[0], 1) : null;
+    }
+
+    /**
+     * Sản phẩm chính của các bài đang dùng trong kỳ (bài chờ duyệt / đã thành bài đăng còn bài đăng), bỏ bài $exceptItemId:
+     * [product_id => giờ đăng]. Người dùng 2026-11-25: 2 bài trong 1 kỳ không được cùng 1 sản phẩm.
+     */
+    private function planProducts(ContentPlan $plan, ?int $exceptItemId = null): array
+    {
+        $items = $plan->items()->whereIn('slot_index', $this->activeSlotIndexes($plan))
+            ->when($exceptItemId, fn ($q) => $q->whereKeyNot($exceptItemId))->get();
+        $outputIds = $items->flatMap(fn (ContentPlanItem $i) => array_column($i->images ?? [], 'output_id'))->unique()->values();
+        $productOf = GenerationOutput::query()->whereIn('generation_outputs.id', $outputIds)
+            ->join('generations', 'generations.id', '=', 'generation_outputs.generation_id')
+            ->pluck('generations.product_id', 'generation_outputs.id');
+        $result = [];
+        foreach ($items as $i) {
+            $product = $i->product_batch['product_id'] ?? null;
+            if (! $product && $i->outfit) {
+                $product = empty($i->outfit['product_ids']) ? ($i->outfit['product_id'] ?? null) : null;
+            }
+            if (! $product && $i->images) {
+                $keys = collect($i->images)->map(fn ($img) => ($p = $productOf->get($img['output_id'])) ? 'p'.$p : 'x')->all();
+                $product = self::singleProduct($keys);
+            }
+            if ($product) {
+                $result[(int) $product] = $i->scheduled_at;
+            }
+        }
+
+        return $result;
+    }
+
+    private static function productTakenError(int $productId, $at): string
+    {
+        return "Sản phẩm {$productId} đã có bài khác trong kỳ này (lúc ".CarbonImmutable::parse($at)->setTimezone(config('app.timezone'))->format('H:i d/m')
+            .'). Mỗi sản phẩm chỉ 1 bài / kỳ, chọn sản phẩm khác.';
     }
 
     /**
@@ -1531,11 +1589,15 @@ class ChannelPlanService
         }
         [$data, $errors] = $this->validateItem($channel, $lineup, $raw, $item->format, $signatures,
             CarbonImmutable::parse($item->scheduled_at), null, $item->id);
+        // Mỗi sản phẩm chỉ 1 bài / kỳ (sửa / làm lại bài cũng không được trùng sản phẩm bài khác của kỳ)
+        if (! $errors && ($product = $data['_product'] ?? null) && isset(($taken = $this->planProducts($plan, $item->id))[$product])) {
+            $errors = [self::productTakenError($product, $taken[$product])];
+        }
         if ($errors) {
             throw ValidationException::withMessages(['item' => $errors]);
         }
         $data['topic_id'] = $this->topics->resolve($channel, $data['_topic']);
-        unset($data['_signature'], $data['_topic']);
+        unset($data['_signature'], $data['_topic'], $data['_product']);
 
         return $data;
     }
@@ -1567,6 +1629,8 @@ class ChannelPlanService
             ->map(fn (ContentPlanItem $i) => [
                 'item_id' => $i->id,
                 'plan_id' => $i->plan_id,
+                // Sản phẩm chính của các bài KHÁC trong kỳ: bài làm lại không được dùng
+                'used_products' => array_keys($this->planProducts($i->plan, $i->id)),
                 'scheduled_at' => $i->scheduled_at?->toIso8601String(),
                 'format' => $i->format,
                 'sample_key' => $i->sample_key,
