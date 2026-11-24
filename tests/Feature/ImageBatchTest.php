@@ -343,6 +343,13 @@ class ImageBatchTest extends TestCase
         $image = $batch->images()->first();
         $postId = $this->postFromBatch($user, $batch, [$image])->assertCreated()->json('data.id');
 
+        // Còn bài CHƯA ĐĂNG dùng lô (2026-11-24): không xoá được (cả xoá nhiều lô: bỏ qua), huỷ bài / bài đã đăng mới xoá
+        $this->actingAs($user)->deleteJson("/api/v1/image-batches/{$batch->id}")
+            ->assertStatus(409)->assertJsonPath('code', 'BATCH_HAS_POSTS');
+        $this->actingAs($user)->postJson('/api/v1/image-batches/bulk-delete', ['batch_ids' => [$batch->id]])
+            ->assertOk()->assertJsonPath('data.deleted', 0)->assertJsonPath('data.skipped', 1);
+        SocialPost::query()->whereKey($postId)->update(['status' => 'published']);
+
         $this->actingAs($user)->deleteJson("/api/v1/image-batches/{$batch->id}")->assertNoContent();
 
         $this->assertSame(0, ImageBatch::query()->count());

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\OutputStatus;
+use App\Enums\SocialPostStatus;
 use App\Exceptions\BusinessException;
 use App\Models\AiCreative;
 use App\Models\GenerationOutput;
@@ -222,7 +223,7 @@ class ImageBatchService
         });
     }
 
-    /** Xoá lô khi không còn ảnh đang tạo. Bài đăng đã tạo từ lô và ảnh trong lịch sử tạo ảnh vẫn giữ. */
+    /** Xoá lô khi không còn ảnh đang tạo và không còn bài chưa đăng dùng lô. Bài đã đăng + ảnh trong lịch sử tạo ảnh vẫn giữ. */
     public function delete(User $user, ImageBatch $batch): void
     {
         DB::transaction(function () use ($user, $batch) {
@@ -230,6 +231,12 @@ class ImageBatchService
             $busy = $batch->images()->whereHas('output', fn ($q) => $q->whereIn('status', self::BUSY))->exists();
             if ($busy) {
                 throw new BusinessException('BATCH_NOT_DELETABLE', 'Lô còn ảnh đang được tạo, vui lòng chờ xong rồi xoá.', 409);
+            }
+            // Còn bài CHƯA ĐĂNG dùng lô (người dùng chốt 2026-11-24): không cho xoá, huỷ (xoá) bài trước. Bài kế hoạch cần lô để
+            // dựng nội dung (vd "Outfit - theo sản phẩm": slide 2 cột + bìa) và nhận ảnh làm lại.
+            $pending = $batch->posts()->where('status', '!=', SocialPostStatus::Published)->count();
+            if ($pending > 0) {
+                throw new BusinessException('BATCH_HAS_POSTS', "Lô đang được {$pending} bài chưa đăng sử dụng. Huỷ các bài đó trước rồi mới xoá lô.", 409);
             }
 
             $this->audit->log('image_batch.delete', $batch, ['images' => $batch->images()->count()], $user->id);
