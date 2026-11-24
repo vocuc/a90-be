@@ -1324,6 +1324,14 @@ class ChannelPlanService
     /** Huỷ kỳ: bài draft -> cancelled; bài đã sinh mà worker chưa nhận -> xoá. */
     public function cancel(ContentPlan $plan): ContentPlan
     {
+        $plan = $this->cancelInside($plan);
+        app(PlanJobService::class)->dropIdleRedo($plan->channel()->firstOrFail());
+
+        return $plan;
+    }
+
+    private function cancelInside(ContentPlan $plan): ContentPlan
+    {
         return DB::transaction(function () use ($plan) {
             $plan = ContentPlan::query()->lockForUpdate()->findOrFail($plan->id);
             if ($plan->status === ContentPlan::CANCELLED) {
@@ -1462,6 +1470,7 @@ class ChannelPlanService
             $this->audit->log('content_plan.delete', $plan, ['items' => $plan->items()->count()]);
             $plan->delete();
         });
+        app(PlanJobService::class)->dropIdleRedo($plan->channel()->firstOrFail());
     }
 
     /**
@@ -1486,6 +1495,7 @@ class ChannelPlanService
                 $plan->update(['warnings' => $this->lineupWarnings($plan->fresh(), $lineup) ?: null]);
             }
         });
+        app(PlanJobService::class)->dropIdleRedo($item->plan()->firstOrFail()->channel()->firstOrFail());
     }
 
     private function cancelItemInside(ContentPlanItem $item): void
@@ -1617,8 +1627,14 @@ class ChannelPlanService
             throw new BusinessException('ITEM_NOT_DRAFT', 'Chỉ làm lại được bài chưa duyệt.', 409);
         }
         $item->update(['redo_requested_at' => $on ? now() : null]);
+        $channel = $item->plan->channel()->firstOrFail();
+        if (! $on) {
+            app(PlanJobService::class)->dropIdleRedo($channel);
 
-        return $on && (bool) app(PlanJobService::class)->queueRedo($item->plan->channel()->firstOrFail());
+            return false;
+        }
+
+        return (bool) app(PlanJobService::class)->queueRedo($channel);
     }
 
     /**
@@ -1634,10 +1650,22 @@ class ChannelPlanService
         }
         $count = $plan->items()->where('status', ContentPlanItem::DRAFT)->update(['redo_requested_at' => $on ? now() : null]);
         if (! $on || ! $count) {
+            app(PlanJobService::class)->dropIdleRedo($plan->channel()->firstOrFail());
+
             return [$count, false];
         }
 
         return [$count, (bool) app(PlanJobService::class)->queueRedo($plan->channel()->firstOrFail())];
+    }
+
+    /** Kênh còn bài chờ làm lại không (bài chưa duyệt của kỳ chờ duyệt, hoặc bài đăng chưa được worker nhận). */
+    public function hasRedoRequests(Channel $channel): bool
+    {
+        return ContentPlanItem::query()
+            ->whereIn('plan_id', $channel->plans()->where('status', ContentPlan::DRAFT)->select('id'))
+            ->where('status', ContentPlanItem::DRAFT)->whereNotNull('redo_requested_at')->exists()
+            || $channel->posts()->whereNotNull('redo_requested_at')
+                ->whereIn('status', [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued])->exists();
     }
 
     /** Bài chưa duyệt đang chờ làm lại của kênh (context chế độ làm lại). */
@@ -1699,10 +1727,9 @@ class ChannelPlanService
             }
             $post->save();
         });
-        // Giao worker điều phối làm lại ngay (không chờ lượt lập kế hoạch sau)
-        if ($on) {
-            app(PlanJobService::class)->queueRedo($post->channel()->firstOrFail());
-        }
+        // Giao worker điều phối làm lại ngay (không chờ lượt lập kế hoạch sau); bỏ đánh dấu -> dọn việc làm lại thừa
+        $on ? app(PlanJobService::class)->queueRedo($post->channel()->firstOrFail())
+            : app(PlanJobService::class)->dropIdleRedo($post->channel()->firstOrFail());
 
         return $post->refresh();
     }

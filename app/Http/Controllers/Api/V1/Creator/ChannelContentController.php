@@ -52,6 +52,8 @@ class ChannelContentController extends Controller
     public function planJob(Request $request, int $channel): JsonResponse
     {
         $channel = $this->channel($request, $channel);
+        // Việc làm lại còn chờ mà không còn bài nào cần làm lại (kỳ đã huỷ / xoá trước bản sửa 2026-11-25): dọn luôn
+        $this->planJobs->dropIdleRedo($channel);
 
         return response()->json(['data' => [
             'plan_worker' => PlanJobService::hasWorker($channel->user_id),

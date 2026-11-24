@@ -55,6 +55,23 @@ class PlanJobService
         });
     }
 
+    /**
+     * Kênh không còn bài nào chờ làm lại (huỷ / xoá kỳ, bỏ đánh dấu, người dùng 2026-11-25: "hủy kỳ xóa kỳ rồi vẫn hiện
+     * Đang chờ worker nhận việc làm lại bài") -> việc LÀM LẠI còn CHỜ (chưa worker nhận) thành superseded. Việc đang chạy để
+     * worker tự xong (context rỗng -> báo không còn bài). Trả số việc đã huỷ.
+     */
+    public function dropIdleRedo(Channel $channel): int
+    {
+        if (app(ChannelPlanService::class)->hasRedoRequests($channel)) {
+            return 0;
+        }
+
+        return PlanJob::query()->where('channel_id', $channel->id)->where('status', WorkerJob::QUEUED)
+            ->get()->filter(fn (PlanJob $j) => ($j->payload['redo'] ?? false) && empty($j->payload['plan_id']))
+            ->each(fn (PlanJob $j) => $j->update(['status' => WorkerJob::SUPERSEDED, 'lease_expires_at' => null, 'finished_at' => now()]))
+            ->count();
+    }
+
     /** $fill: TẠO BỔ SUNG cho kỳ này (chờ duyệt / đã duyệt, còn slot thiếu bài) thay vì lập kỳ mới. */
     public function create(Channel $channel, ?string $note, ?ContentPlan $fill = null): PlanJob
     {

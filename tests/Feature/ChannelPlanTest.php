@@ -404,7 +404,21 @@ class ChannelPlanTest extends TestCase
 
         $this->actingAs($this->shop)->postJson("{$base}/cancel")->assertOk()->assertJsonPath('data.status', 'cancelled');
         $this->assertSame('superseded', $fill->fresh()->status, 'Việc bổ sung của kỳ bị huỷ theo');
-        $this->assertSame('queued', $redo->fresh()->status, 'Việc làm lại (plan_id null) giữ nguyên');
+        // Kênh không còn bài nào chờ làm lại -> việc làm lại đang chờ cũng bị huỷ (không hiện "Đang chờ worker nhận việc")
+        $this->assertSame('superseded', $redo->fresh()->status);
+
+        // Việc làm lại kẹt từ trước (kỳ đã huỷ trước bản sửa): mở tab Kế hoạch là tự dọn
+        $stale = $job(null, true);
+        $this->getJson("/api/v1/creator/channels/{$this->channel->id}/plan-job")->assertOk()->assertJsonPath('data.job.status', 'superseded');
+        $this->assertSame('superseded', $stale->fresh()->status);
+
+        // Còn bài đăng chờ làm lại thì việc làm lại giữ nguyên
+        $kept = $job(null, true);
+        SocialPost::query()->create(['user_id' => $this->shop->id, 'worker_id' => $this->channel->worker_id, 'channel_id' => $this->channel->id,
+            'type' => 'photo', 'source' => SocialPost::SOURCE_EXISTING, 'idempotency_key' => (string) Str::uuid(), 'platforms' => ['tiktok'],
+            'status' => SocialPostStatus::PendingReview, 'scheduled_at' => now()->addDay(), 'redo_requested_at' => now()]);
+        $this->getJson("/api/v1/creator/channels/{$this->channel->id}/plan-job")->assertOk();
+        $this->assertSame('queued', $kept->fresh()->status);
     }
 
     public function test_fill_missing_slots_of_approved_plan(): void
