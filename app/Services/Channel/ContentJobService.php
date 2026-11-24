@@ -123,7 +123,7 @@ class ContentJobService
             ->keyBy('id');
         $sample = PostSamples::get((string) $post->sample_key);
         // Bài "Outfit - theo sản phẩm" (2026-11-24): mỗi slide = ảnh outfit (2/3 trái) + 3 ảnh lịch sử tạo ảnh mới nhất của
-        // sản phẩm (cột phải) + mã "#k"
+        // sản phẩm (cột phải) + mã "MS<k>"
         $byProduct = $post->imageBatch()->value('outfit_mode') === \App\Models\ImageBatch::OUTFIT_MODE_PRODUCT;
         $library = app(\App\Services\ShopImageLibrary::class);
 
@@ -154,7 +154,7 @@ class ContentJobService
                             ? $library->productImages($post->user_id, $generation->product_id)->orderByDesc('id')->limit(self::PRODUCT_HISTORY)
                                 ->get()->map(fn ($o) => $this->media->url($o->image_path))->values()->all()
                             : [],
-                        'code' => '#'.($k + 1),
+                        'code' => 'MS'.($k + 1),
                     ] : []),
                 ];
             })->all(),

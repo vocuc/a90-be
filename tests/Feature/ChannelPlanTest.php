@@ -746,7 +746,7 @@ class ChannelPlanTest extends TestCase
         $content = $this->withToken($this->contentToken)->getJson('/api/v1/worker-jobs')->assertOk()->json('data');
         $req = $content['request'];
         $this->assertTrue($req['cover_collage']);
-        $this->assertSame(['#1', '#2', '#3', '#4'], array_column($req['images'], 'code'));
+        $this->assertSame(['MS1', 'MS2', 'MS3', 'MS4'], array_column($req['images'], 'code'));
         $this->assertSame([3, 1, 0, 0], array_map(fn ($i) => count($i['product_images']), $req['images']));
         $this->assertSame($ids, array_column(array_column($req['images'], 'product'), 'id'));
         $firstHistory = GenerationOutput::query()->where('generation_id', $firstGen)->pluck('id')->all();
