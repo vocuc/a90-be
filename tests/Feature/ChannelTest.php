@@ -48,8 +48,8 @@ class ChannelTest extends TestCase
         $first = $this->createChannel($shop, $this->publishWorker($shop))
             ->assertCreated()
             ->assertJsonPath('data.name', 'Kênh chính')
-            ->assertJsonPath('data.title_max', 40)
-            ->assertJsonPath('data.content_max', 300)
+            ->assertJsonMissingPath('data.title_max')
+            ->assertJsonMissingPath('data.content_max')
             ->assertJsonPath('data.hashtags', ['giaynu', 'tet2027'])
             ->assertJsonPath('data.plan_days', 7)
             ->assertJsonPath('data.posts_per_day', 3)
@@ -60,7 +60,6 @@ class ChannelTest extends TestCase
         if (Channel::MAX_PER_SHOP > 1) {
             $this->createChannel($shop, $this->publishWorker($shop), 'Kênh phụ')
                 ->assertCreated()
-                ->assertJsonPath('data.title_max', 90)
                 ->assertJsonPath('data.hashtags', []);
         }
     }
@@ -116,6 +115,7 @@ class ChannelTest extends TestCase
             'persona' => ['age_range' => ' 18-25 ', 'tone' => 'xưng shop, gọi các nàng', 'la' => 'bỏ qua', 'gender' => ''],
             'requirements' => '  Không dùng icon cuối tiêu đề  ',
             'hashtags' => ['#tet2027', 'giaytet2027', 'TET2027'],
+            // Ô tiêu đề / nội dung tối đa đã bỏ (2026-11-25): gửi lên bị bỏ qua
             'title_max' => 60,
         ])->assertOk()
             ->assertJsonPath('data.plan_days', 3)
@@ -128,8 +128,9 @@ class ChannelTest extends TestCase
             ->assertJsonPath('data.persona', ['age_range' => '18-25', 'tone' => 'xưng shop, gọi các nàng'])
             ->assertJsonPath('data.requirements', 'Không dùng icon cuối tiêu đề')
             ->assertJsonPath('data.hashtags', ['tet2027', 'giaytet2027'])
-            ->assertJsonPath('data.title_max', 60)
+            ->assertJsonMissingPath('data.title_max')
             ->assertJsonPath('data.missing', ['lineup', 'text_templates']);
+        $this->assertSame(\App\Models\SocialPost::TITLE_MAX, Channel::query()->find($id)->aiSettings()['title_max']);
 
         $this->updateChannel($shop, $id, ['time_slots' => [['start' => '11:00', 'end' => '13:00'], ['start' => '12:30', 'end' => '14:00']]])
             ->assertStatus(422)->assertJsonValidationErrors('time_slots');

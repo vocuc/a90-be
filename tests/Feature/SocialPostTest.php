@@ -347,11 +347,12 @@ class SocialPostTest extends TestCase
         $request = $this->aiCalls[0]['request'];
         $this->assertSame([], $request['samples'], 'Bài viết mẫu cũ đã bỏ');
         $this->assertSame('Luôn xưng shop', $request['requirements']);
-        $this->assertSame(20, $request['limits']['title_max']);
-        $this->assertSame(60, $request['limits']['content_max']);
+        // Cấu hình tối đa theo kênh đã bỏ (2026-11-25): luôn mức hệ thống, cột cũ trong DB bị bỏ qua
+        $this->assertSame(SocialPost::TITLE_MAX, $request['limits']['title_max']);
+        $this->assertSame(SocialContentJobService::AI_CONTENT_MAX, $request['limits']['content_max']);
 
         $post = $this->getPost($owner, $id)->json('data');
-        $this->assertLessThanOrEqual(20, mb_strlen($post['title']));
+        $this->assertLessThanOrEqual(SocialPost::TITLE_MAX, mb_strlen($post['title']));
         $this->assertSame('', $post['content']);
     }
 

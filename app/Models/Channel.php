@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /**
  * Kênh của shop (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt): 1 tài khoản TikTok, đăng qua đúng 1 worker publish
  * (worker_id unique). Có chân dung khách hàng (persona), cấu hình kế hoạch (plan_days, posts_per_day, time_slots,
- * video_percent, công tắc tự duyệt) và cài đặt AI viết nội dung (title_max, content_max, requirements, kho hashtag).
+ * video_percent, công tắc tự duyệt) và cài đặt AI viết nội dung (requirements, kho hashtag; title_max / content_max bỏ 2026-11-25).
  * Mọi bài đăng thuộc 1 kênh: bài nhận channel_id theo worker được giao (SocialPost::booted).
  */
 class Channel extends Model
@@ -81,8 +81,10 @@ class Channel extends Model
     public function aiSettings(): array
     {
         return [
-            'title_max' => (int) $this->title_max,
-            'content_max' => (int) $this->content_max,
+            // Bỏ cấu hình tiêu đề / nội dung tối đa theo kênh (người dùng 2026-11-25): luôn dùng mức tối đa của hệ thống,
+            // độ dài do "Yêu cầu" quyết định. Cột title_max / content_max cũ trong DB không dùng nữa.
+            'title_max' => SocialPost::TITLE_MAX,
+            'content_max' => SocialContentJobService::AI_CONTENT_MAX,
             'requirements' => (string) $this->requirements,
             'hashtags' => $this->hashtags()->pluck('name')->all(),
         ];

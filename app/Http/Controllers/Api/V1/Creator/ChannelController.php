@@ -80,8 +80,6 @@ class ChannelController extends Controller
                 'worker_id' => $workerId,
                 ...Channel::aiDefaults(),
                 ...($legacy ? [
-                    'title_max' => $legacy->title_max,
-                    'content_max' => $legacy->content_max,
                     'requirements' => mb_substr((string) $legacy->requirements, 0, Channel::REQUIREMENTS_MAX) ?: null,
                 ] : []),
             ]);
@@ -118,8 +116,6 @@ class ChannelController extends Controller
             'auto_approve_plan' => ['sometimes', 'boolean'],
             'persona' => ['sometimes', 'present', 'array'],
             'persona.*' => ['nullable', 'string', 'max:'.Channel::PERSONA_FIELD_MAX],
-            'title_max' => ['sometimes', 'required', 'integer', 'min:'.Channel::TITLE_MAX_MIN, 'max:'.SocialPost::TITLE_MAX],
-            'content_max' => ['sometimes', 'required', 'integer', 'min:'.Channel::CONTENT_MAX_MIN, 'max:'.SocialContentJobService::AI_CONTENT_MAX],
             'requirements' => ['sometimes', 'nullable', 'string', 'max:'.Channel::REQUIREMENTS_MAX],
             'hashtags' => ['sometimes', 'present', 'array', 'max:'.Channel::MAX_HASHTAGS],
             'hashtags.*' => ['required', 'string', 'max:50', 'regex:'.Hashtag::PATTERN, function (string $attribute, mixed $value, Closure $fail) {
@@ -140,7 +136,7 @@ class ChannelController extends Controller
         $user = $request->user();
         $fields = collect($data)->only([
             'name', 'is_active', 'plan_days', 'posts_per_day',
-            'auto_approve_lineup', 'auto_approve_templates', 'auto_approve_plan', 'title_max', 'content_max',
+            'auto_approve_lineup', 'auto_approve_templates', 'auto_approve_plan',
         ])->all();
         if (isset($fields['name'])) {
             $fields['name'] = trim($fields['name']);
@@ -289,8 +285,7 @@ class ChannelController extends Controller
             'auto_approve_lineup' => $channel->auto_approve_lineup,
             'auto_approve_templates' => $channel->auto_approve_templates,
             'auto_approve_plan' => $channel->auto_approve_plan,
-            'title_max' => $channel->title_max,
-            'content_max' => $channel->content_max,
+            // Bỏ cấu hình tiêu đề / nội dung tối đa (người dùng 2026-11-25): chỉ còn yêu cầu cho AI
             'requirements' => (string) $channel->requirements,
             'hashtags' => $channel->hashtags()->pluck('name')->values(),
             // Hashtag các sản phẩm của shop, cho nút "Lấy hashtag từ sản phẩm"
@@ -304,8 +299,6 @@ class ChannelController extends Controller
                 'requirements' => Channel::REQUIREMENTS_MAX,
                 'persona_field' => Channel::PERSONA_FIELD_MAX,
                 'persona_fields' => Channel::PERSONA_FIELDS,
-                'title_max' => ['min' => Channel::TITLE_MAX_MIN, 'max' => SocialPost::TITLE_MAX],
-                'content_max' => ['min' => Channel::CONTENT_MAX_MIN, 'max' => SocialContentJobService::AI_CONTENT_MAX],
             ],
         ]]);
     }

@@ -26,6 +26,7 @@ use App\Services\AuditLogger;
 use App\Services\AutoBatchService;
 use App\Services\ImageBatchService;
 use App\Services\OutfitBatchService;
+use App\Services\Social\SocialContentJobService;
 use App\Services\Social\VideoPostService;
 use App\Support\PostSamples;
 use App\Support\ProductTags;
@@ -846,8 +847,9 @@ class ChannelPlanService
             ->filter()->unique()->take((int) config('ai90.social.ai_max_hashtags'))->values()->all();
 
         return [
-            'title' => Str::limit(trim(preg_replace('/\s+/u', ' ', (string) ($raw['title'] ?? ''))), min((int) $channel->title_max, SocialPost::TITLE_MAX), ''),
-            'content' => Str::limit(trim((string) ($raw['content'] ?? '')), (int) $channel->content_max, ''),
+            // Chỉ giới hạn mức hệ thống (bỏ cấu hình tối đa theo kênh 2026-11-25)
+            'title' => Str::limit(trim(preg_replace('/\s+/u', ' ', (string) ($raw['title'] ?? ''))), SocialPost::TITLE_MAX, ''),
+            'content' => Str::limit(trim((string) ($raw['content'] ?? '')), SocialContentJobService::AI_CONTENT_MAX, ''),
             'hashtags' => $hashtags,
         ];
     }
