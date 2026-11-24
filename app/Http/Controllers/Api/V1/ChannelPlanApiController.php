@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Channel;
 use App\Models\ChannelTextTemplate;
 use App\Models\ChannelTopic;
+use App\Models\ContentPlanItem;
 use App\Models\SocialPost;
 use App\Models\User;
 use App\Services\Channel\ChannelPlanService;
@@ -115,6 +116,16 @@ class ChannelPlanApiController extends Controller
         $model = $this->plans->redo($model, $request->all());
 
         return response()->json(['data' => ['id' => $model->id, 'status' => $model->status]]);
+    }
+
+    /** Nội dung làm lại cho bài trong kỳ CHƯA DUYỆT chủ shop bấm "Làm lại" (context item_redo_requests). */
+    public function redoItem(Request $request, int $item): JsonResponse
+    {
+        $request->validate(['images' => ['nullable', 'array'], 'outfit' => ['nullable', 'array'], 'product_batch' => ['nullable', 'array'], 'product_id' => ['nullable', 'integer'], 'sample_key' => ['required', 'string'], 'hook' => ['nullable', 'string']]);
+        $model = ContentPlanItem::query()->find($item) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy bài kế hoạch.', 404);
+        $model = $this->plans->redoItem($model, $request->all());
+
+        return response()->json(['data' => ['id' => $model->id, 'plan_id' => $model->plan_id, 'hook' => $model->hook]]);
     }
 
     /**

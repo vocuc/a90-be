@@ -149,6 +149,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
                 ->whereNumber(['channel', 'plan'])->whereIn('decision', ['approve', 'cancel']);
             Route::put('channels/{channel}/plans/{plan}/items/{item}', [ChannelContentController::class, 'updateItem'])->whereNumber(['channel', 'plan', 'item']);
             Route::post('channels/{channel}/plans/{plan}/items/{item}/cancel', [ChannelContentController::class, 'cancelItem'])->whereNumber(['channel', 'plan', 'item']);
+            Route::post('channels/{channel}/plans/{plan}/items/{item}/redo', [ChannelContentController::class, 'redoItem'])->whereNumber(['channel', 'plan', 'item']);
+            Route::delete('channels/{channel}/plans/{plan}/items/{item}/redo', [ChannelContentController::class, 'redoItem'])->whereNumber(['channel', 'plan', 'item']);
             Route::get('channels/{channel}/calendar', [ChannelContentController::class, 'calendar'])->whereNumber('channel');
             // Chủ đề kênh (AI tự tạo khi lập kế hoạch; chủ shop sửa tên / tags, tạm tắt)
             Route::get('channels/{channel}/topics', [ChannelContentController::class, 'topics'])->whereNumber('channel');
@@ -271,6 +273,7 @@ Route::prefix('v1/channel-plan')->middleware(['throttle:api', 'auth:sanctum', 'a
     Route::post('channels/{channel}/topics', [ChannelPlanApiController::class, 'topics'])->whereNumber('channel');
     Route::post('channels/{channel}/plans/{plan}/items', [ChannelPlanApiController::class, 'submitPlan'])->whereNumber(['channel', 'plan']);
     Route::post('posts/{post}/redo', [ChannelPlanApiController::class, 'redo'])->whereNumber('post');
+    Route::post('plan-items/{item}/redo', [ChannelPlanApiController::class, 'redoItem'])->whereNumber('item');
     // Tag sản phẩm AI + sản phẩm lọc theo tag (a90-fe note/xay-kenh-tiktok/chu-de-va-tag-san-pham.txt mục 5, 6)
     Route::get('channels/{channel}/products', [ChannelPlanApiController::class, 'products'])->whereNumber('channel');
     Route::get('shops/{user}/products/untagged', [ChannelPlanApiController::class, 'untaggedProducts'])->whereNumber('user');

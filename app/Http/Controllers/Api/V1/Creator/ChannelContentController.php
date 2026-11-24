@@ -277,8 +277,9 @@ class ChannelContentController extends Controller
     {
         $channel = $this->channel($request, $channel);
         $model = $channel->plans()->findOrFail($plan)->items()->findOrFail($item);
+        // Chỉ cần gửi phần muốn đổi (vd chỉ hook / tiêu đề): phần không gửi giữ theo bài hiện tại
         $data = $request->validate([
-            'sample_key' => ['required', 'string'],
+            'sample_key' => ['sometimes', 'required', 'string'],
             'hook' => ['nullable', 'string', 'max:200'],
             'video_template_id' => ['nullable', 'integer'],
             'images' => ['nullable', 'array', 'max:'.SocialPost::MAX_IMAGES],
@@ -309,6 +310,18 @@ class ChannelContentController extends Controller
         $this->plans->deleteItem($model);
 
         return response()->json(['data' => ['deleted' => true]]);
+    }
+
+    /**
+     * Nút "Làm lại" bài chưa duyệt: đánh dấu (POST) / bỏ đánh dấu (DELETE). Đánh dấu xong giao worker điều phối soạn lại
+     * ngay -> { data: item + { redo_queued } } (redo_queued false: shop chưa gắn worker điều phối).
+     */
+    public function redoItem(Request $request, int $channel, int $plan, int $item): JsonResponse
+    {
+        $model = $this->channel($request, $channel)->plans()->findOrFail($plan)->items()->findOrFail($item);
+        $queued = $this->plans->requestItemRedo($model, $request->isMethod('post'));
+
+        return response()->json(['data' => [...$this->item($model->fresh()), 'redo_queued' => $queued]]);
     }
 
     // ---- Lịch đăng ----
@@ -640,6 +653,9 @@ class ChannelContentController extends Controller
             'sample_key' => $i->sample_key,
             'sample_name' => PostSamples::get($i->sample_key)['name'] ?? $i->sample_key,
             'hook' => $i->hook,
+            // Bài không chữ (unboxing, video từ ảnh sản phẩm): hook = tiêu đề, chủ shop sửa tiêu đề
+            'hook_from_title' => PostSamples::hookFromTitle(PostSamples::get($i->sample_key) ?? []),
+            'redo_requested_at' => $i->redo_requested_at,
             'topic' => $i->topic_id ? ChannelTopic::query()->whereKey($i->topic_id)->value('name') : null,
             'format' => $i->format,
             'video_template_id' => $i->video_template_id,

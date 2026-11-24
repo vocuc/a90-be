@@ -160,6 +160,8 @@ class ChannelPlanService
             ] : null,
             'draft_plan_id' => $draft?->id,
             'redo_requests' => $this->redoRequests($channel),
+            // Bài trong kỳ CHƯA DUYỆT chủ shop bấm "Làm lại" ở tab Kế hoạch (gửi lại qua plan-items/{item_id}/redo)
+            'item_redo_requests' => $this->itemRedoRequests($channel),
             'now' => now()->toIso8601String(),
         ];
     }
@@ -1428,12 +1430,46 @@ class ChannelPlanService
             ->update(['status' => WorkerJob::SUPERSEDED, 'lease_expires_at' => null, 'finished_at' => now()]);
     }
 
-    /** Chủ shop sửa bài draft trước khi duyệt (cùng luật kiểm tra). */
+    /**
+     * Chủ shop sửa bài draft trước khi duyệt (cùng luật kiểm tra). Chỉ cần gửi phần muốn đổi (nút Sửa ở tab Kế hoạch,
+     * 2026-11-24): khoá không gửi lấy theo bài hiện tại (bài viết mẫu, ảnh + chữ trên ảnh, lô phối đồ / lô ảnh, template,
+     * chủ đề, caption, hashtag).
+     */
     public function updateItem(Channel $channel, ContentPlanItem $item, array $raw): ContentPlanItem
     {
         if ($item->status !== ContentPlanItem::DRAFT) {
             throw new BusinessException('ITEM_NOT_DRAFT', 'Chỉ sửa được bài chưa duyệt.', 409);
         }
+        $raw += $this->itemRaw($item);
+        $data = $this->validateItemUpdate($channel, $item, $raw);
+        $item->update($data);
+
+        return $item;
+    }
+
+    /** Dữ liệu hiện tại của bài theo dạng gửi lên (để sửa 1 phần giữ nguyên phần còn lại). */
+    private function itemRaw(ContentPlanItem $item): array
+    {
+        return array_filter([
+            'sample_key' => $item->sample_key,
+            'hook' => $item->hook,
+            'images' => collect($item->images ?? [])->map(fn ($img) => [
+                'ref' => self::ref($img['generation_id'], $img['output_id']),
+                'text' => $img['text'] ?? null,
+            ])->values()->all(),
+            'outfit' => $item->outfit,
+            'product_batch' => $item->product_batch,
+            'text_template_id' => $item->text_template_id,
+            'video_template_id' => $item->video_template_id,
+            'title' => $item->title,
+            'content' => $item->content,
+            'hashtags' => $item->hashtags ?? [],
+        ], fn ($v) => $v !== null);
+    }
+
+    /** Kiểm tra bài sửa / làm lại của kỳ (bỏ chữ ký của chính bài khi chặn trùng), trả dữ liệu để lưu. */
+    private function validateItemUpdate(Channel $channel, ContentPlanItem $item, array $raw, bool $keepTopic = true): array
+    {
         $lineup = $channel->approvedLineup() ?? throw new BusinessException('LINEUP_REQUIRED', 'Kênh chưa có tuyến nội dung đã duyệt.', 409);
         $plan = $item->plan;
         $signatures = array_values(array_diff(
@@ -1444,13 +1480,13 @@ class ChannelPlanService
         if (empty($raw['product_batch']) && $item->product_batch) {
             $raw['product_batch'] = $item->product_batch;
         }
-        // Chủ shop sửa trên A51 không gửi chủ đề: giữ chủ đề cũ
+        // Không gửi chủ đề: chủ shop sửa -> giữ chủ đề cũ; lệnh làm lại -> bài không chủ đề
         if (empty($raw['topic_id']) && empty($raw['topic'])) {
-            if ($item->topic_id) {
+            if ($item->topic_id && $keepTopic) {
                 $raw['topic_id'] = $item->topic_id;
             } else {
-                // Chủ đề của bài đã bị xoá: giữ "không xác định" (ChannelTopicService::NO_TOPIC; $raw đã qua validate nên
-                // client không tự gửi được khoá này)
+                // Chủ đề của bài đã bị xoá / lệnh làm lại không chọn chủ đề: không chủ đề (ChannelTopicService::NO_TOPIC;
+                // $raw đã qua validate nên client không tự gửi được khoá này)
                 $raw[ChannelTopicService::NO_TOPIC] = true;
             }
         }
@@ -1461,7 +1497,59 @@ class ChannelPlanService
         }
         $data['topic_id'] = $this->topics->resolve($channel, $data['_topic']);
         unset($data['_signature'], $data['_topic']);
-        $item->update($data);
+
+        return $data;
+    }
+
+    // ------------------------------------------------------------------ Làm lại bài trong kỳ chưa duyệt
+
+    /**
+     * Nút "Làm lại" ở tab Kế hoạch (người dùng 2026-11-24): đánh dấu / bỏ đánh dấu bài CHƯA DUYỆT, đánh dấu xong giao
+     * worker điều phối chạy /lap-ke-hoach --lam-lai ngay (dùng chung việc plan đang chờ nếu có). Trả true khi đã giao việc
+     * (false: shop chưa gắn worker điều phối, bài chỉ được đánh dấu).
+     */
+    public function requestItemRedo(ContentPlanItem $item, bool $on): bool
+    {
+        if ($on && $item->status !== ContentPlanItem::DRAFT) {
+            throw new BusinessException('ITEM_NOT_DRAFT', 'Chỉ làm lại được bài chưa duyệt.', 409);
+        }
+        $item->update(['redo_requested_at' => $on ? now() : null]);
+
+        return $on && (bool) app(PlanJobService::class)->queueRedo($item->plan->channel()->firstOrFail());
+    }
+
+    /** Bài chưa duyệt đang chờ làm lại của kênh (context chế độ làm lại). */
+    private function itemRedoRequests(Channel $channel): Collection
+    {
+        return ContentPlanItem::query()
+            ->whereIn('plan_id', $channel->plans()->where('status', ContentPlan::DRAFT)->select('id'))
+            ->where('status', ContentPlanItem::DRAFT)->whereNotNull('redo_requested_at')
+            ->with('topic:id,name')->orderBy('scheduled_at')->get()
+            ->map(fn (ContentPlanItem $i) => [
+                'item_id' => $i->id,
+                'plan_id' => $i->plan_id,
+                'scheduled_at' => $i->scheduled_at?->toIso8601String(),
+                'format' => $i->format,
+                'sample_key' => $i->sample_key,
+                'topic' => $i->topic?->name,
+                'hook' => $i->hook,
+                'title' => $i->title,
+                'images' => collect($i->images ?? [])->map(fn ($img) => ['ref' => self::ref($img['generation_id'], $img['output_id']), 'text' => $img['text'] ?? null])->values(),
+                'outfit' => $i->outfit,
+                'product_batch' => $i->product_batch,
+            ]);
+    }
+
+    /** Lệnh gửi bài làm lại cho 1 bài chưa duyệt: giữ giờ đăng + định dạng, thay toàn bộ nội dung, xoá cờ làm lại. */
+    public function redoItem(ContentPlanItem $item, array $raw): ContentPlanItem
+    {
+        if ($item->status !== ContentPlanItem::DRAFT || $item->plan->status !== ContentPlan::DRAFT) {
+            throw new BusinessException('ITEM_NOT_DRAFT', 'Bài đã được duyệt / đã huỷ, không làm lại được.', 409);
+        }
+        $channel = $item->plan->channel()->firstOrFail();
+        $data = $this->validateItemUpdate($channel, $item, $raw, false);
+        $item->update([...$data, 'redo_requested_at' => null]);
+        $this->audit->log('content_plan_item.redo', $item);
 
         return $item;
     }

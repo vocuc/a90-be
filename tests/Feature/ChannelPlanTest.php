@@ -295,6 +295,56 @@ class ChannelPlanTest extends TestCase
             ->assertJsonPath('data.request.images.0', "https://media.test/{$overlayPath}");
     }
 
+    public function test_owner_edits_hook_only_and_redoes_draft_item(): void
+    {
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->item(0, $refs), $this->item(1, $refs, ['hook' => 'Hook 1']),
+        ]])->assertOk()->assertJsonPath('data.accepted', [0, 1]);
+        $item = ContentPlanItem::query()->where('plan_id', $planId)->where('slot_index', 0)->firstOrFail();
+        $base = "/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/items/{$item->id}";
+
+        // Nút Sửa: chỉ gửi hook + tiêu đề -> ảnh, chữ trên ảnh, chủ đề, hashtag giữ nguyên
+        $this->actingAs($this->shop)->putJson($base, ['hook' => 'Hook mới cho bài 0', 'title' => 'Tiêu đề mới'])->assertOk()
+            ->assertJsonPath('data.hook', 'Hook mới cho bài 0')
+            ->assertJsonPath('data.title', 'Tiêu đề mới')
+            ->assertJsonPath('data.images.0.text', 'Đập hộp đi chúc Tết 🧧')
+            ->assertJsonPath('data.topic', 'Chủ đề slot 0')
+            ->assertJsonPath('data.hashtags', ['giaytet2027'])
+            ->assertJsonPath('data.hook_from_title', false);
+        // Trùng y hệt bài 1 (cùng ảnh + hook) -> 422
+        $this->putJson($base, ['hook' => 'Hook 1'])->assertUnprocessable();
+
+        // Nút Làm lại: chưa gắn worker điều phối -> chỉ đánh dấu
+        $this->postJson("{$base}/redo")->assertOk()->assertJsonPath('data.redo_queued', false);
+        $this->assertNotNull($item->fresh()->redo_requested_at);
+        $this->deleteJson("{$base}/redo")->assertOk()->assertJsonPath('data.redo_requested_at', null);
+        [$dispatcher] = Worker::register('dieu-phoi-'.Str::random(4), Worker::TYPE_DISPATCH);
+        $dispatcher->users()->attach($this->shop->id);
+        $this->postJson("{$base}/redo")->assertOk()->assertJsonPath('data.redo_queued', true);
+        $this->assertTrue(\App\Models\PlanJob::query()->where('channel_id', $this->channel->id)->latest('id')->firstOrFail()->payload['redo']);
+        $this->app['auth']->forgetGuards();
+
+        // Lệnh làm lại: context có bài, gửi bài mới -> bài thay nội dung, xoá cờ
+        $requests = $this->api('GET', "channels/{$this->channel->id}/context?redo_only=1")->assertOk()->json('data.item_redo_requests');
+        $this->assertSame([$item->id], array_column($requests, 'item_id'));
+        $this->assertSame('Hook mới cho bài 0', $requests[0]['hook']);
+        $this->api('POST', "plan-items/{$item->id}/redo", $this->item(0, $refs, ['hook' => 'Hook làm lại', 'topic_id' => null, 'topic' => null]))
+            ->assertOk()->assertJsonPath('data.hook', 'Hook làm lại');
+        $item->refresh();
+        $this->assertNull($item->redo_requested_at);
+        $this->assertNull($item->topic_id, 'Lệnh làm lại không gửi chủ đề = bài không chủ đề');
+        $this->assertSame([], $this->api('GET', "channels/{$this->channel->id}/context?redo_only=1")->json('data.item_redo_requests'));
+
+        // Kỳ đã duyệt: không làm lại / không sửa được nữa
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+        $this->postJson("{$base}/redo")->assertStatus(409);
+        $this->app['auth']->forgetGuards();
+        $this->api('POST', "plan-items/{$item->id}/redo", $this->item(0, $refs, ['hook' => 'Hook nữa']))->assertStatus(409);
+    }
+
     public function test_fill_missing_slots_of_approved_plan(): void
     {
         $refs = $this->images(2);
