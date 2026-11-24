@@ -1523,7 +1523,9 @@ class ChannelPlanService
     {
         PlanJob::query()->where('channel_id', $plan->channel_id)
             ->whereIn('status', [WorkerJob::QUEUED, WorkerJob::PROCESSING])
-            ->where('payload->plan_id', $plan->id)
+            // So CHUỖI: việc làm lại có plan_id null -> json_unquote = 'null', so với số thì MySQL strict báo lỗi 1292
+            // (huỷ kỳ bị 500 khi kênh có việc làm lại đang chờ, 2026-11-25)
+            ->where('payload->plan_id', (string) $plan->id)
             ->update(['status' => WorkerJob::SUPERSEDED, 'lease_expires_at' => null, 'finished_at' => now()]);
     }
 

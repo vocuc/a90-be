@@ -389,6 +389,24 @@ class ChannelPlanTest extends TestCase
         $this->assertStringContainsString('Khung giờ đăng không còn chỗ', $service->fillBlockedReason($plan->fresh()));
     }
 
+    public function test_cancel_plan_while_redo_job_queued(): void
+    {
+        // Lỗi production 2026-11-25: việc làm lại (plan_id null) đang chờ -> huỷ kỳ bị 500 (MySQL 1292 khi so 'null' với số)
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$this->item(0, $refs)]])->assertOk();
+        $job = fn (?int $plan, bool $redo) => \App\Models\PlanJob::query()->create(['user_id' => $this->shop->id,
+            'channel_id' => $this->channel->id, 'status' => 'queued', 'payload' => ['note' => null, 'plan_id' => $plan, 'redo' => $redo]]);
+        $redo = $job(null, true);
+        $fill = $job($planId, false);
+        $base = "/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}";
+
+        $this->actingAs($this->shop)->postJson("{$base}/cancel")->assertOk()->assertJsonPath('data.status', 'cancelled');
+        $this->assertSame('superseded', $fill->fresh()->status, 'Việc bổ sung của kỳ bị huỷ theo');
+        $this->assertSame('queued', $redo->fresh()->status, 'Việc làm lại (plan_id null) giữ nguyên');
+    }
+
     public function test_fill_missing_slots_of_approved_plan(): void
     {
         $refs = $this->images(2);
