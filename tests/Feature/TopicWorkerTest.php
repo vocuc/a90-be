@@ -65,13 +65,13 @@ class TopicWorkerTest extends TestCase
         $this->assertSame(5, $job['request']['count']);
         $this->assertSame('Tập trung Tết', $job['request']['note']);
         $this->assertSame('Đi làm', $job['request']['existing_topics'][0]['name']);
-        $this->assertSame('Sự kiện', $job['request']['categories']['su_kien']);
+        $this->assertSame(['Sự kiện', 'Đi làm', 'Du lịch', 'Hằng ngày'], $job['request']['categories']);
         $this->assertSame(1, $job['request']['product_tags']['counts']['kieu']['giaycaogot']);
         $this->assertNotEmpty($job['request']['holidays']);
         $this->worker($token, 'GET', '')->assertNoContent();
 
         $res = $this->worker($token, 'POST', "/{$job['id']}", ['status' => 'completed', 'topics' => [
-            ['name' => 'Đi chúc Tết', 'category' => 'su_kien', 'note' => '  Đi chúc Tết nhà nội ngoại, sang mà đi cả ngày được  '],
+            ['name' => 'Đi chúc Tết', 'category' => 'sự kiện', 'note' => '  Đi chúc Tết nhà nội ngoại, sang mà đi cả ngày được  '],
             ['name' => 'đi làm', 'note' => 'x'],                      // trùng chủ đề có sẵn -> bỏ qua
             ['name' => 'Đi hẹn hò', 'category' => 'xyz'],             // không ghi chú -> lệnh sáng tạo tự do; nhóm sai -> đoán theo tên
             ['name' => str_repeat('a', 81)],
@@ -87,8 +87,8 @@ class TopicWorkerTest extends TestCase
         $this->assertSame('Đi chúc Tết nhà nội ngoại, sang mà đi cả ngày được', $topic->note);
         $this->assertNull(ChannelTopic::query()->where('name', 'Đi hẹn hò')->value('note'));
         // Nhóm chủ đề (2026-11-24): worker gửi nhóm; sai / thiếu thì đoán theo tên
-        $this->assertSame('su_kien', $topic->category);
-        $this->assertSame('hang_ngay', ChannelTopic::query()->where('name', 'Đi hẹn hò')->value('category'));
+        $this->assertSame('Sự kiện', $topic->category?->name);
+        $this->assertSame('Hằng ngày', ChannelTopic::query()->where('name', 'Đi hẹn hò')->sole()->category?->name);
         $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/topics")->assertOk()
             ->assertJsonPath('data.job.status', 'completed')->assertJsonPath('data.job.result.created', 2);
         // Đã xong -> bấm lượt mới được

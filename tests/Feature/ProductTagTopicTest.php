@@ -217,15 +217,33 @@ class ProductTagTopicTest extends TestCase
         $topic = ChannelTopic::query()->sole();
         $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['note' => '  '])
             ->assertOk()->assertJsonPath('data.note', null);
-        // Nhóm chủ đề (2026-11-24): không gửi -> đoán theo tên ("Tết" -> Sự kiện); chủ shop đổi được, nhóm sai -> 422
-        $this->assertSame('su_kien', $topic->fresh()->category);
-        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['category' => 'hang_ngay'])
-            ->assertOk()->assertJsonPath('data.category', 'hang_ngay');
-        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['category' => 'su_kien'])->assertOk();
-        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['category' => 'xyz'])
-            ->assertStatus(422)->assertJsonValidationErrors('category');
-        $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/topics")->assertOk()
-            ->assertJsonPath('data.categories.0', ['key' => 'su_kien', 'label' => 'Sự kiện']);
+        // Nhóm chủ đề (chủ shop quản lý, 2026-11-24): kênh có sẵn 4 nhóm mặc định; không gửi nhóm -> đoán theo tên ("Tết" -> Sự kiện)
+        $base = "/api/v1/creator/channels/{$this->channel->id}";
+        $tab = $this->actingAs($this->shop)->getJson("{$base}/topics")->assertOk()->json('data');
+        $this->assertSame(['Sự kiện', 'Đi làm', 'Du lịch', 'Hằng ngày'], array_column($tab['categories'], 'name'));
+        [$event, $work] = $tab['categories'];
+        $this->assertSame($event['id'], $topic->fresh()->category_id);
+        $this->assertSame('Sự kiện', $tab['topics'][0]['category']);
+        $this->assertSame(1, $tab['categories'][0]['topics']);
+        // Thêm / đổi tên / sắp thứ tự / xoá nhóm
+        $summer = $this->actingAs($this->shop)->postJson("{$base}/topic-categories", ['name' => ' Mùa hè '])->assertCreated()->json('data');
+        $this->assertSame('Mùa hè', $summer['name']);
+        $this->actingAs($this->shop)->postJson("{$base}/topic-categories", ['name' => 'mùa hè'])->assertStatus(422);
+        $this->actingAs($this->shop)->postJson("{$base}/topic-categories", ['name' => 'Khác'])->assertStatus(422);
+        $this->actingAs($this->shop)->putJson("{$base}/topic-categories/{$summer['id']}", ['name' => 'Đi biển mùa hè'])
+            ->assertOk()->assertJsonPath('data.name', 'Đi biển mùa hè');
+        $ids = array_column($tab['categories'], 'id');
+        $this->actingAs($this->shop)->putJson("{$base}/topic-categories/order", ['ids' => [$summer['id'], ...array_reverse($ids)]])
+            ->assertOk()->assertJsonPath('data.0.name', 'Đi biển mùa hè')->assertJsonPath('data.1.name', 'Hằng ngày');
+        $this->actingAs($this->shop)->putJson("{$base}/topic-categories/order", ['ids' => $ids])->assertStatus(422);
+        // Chủ đề đổi nhóm; nhóm kênh khác -> 422; null = "Khác"
+        $this->actingAs($this->shop)->putJson("{$base}/topics/{$topic->id}", ['category_id' => $work['id']])
+            ->assertOk()->assertJsonPath('data.category', 'Đi làm');
+        $this->actingAs($this->shop)->putJson("{$base}/topics/{$topic->id}", ['category_id' => 999999])->assertStatus(422);
+        $this->actingAs($this->shop)->deleteJson("{$base}/topic-categories/{$work['id']}")->assertNoContent();
+        $this->assertNull($topic->fresh()->category_id);
+        $this->actingAs($this->shop)->getJson("{$base}/topics")->assertOk()->assertJsonPath('data.topics.0.category', 'Khác');
+        $this->actingAs($this->shop)->putJson("{$base}/topics/{$topic->id}", ['category_id' => $event['id']])->assertOk();
 
         $byName = ['topic' => ['name' => 'Đi chúc Tết']];
         $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [

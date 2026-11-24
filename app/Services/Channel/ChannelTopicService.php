@@ -4,6 +4,7 @@ namespace App\Services\Channel;
 
 use App\Models\Channel;
 use App\Models\ChannelTopic;
+use App\Models\ChannelTopicCategory;
 use App\Models\ContentPlanItem;
 use App\Support\ProductTags;
 use Carbon\CarbonImmutable;
@@ -72,7 +73,7 @@ class ChannelTopicService
             return null;
         }
 
-        return ['id' => $topic->id, 'name' => $topic->name, 'note' => $topic->note, 'category' => $topic->category];
+        return ['id' => $topic->id, 'name' => $topic->name, 'note' => $topic->note];
     }
 
     /** Cùng chủ đề + cùng loại bài đã có bài đăng / bài kế hoạch chưa duyệt trong ± REPEAT_DAYS ngày quanh $at. */
@@ -120,9 +121,11 @@ class ChannelTopicService
      */
     public function listFor(Channel $channel, bool $activeOnly = false): array
     {
-        $order = array_flip(array_keys(ChannelTopic::CATEGORIES));
+        // Theo thứ tự nhóm (chủ đề chưa có nhóm = "Khác" ở cuối), trong nhóm theo tên
+        $order = $this->categories($channel)->pluck('id')->flip();
+        $names = $this->categories($channel)->pluck('name', 'id');
         $topics = $channel->topics()->when($activeOnly, fn ($q) => $q->where('status', ChannelTopic::ACTIVE))->orderBy('name')->get()
-            ->sortBy(fn (ChannelTopic $t) => $order[$t->category] ?? count($order), SORT_REGULAR)->values();
+            ->sortBy(fn (ChannelTopic $t) => $order[$t->category_id] ?? $order->count(), SORT_REGULAR)->values();
         $posts = DB::table('social_posts')->where('channel_id', $channel->id)->whereNotNull('topic_id')
             ->groupBy('topic_id', 'sample_key')
             ->selectRaw('topic_id, sample_key, COUNT(*) AS total, MAX(scheduled_at) AS last_at')->get();
@@ -133,7 +136,7 @@ class ChannelTopicService
             ->selectRaw('content_plan_items.topic_id, content_plan_items.sample_key, COUNT(*) AS total, MAX(content_plan_items.scheduled_at) AS last_at')->get();
         $rows = $posts->concat($items)->groupBy('topic_id');
 
-        return $topics->map(function (ChannelTopic $t) use ($rows) {
+        return $topics->map(function (ChannelTopic $t) use ($rows, $names) {
             $counts = [];
             $last = [];
             foreach ($rows->get($t->id, collect()) as $r) {
@@ -145,8 +148,9 @@ class ChannelTopicService
             return [
                 'id' => $t->id,
                 'name' => $t->name,
-                // Nhóm chủ đề (ChannelTopic::CATEGORIES, 2026-11-24)
-                'category' => $t->category,
+                // Nhóm chủ đề (chủ shop quản lý, 2026-11-24): category_id null = "Khác"
+                'category_id' => $t->category_id,
+                'category' => $names[$t->category_id] ?? ChannelTopic::OTHER_CATEGORY,
                 'note' => $t->note,
                 'source' => $t->source,
                 'status' => $t->status,
@@ -154,6 +158,45 @@ class ChannelTopicService
                 'last_used' => (object) $last,
             ];
         })->values()->all();
+    }
+
+    /** Nhóm chủ đề của kênh theo thứ tự; kênh chưa có nhóm nào thì tạo sẵn ChannelTopic::DEFAULT_CATEGORIES. */
+    public function categories(Channel $channel)
+    {
+        if (! $channel->topicCategories()->exists()) {
+            foreach (ChannelTopic::DEFAULT_CATEGORIES as $i => $name) {
+                $channel->topicCategories()->firstOrCreate(['name' => $name], ['position' => $i + 1]);
+            }
+        }
+
+        return $channel->topicCategories()->get();
+    }
+
+    /** Nhóm cho tab Chủ đề / worker: [{id, name, position, topics}] theo thứ tự. */
+    public function categoryList(Channel $channel): array
+    {
+        $counts = $channel->topics()->whereNotNull('category_id')->groupBy('category_id')->selectRaw('category_id, COUNT(*) AS n')
+            ->pluck('n', 'category_id');
+
+        return $this->categories($channel)->map(fn (ChannelTopicCategory $c) => [
+            'id' => $c->id, 'name' => $c->name, 'position' => $c->position, 'topics' => (int) ($counts[$c->id] ?? 0),
+        ])->values()->all();
+    }
+
+    /**
+     * Nhóm cho chủ đề mới: id nhóm của kênh khớp $value (id hoặc tên, không phân biệt hoa thường); không khớp thì đoán theo
+     * $text (tên nhóm mặc định, nếu kênh còn nhóm đó); không đoán được -> null ("Khác").
+     */
+    public function resolveCategory(Channel $channel, mixed $value, string $text): ?int
+    {
+        $categories = $this->categories($channel);
+        if (is_numeric($value) && $categories->contains('id', (int) $value)) {
+            return (int) $value;
+        }
+        $find = fn (?string $name) => $name === null ? null
+            : $categories->first(fn (ChannelTopicCategory $c) => mb_strtolower($c->name) === mb_strtolower(trim($name)))?->id;
+
+        return (is_string($value) ? $find($value) : null) ?? $find(ChannelTopic::guessCategory($text));
     }
 
     /** Số hook gần nhất mỗi chủ đề trả cho tab Chủ đề. */

@@ -117,8 +117,9 @@ class TopicJobService
             // Chủ đề đã có (kể cả đang tắt): không tạo trùng / gần trùng
             'existing_topics' => array_map(fn ($t) => ['name' => $t['name'], 'category' => $t['category'], 'note' => $t['note'], 'status' => $t['status']],
                 $this->topics->listFor($channel)),
-            // Nhóm chủ đề (2026-11-24): mỗi chủ đề trả về kèm category = 1 khoá dưới đây
-            'categories' => ChannelTopic::CATEGORIES,
+            // Nhóm chủ đề của kênh (chủ shop quản lý, 2026-11-24): mỗi chủ đề trả về kèm category = TÊN 1 nhóm dưới đây
+            // (không hợp nhóm nào thì bỏ trống -> A51 đoán / "Khác")
+            'categories' => array_column($this->topics->categoryList($channel), 'name'),
             // Tham khảo khi viết ghi chú chủ đề (chủ đề không còn bộ lọc tag): giá trị tag + số sản phẩm đã gắn theo từng giá trị
             'tag_options' => ProductTags::options(),
             'product_tags' => $this->productTags->summary($channel->user),
@@ -126,7 +127,7 @@ class TopicJobService
     }
 
     /**
-     * Worker trả chủ đề: [{name, category?, note?}] (category: khoá ChannelTopic::CATEGORIES, sai / thiếu = đoán theo tên) (note: yêu cầu / định hướng cho lệnh lập kế hoạch, tối đa ChannelTopic::NOTE_MAX). Chủ đề hợp lệ, chưa có (không phân biệt hoa thường) -> tạo (nguồn ai, bật sẵn).
+     * Worker trả chủ đề: [{name, category?, note?}] (category: tên nhóm của kênh, sai / thiếu = đoán theo tên, không được = "Khác") (note: yêu cầu / định hướng cho lệnh lập kế hoạch, tối đa ChannelTopic::NOTE_MAX). Chủ đề hợp lệ, chưa có (không phân biệt hoa thường) -> tạo (nguồn ai, bật sẵn).
      *
      * @return array{created: string[], skipped: string[], errors: array<int, array{name: mixed, errors: string[]}>}
      */
@@ -154,8 +155,8 @@ class TopicJobService
 
                     continue;
                 }
-                $category = ChannelTopic::cleanCategory($row['category'] ?? null) ?? ChannelTopic::guessCategory($name.' '.$note);
-                $channel->topics()->create(['name' => $name, 'category' => $category, 'note' => $note, 'source' => ProductTags::SOURCE_AI, 'status' => ChannelTopic::ACTIVE]);
+                $category = $this->topics->resolveCategory($channel, is_string($row['category'] ?? null) ? $row['category'] : null, $name.' '.$note);
+                $channel->topics()->create(['name' => $name, 'category_id' => $category, 'note' => $note, 'source' => ProductTags::SOURCE_AI, 'status' => ChannelTopic::ACTIVE]);
                 $created[] = $name;
             }
             $result = ['created' => $created, 'skipped' => $skipped, 'errors' => $errors];

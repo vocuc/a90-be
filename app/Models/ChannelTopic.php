@@ -23,29 +23,24 @@ class ChannelTopic extends Model
     public const NOTE_MAX = 1000;
 
     /**
-     * Nhóm chủ đề (người dùng chốt 2026-11-24): tab Chủ đề hiện chủ đề theo nhóm; chủ đề vẫn cụ thể (hook viết theo chủ đề).
-     * Thứ tự = thứ tự hiện trên tab.
+     * Nhóm chủ đề tạo sẵn khi kênh chưa có nhóm nào (người dùng chốt 2026-11-24). Nhóm do chủ shop quản lý (bảng
+     * channel_topic_categories); chủ đề không thuộc nhóm nào hiện ở "Khác".
      */
-    public const CATEGORIES = [
-        'su_kien' => 'Sự kiện',
-        'di_lam' => 'Đi làm',
-        'du_lich' => 'Du lịch',
-        'hang_ngay' => 'Hằng ngày',
-        'khac' => 'Khác',
-    ];
+    public const DEFAULT_CATEGORIES = ['Sự kiện', 'Đi làm', 'Du lịch', 'Hằng ngày'];
 
-    public const DEFAULT_CATEGORY = 'khac';
+    public const OTHER_CATEGORY = 'Khác';
 
-    /** Từ khoá đoán nhóm cho chủ đề cũ (migration) / worker không gửi nhóm. */
+    /** Từ khoá đoán nhóm (tên nhóm mặc định) khi chủ đề tạo mà không chọn nhóm. */
     private const CATEGORY_WORDS = [
-        'su_kien' => ['tết', 'tiệc', 'valentine', 'noel', 'giáng sinh', 'trung thu', '8/3', '20/10', '20/11', '14/2', 'cưới', 'sinh nhật',
-            'lễ', 'mùng', 'du xuân', 'chơi xuân', 'kỷ niệm', 'black friday', 'sale', 'cuối năm', 'tất niên', 'year end', 'halloween', 'tốt nghiệp', 'khai giảng', 'hội'],
-        'di_lam' => ['đi làm', 'công sở', 'văn phòng', 'phỏng vấn', 'họp', 'đi học'],
-        'du_lich' => ['du lịch', 'đà lạt', 'biển', 'phượt', 'nghỉ dưỡng', 'sapa', 'hội an', 'phú quốc', 'vali', 'chuyến đi'],
-        'hang_ngay' => ['hằng ngày', 'hàng ngày', 'đi chơi', 'cafe', 'cà phê', 'dạo phố', 'hẹn hò', 'cuối tuần', 'mua sắm', 'ở nhà'],
+        'Sự kiện' => ['tết', 'tiệc', 'valentine', 'noel', 'giáng sinh', 'trung thu', '8/3', '20/10', '20/11', '14/2', 'cưới', 'sinh nhật',
+            'lễ', 'mùng', 'du xuân', 'chơi xuân', 'kỷ niệm', 'black friday', 'sale', 'cuối năm', 'tất niên', 'halloween', 'tốt nghiệp'],
+        'Đi làm' => ['đi làm', 'công sở', 'văn phòng', 'phỏng vấn', 'họp', 'đi học'],
+        'Du lịch' => ['du lịch', 'đà lạt', 'biển', 'phượt', 'nghỉ dưỡng', 'sapa', 'hội an', 'phú quốc', 'vali', 'chuyến đi'],
+        'Hằng ngày' => ['hằng ngày', 'hàng ngày', 'đi chơi', 'cafe', 'cà phê', 'dạo phố', 'hẹn hò', 'cuối tuần', 'mua sắm', 'ở nhà'],
     ];
 
-    public static function guessCategory(?string $text): string
+    /** Tên nhóm mặc định đoán theo tên / ghi chú chủ đề, null = không đoán được ("Khác"). */
+    public static function guessCategory(?string $text): ?string
     {
         $text = mb_strtolower((string) $text);
         foreach (self::CATEGORY_WORDS as $category => $words) {
@@ -56,13 +51,12 @@ class ChannelTopic extends Model
             }
         }
 
-        return self::DEFAULT_CATEGORY;
+        return null;
     }
 
-    /** Nhóm hợp lệ hoặc null. */
-    public static function cleanCategory(mixed $category): ?string
+    public function category(): BelongsTo
     {
-        return is_string($category) && isset(self::CATEGORIES[$category]) ? $category : null;
+        return $this->belongsTo(ChannelTopicCategory::class, 'category_id');
     }
 
     /** Cùng chủ đề + cùng loại bài không lặp trong số ngày này (trước / sau giờ đăng). */

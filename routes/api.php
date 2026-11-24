@@ -158,6 +158,11 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('channels/{channel}/topics/{topic}', [ChannelContentController::class, 'updateTopic'])->whereNumber(['channel', 'topic']);
             // Xoá chủ đề (kể cả đã có bài): bài đăng / bài kế hoạch của chủ đề thành "không xác định" (topic_id null)
             Route::delete('channels/{channel}/topics/{topic}', [ChannelContentController::class, 'destroyTopic'])->whereNumber(['channel', 'topic']);
+            // Nhóm chủ đề do chủ shop quản lý (2026-11-24)
+            Route::post('channels/{channel}/topic-categories', [ChannelContentController::class, 'storeTopicCategory'])->whereNumber('channel');
+            Route::put('channels/{channel}/topic-categories/order', [ChannelContentController::class, 'orderTopicCategories'])->whereNumber('channel');
+            Route::put('channels/{channel}/topic-categories/{category}', [ChannelContentController::class, 'updateTopicCategory'])->whereNumber(['channel', 'category']);
+            Route::delete('channels/{channel}/topic-categories/{category}', [ChannelContentController::class, 'destroyTopicCategory'])->whereNumber(['channel', 'category']);
             Route::put('channel-posts/{post}/overlays', [ChannelContentController::class, 'updateOverlays'])->whereNumber('post');
             Route::post('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');
             Route::delete('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');

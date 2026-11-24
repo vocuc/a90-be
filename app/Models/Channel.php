@@ -185,6 +185,12 @@ class Channel extends Model
         return $this->hasMany(ChannelTopic::class);
     }
 
+    /** Nhóm chủ đề của kênh (chủ shop quản lý), theo thứ tự. */
+    public function topicCategories(): HasMany
+    {
+        return $this->hasMany(ChannelTopicCategory::class)->orderBy('position')->orderBy('id');
+    }
+
     public function plans(): HasMany
     {
         return $this->hasMany(ContentPlan::class);

@@ -8,6 +8,7 @@ use App\Models\Channel;
 use App\Models\ChannelLineup;
 use App\Models\ChannelTextTemplate;
 use App\Models\ChannelTopic;
+use App\Models\ChannelTopicCategory;
 use App\Models\ContentPlan;
 use App\Models\ContentPlanItem;
 use App\Models\GenerationOutput;
@@ -26,6 +27,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -364,23 +366,23 @@ class ChannelContentController extends Controller
 
         return response()->json(['data' => [
             'topics' => array_map(fn ($t) => [...$t, 'hooks' => $hooks[$t['id']] ?? []], $this->topics->listFor($channel)),
-            // Nhóm chủ đề theo thứ tự hiện: [{ key, label }]
-            'categories' => collect(ChannelTopic::CATEGORIES)->map(fn ($label, $key) => ['key' => $key, 'label' => $label])->values(),
+            // Nhóm chủ đề của kênh theo thứ tự (chủ shop quản lý): [{ id, name, position, topics }]; chủ đề category_id null = "Khác"
+            'categories' => $this->topics->categoryList($channel),
             'topic_worker' => TopicJobService::hasWorker($channel->user_id),
             'job' => $this->topicJob($this->topicJobs->latest($channel)),
             'count' => ['min' => TopicJob::COUNT_MIN, 'max' => TopicJob::COUNT_MAX, 'default' => TopicJob::COUNT_DEFAULT],
         ]]);
     }
 
-    /** Xây dựng chủ đề THỦ CÔNG: { name, category?, note? } -> 201 { data: Topic } (nguồn owner, bật sẵn; không gửi nhóm = đoán theo tên). */
+    /** Xây dựng chủ đề THỦ CÔNG: { name, category_id?, note? } -> 201 { data: Topic } (nguồn owner, bật sẵn; không gửi nhóm = đoán theo tên). */
     public function storeTopic(Request $request, int $channel): JsonResponse
     {
         $channel = $this->channel($request, $channel);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:'.ChannelTopic::NAME_MAX],
-            'category' => ['nullable', 'in:'.implode(',', array_keys(ChannelTopic::CATEGORIES))],
+            'category_id' => ['nullable', 'integer'],
             'note' => ['nullable', 'string', 'max:'.ChannelTopic::NOTE_MAX],
-        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.', 'category.in' => 'Nhóm chủ đề không hợp lệ.']);
+        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.']);
         $name = ChannelTopic::cleanName($data['name']);
         if ($name === '') {
             throw ValidationException::withMessages(['name' => 'Tên chủ đề không được trống.']);
@@ -389,8 +391,10 @@ class ChannelContentController extends Controller
             throw ValidationException::withMessages(['name' => 'Kênh đã có chủ đề tên này.']);
         }
         $note = ChannelTopic::cleanNote($data['note'] ?? null);
+        $categoryId = isset($data['category_id']) ? $this->categoryId($channel, $data['category_id'])
+            : $this->topics->resolveCategory($channel, null, $name.' '.$note);
         $topic = $channel->topics()->create(['name' => $name, 'note' => $note, 'source' => ProductTags::SOURCE_OWNER, 'status' => ChannelTopic::ACTIVE,
-            'category' => $data['category'] ?? ChannelTopic::guessCategory($name.' '.$note)]);
+            'category_id' => $categoryId]);
 
         return response()->json(['data' => collect($this->topics->listFor($channel))->firstWhere('id', $topic->id)], 201);
     }
@@ -437,17 +441,17 @@ class ChannelContentController extends Controller
         return response()->noContent();
     }
 
-    /** { name?, category?, note?, status?: active|paused } Chủ shop sửa tên / nhóm / ghi chú -> nguồn owner. */
+    /** { name?, category_id? (null = "Khác"), note?, status?: active|paused } Chủ shop sửa tên / nhóm / ghi chú -> nguồn owner. */
     public function updateTopic(Request $request, int $channel, int $topic): JsonResponse
     {
         $channel = $this->channel($request, $channel);
         $model = $channel->topics()->findOrFail($topic);
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:'.ChannelTopic::NAME_MAX],
-            'category' => ['sometimes', 'required', 'in:'.implode(',', array_keys(ChannelTopic::CATEGORIES))],
+            'category_id' => ['sometimes', 'nullable', 'integer'],
             'note' => ['sometimes', 'nullable', 'string', 'max:'.ChannelTopic::NOTE_MAX],
             'status' => ['sometimes', 'required', 'in:'.ChannelTopic::ACTIVE.','.ChannelTopic::PAUSED],
-        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.', 'category.in' => 'Nhóm chủ đề không hợp lệ.']);
+        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.']);
         $changes = [];
         if (array_key_exists('name', $data)) {
             $name = ChannelTopic::cleanName($data['name']);
@@ -462,8 +466,8 @@ class ChannelContentController extends Controller
         if (array_key_exists('note', $data)) {
             $changes['note'] = ChannelTopic::cleanNote($data['note']);
         }
-        if (isset($data['category'])) {
-            $changes['category'] = $data['category'];
+        if (array_key_exists('category_id', $data)) {
+            $changes['category_id'] = $data['category_id'] === null ? null : $this->categoryId($channel, $data['category_id']);
         }
         if ($changes) {
             $changes['source'] = ProductTags::SOURCE_OWNER;
@@ -474,6 +478,85 @@ class ChannelContentController extends Controller
         $model->update($changes);
 
         return response()->json(['data' => collect($this->topics->listFor($channel))->firstWhere('id', $model->id)]);
+    }
+
+    // ---- Nhóm chủ đề (chủ shop quản lý, 2026-11-24) ----
+
+    /** { name } -> 201 { data: Category } (thêm cuối danh sách). */
+    public function storeTopicCategory(Request $request, int $channel): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+        $name = $this->categoryName($channel, $request);
+        if (count($this->topics->categories($channel)) >= ChannelTopicCategory::MAX) {
+            throw ValidationException::withMessages(['name' => 'Tối đa '.ChannelTopicCategory::MAX.' nhóm chủ đề.']);
+        }
+        $category = $channel->topicCategories()->create(['name' => $name, 'position' => (int) $channel->topicCategories()->max('position') + 1]);
+
+        return response()->json(['data' => collect($this->topics->categoryList($channel))->firstWhere('id', $category->id)], 201);
+    }
+
+    /** { name } đổi tên nhóm -> { data: Category }. */
+    public function updateTopicCategory(Request $request, int $channel, int $category): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+        $model = $channel->topicCategories()->findOrFail($category);
+        $model->update(['name' => $this->categoryName($channel, $request, $model->id)]);
+
+        return response()->json(['data' => collect($this->topics->categoryList($channel))->firstWhere('id', $model->id)]);
+    }
+
+    /** { ids: [id...] } thứ tự nhóm mới (đủ mọi nhóm của kênh) -> { data: Category[] }. */
+    public function orderTopicCategories(Request $request, int $channel): JsonResponse
+    {
+        $channel = $this->channel($request, $channel);
+        $ids = $request->validate(['ids' => ['required', 'array'], 'ids.*' => ['integer']])['ids'];
+        $own = $this->topics->categories($channel)->pluck('id')->sort()->values()->all();
+        $sorted = collect($ids)->map(fn ($id) => (int) $id)->sort()->values()->all();
+        if ($sorted !== $own) {
+            throw ValidationException::withMessages(['ids' => 'Danh sách nhóm không khớp, tải lại trang rồi thử lại.']);
+        }
+        DB::transaction(function () use ($channel, $ids) {
+            foreach (array_values($ids) as $i => $id) {
+                $channel->topicCategories()->whereKey((int) $id)->update(['position' => $i + 1]);
+            }
+        });
+
+        return response()->json(['data' => $this->topics->categoryList($channel)]);
+    }
+
+    /** Xoá nhóm: chủ đề của nhóm về "Khác" (category_id null). -> 204 */
+    public function destroyTopicCategory(Request $request, int $channel, int $category): Response
+    {
+        $this->channel($request, $channel)->topicCategories()->findOrFail($category)->delete();
+
+        return response()->noContent();
+    }
+
+    private function categoryName(Channel $channel, Request $request, ?int $exceptId = null): string
+    {
+        $data = $request->validate(['name' => ['required', 'string', 'max:'.ChannelTopicCategory::NAME_MAX]]);
+        $name = ChannelTopicCategory::cleanName($data['name']);
+        if ($name === '') {
+            throw ValidationException::withMessages(['name' => 'Tên nhóm không được trống.']);
+        }
+        if (mb_strtolower($name) === mb_strtolower(ChannelTopic::OTHER_CATEGORY)) {
+            throw ValidationException::withMessages(['name' => '"'.ChannelTopic::OTHER_CATEGORY.'" là nhóm sẵn cho chủ đề chưa xếp nhóm, đặt tên khác.']);
+        }
+        if ($channel->topicCategories()->where('name', $name)->when($exceptId, fn ($q) => $q->whereKeyNot($exceptId))->exists()) {
+            throw ValidationException::withMessages(['name' => 'Kênh đã có nhóm tên này.']);
+        }
+
+        return $name;
+    }
+
+    /** Id nhóm thuộc kênh, không thì 422. */
+    private function categoryId(Channel $channel, mixed $id): int
+    {
+        if (! $this->topics->categories($channel)->contains('id', (int) $id)) {
+            throw ValidationException::withMessages(['category_id' => 'Nhóm chủ đề không thuộc kênh này.']);
+        }
+
+        return (int) $id;
     }
 
     // ---- Helpers ----
