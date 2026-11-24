@@ -364,20 +364,23 @@ class ChannelContentController extends Controller
 
         return response()->json(['data' => [
             'topics' => array_map(fn ($t) => [...$t, 'hooks' => $hooks[$t['id']] ?? []], $this->topics->listFor($channel)),
+            // Nhóm chủ đề theo thứ tự hiện: [{ key, label }]
+            'categories' => collect(ChannelTopic::CATEGORIES)->map(fn ($label, $key) => ['key' => $key, 'label' => $label])->values(),
             'topic_worker' => TopicJobService::hasWorker($channel->user_id),
             'job' => $this->topicJob($this->topicJobs->latest($channel)),
             'count' => ['min' => TopicJob::COUNT_MIN, 'max' => TopicJob::COUNT_MAX, 'default' => TopicJob::COUNT_DEFAULT],
         ]]);
     }
 
-    /** Xây dựng chủ đề THỦ CÔNG: { name, note? } -> 201 { data: Topic } (nguồn owner, bật sẵn). */
+    /** Xây dựng chủ đề THỦ CÔNG: { name, category?, note? } -> 201 { data: Topic } (nguồn owner, bật sẵn; không gửi nhóm = đoán theo tên). */
     public function storeTopic(Request $request, int $channel): JsonResponse
     {
         $channel = $this->channel($request, $channel);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:'.ChannelTopic::NAME_MAX],
+            'category' => ['nullable', 'in:'.implode(',', array_keys(ChannelTopic::CATEGORIES))],
             'note' => ['nullable', 'string', 'max:'.ChannelTopic::NOTE_MAX],
-        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.']);
+        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.', 'category.in' => 'Nhóm chủ đề không hợp lệ.']);
         $name = ChannelTopic::cleanName($data['name']);
         if ($name === '') {
             throw ValidationException::withMessages(['name' => 'Tên chủ đề không được trống.']);
@@ -385,7 +388,9 @@ class ChannelContentController extends Controller
         if ($channel->topics()->where('name', $name)->exists()) {
             throw ValidationException::withMessages(['name' => 'Kênh đã có chủ đề tên này.']);
         }
-        $topic = $channel->topics()->create(['name' => $name, 'note' => ChannelTopic::cleanNote($data['note'] ?? null), 'source' => ProductTags::SOURCE_OWNER, 'status' => ChannelTopic::ACTIVE]);
+        $note = ChannelTopic::cleanNote($data['note'] ?? null);
+        $topic = $channel->topics()->create(['name' => $name, 'note' => $note, 'source' => ProductTags::SOURCE_OWNER, 'status' => ChannelTopic::ACTIVE,
+            'category' => $data['category'] ?? ChannelTopic::guessCategory($name.' '.$note)]);
 
         return response()->json(['data' => collect($this->topics->listFor($channel))->firstWhere('id', $topic->id)], 201);
     }
@@ -432,16 +437,17 @@ class ChannelContentController extends Controller
         return response()->noContent();
     }
 
-    /** { name?, note?, status?: active|paused } Chủ shop sửa tên / ghi chú -> nguồn owner. */
+    /** { name?, category?, note?, status?: active|paused } Chủ shop sửa tên / nhóm / ghi chú -> nguồn owner. */
     public function updateTopic(Request $request, int $channel, int $topic): JsonResponse
     {
         $channel = $this->channel($request, $channel);
         $model = $channel->topics()->findOrFail($topic);
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:'.ChannelTopic::NAME_MAX],
+            'category' => ['sometimes', 'required', 'in:'.implode(',', array_keys(ChannelTopic::CATEGORIES))],
             'note' => ['sometimes', 'nullable', 'string', 'max:'.ChannelTopic::NOTE_MAX],
             'status' => ['sometimes', 'required', 'in:'.ChannelTopic::ACTIVE.','.ChannelTopic::PAUSED],
-        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.']);
+        ], ['note.max' => 'Ghi chú tối đa '.ChannelTopic::NOTE_MAX.' ký tự.', 'category.in' => 'Nhóm chủ đề không hợp lệ.']);
         $changes = [];
         if (array_key_exists('name', $data)) {
             $name = ChannelTopic::cleanName($data['name']);
@@ -455,6 +461,9 @@ class ChannelContentController extends Controller
         }
         if (array_key_exists('note', $data)) {
             $changes['note'] = ChannelTopic::cleanNote($data['note']);
+        }
+        if (isset($data['category'])) {
+            $changes['category'] = $data['category'];
         }
         if ($changes) {
             $changes['source'] = ProductTags::SOURCE_OWNER;

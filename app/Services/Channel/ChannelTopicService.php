@@ -72,7 +72,7 @@ class ChannelTopicService
             return null;
         }
 
-        return ['id' => $topic->id, 'name' => $topic->name, 'note' => $topic->note];
+        return ['id' => $topic->id, 'name' => $topic->name, 'note' => $topic->note, 'category' => $topic->category];
     }
 
     /** Cùng chủ đề + cùng loại bài đã có bài đăng / bài kế hoạch chưa duyệt trong ± REPEAT_DAYS ngày quanh $at. */
@@ -120,7 +120,9 @@ class ChannelTopicService
      */
     public function listFor(Channel $channel, bool $activeOnly = false): array
     {
-        $topics = $channel->topics()->when($activeOnly, fn ($q) => $q->where('status', ChannelTopic::ACTIVE))->orderBy('name')->get();
+        $order = array_flip(array_keys(ChannelTopic::CATEGORIES));
+        $topics = $channel->topics()->when($activeOnly, fn ($q) => $q->where('status', ChannelTopic::ACTIVE))->orderBy('name')->get()
+            ->sortBy(fn (ChannelTopic $t) => $order[$t->category] ?? count($order), SORT_REGULAR)->values();
         $posts = DB::table('social_posts')->where('channel_id', $channel->id)->whereNotNull('topic_id')
             ->groupBy('topic_id', 'sample_key')
             ->selectRaw('topic_id, sample_key, COUNT(*) AS total, MAX(scheduled_at) AS last_at')->get();
@@ -143,6 +145,8 @@ class ChannelTopicService
             return [
                 'id' => $t->id,
                 'name' => $t->name,
+                // Nhóm chủ đề (ChannelTopic::CATEGORIES, 2026-11-24)
+                'category' => $t->category,
                 'note' => $t->note,
                 'source' => $t->source,
                 'status' => $t->status,

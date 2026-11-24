@@ -217,6 +217,15 @@ class ProductTagTopicTest extends TestCase
         $topic = ChannelTopic::query()->sole();
         $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['note' => '  '])
             ->assertOk()->assertJsonPath('data.note', null);
+        // Nhóm chủ đề (2026-11-24): không gửi -> đoán theo tên ("Tết" -> Sự kiện); chủ shop đổi được, nhóm sai -> 422
+        $this->assertSame('su_kien', $topic->fresh()->category);
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['category' => 'hang_ngay'])
+            ->assertOk()->assertJsonPath('data.category', 'hang_ngay');
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['category' => 'su_kien'])->assertOk();
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channels/{$this->channel->id}/topics/{$topic->id}", ['category' => 'xyz'])
+            ->assertStatus(422)->assertJsonValidationErrors('category');
+        $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/topics")->assertOk()
+            ->assertJsonPath('data.categories.0', ['key' => 'su_kien', 'label' => 'Sự kiện']);
 
         $byName = ['topic' => ['name' => 'Đi chúc Tết']];
         $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
