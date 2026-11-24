@@ -51,7 +51,7 @@ class TagWorkerTest extends TestCase
 
     private function tags(array $extra = []): array
     {
-        return ['kieu' => 'sandal', 'got' => 'thap', 'mau' => ['kem'], 'phong_cach' => ['nhe_nhang'], 'dip' => ['di_choi'], ...$extra];
+        return ['kieu' => 'sandal', 'got' => 'thap', 'mau' => ['kem'], 'phong_cach' => ['nhe_nhang'], 'dip' => ['di_choi'], 'ootd' => ['giaysandal', 'giaykem'], ...$extra];
     }
 
     public function test_choose_products_worker_tags_them(): void

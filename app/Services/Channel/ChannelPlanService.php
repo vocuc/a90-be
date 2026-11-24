@@ -882,6 +882,17 @@ class ChannelPlanService
         }
 
         $outfit = ['count' => $count, 'product_id' => $productId ?: null, 'tags' => $tags];
+        // Bài "Outfit - theo sản phẩm" (one_shoe_many_looks): bắt buộc 1 sản phẩm có tag ootd (hashtag giày OOTD) để worker
+        // chọn outfit cùng loại giày và Flow vẽ đúng đôi giày đó
+        if (($sample['outfit_mode'] ?? null) === ImageBatch::OUTFIT_MODE_PRODUCT) {
+            $outfit['mode'] = ImageBatch::OUTFIT_MODE_PRODUCT;
+            $ootd = $productId ? (Product::query()->whereKey($productId)->value('tags')['ootd'] ?? null) : null;
+            if (! $productId) {
+                $errors[] = 'Bài này bắt buộc outfit.product_id (đôi giày được phối).';
+            } elseif (! ProductTags::ootdShoeTypes((array) $ootd)) {
+                $errors[] = "Sản phẩm {$productId} chưa có tag ootd (hashtag loại giày OOTD): chạy /gan-tag-san-pham hoặc chọn sản phẩm khác.";
+            }
+        }
         if ($sample['outfit_labels'] ?? false) {
             $outfit['labels'] = $this->validateLabels($raw['outfit']['labels'] ?? null, $count - 1, $errors);
         }
@@ -1152,7 +1163,8 @@ class ChannelPlanService
         // (công tắc "Dùng ảnh sản phẩm" tắt ở luồng tạo lô phối đồ hiện tại)
         $productId = ! empty($outfit['product_id']) ? (int) $outfit['product_id'] : null;
         $batches = $this->outfitBatches->create($user, 1, (int) $outfit['count'], (bool) $user->logoPath(), $key, $workerId,
-            $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? [], $textTemplateId, $outfit['labels'] ?? null);
+            $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? [], $textTemplateId, $outfit['labels'] ?? null,
+            $outfit['mode'] ?? null);
 
         return $batches[0] ?? throw new BusinessException('OUTFIT_NO_PRODUCT', 'Không tạo được lô phối đồ.', 422);
     }

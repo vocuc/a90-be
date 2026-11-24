@@ -107,7 +107,7 @@ class ChannelPlanApiController extends Controller
     public function products(Request $request, int $channel): JsonResponse
     {
         $data = $request->validate(['limit' => ['nullable', 'integer', 'min:1', 'max:'.ProductTagService::LIST_MAX]]);
-        [$filter, $errors] = ProductTags::cleanFilter($request->only(ProductTags::tagFields()));
+        [$filter, $errors] = ProductTags::cleanFilter($request->only(ProductTags::filterFields()));
         if ($errors) {
             throw ValidationException::withMessages(['tags' => $errors]);
         }

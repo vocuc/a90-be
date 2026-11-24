@@ -650,6 +650,55 @@ class ChannelPlanTest extends TestCase
         $this->assertSame($labels, $job['batch']['outfit_labels']);
     }
 
+    public function test_one_shoe_many_looks_creates_product_outfit_batch_for_flow(): void
+    {
+        // Bài "Outfit - theo sản phẩm" (2026-11-24): lô phối đồ gắn 1 sản phẩm có tag ootd, outfit_mode = product ->
+        // worker phối đồ chọn outfit cùng loại giày + vẽ bằng Flow
+        $this->api('POST', "channels/{$this->channel->id}/lineups", ['items' => [['sample_key' => 'one_shoe_many_looks', 'percent' => 100]]])->assertCreated();
+        $this->channel->lineups()->update(['status' => 'approved', 'approved_at' => now()]);
+        $this->api('POST', "channels/{$this->channel->id}/text-templates", ['templates' => [[...$this->templateBody(), 'sample_keys' => ['one_shoe_many_looks']]]])->assertCreated();
+        $this->channel->textTemplates()->update(['status' => 'approved']);
+        [$outfitWorker] = Worker::register('phoi-do-'.Str::random(4), Worker::TYPE_OUTFIT);
+        $outfitWorker->users()->attach($this->shop->id);
+        $shoe = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Cao gót đen', 'ai_label' => 'Cao gót mũi nhọn đen',
+            'tags' => ['kieu' => 'cao_got', 'ootd' => ['giaycaogot', 'muinhon', 'giayden']]]);
+        \App\Models\ProductImage::query()->create(['product_id' => $shoe->id, 'path' => 'products/shoe.png', 'field_key' => 'anh_san_pham', 'position' => 1]);
+        $noOotd = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Chưa gắn ootd', 'tags' => ['kieu' => 'sneaker']]);
+        \App\Models\ProductImage::query()->create(['product_id' => $noOotd->id, 'path' => 'products/x.png', 'field_key' => 'anh_san_pham', 'position' => 1]);
+        $planId = $this->context()['plan']['id'];
+        $item = ['slot_index' => 0, 'sample_key' => 'one_shoe_many_looks', 'topic' => ['name' => 'Chủ đề slot 0'],
+            'hook' => '1 đôi cao gót đen phối 4 kiểu', 'outfit' => ['count' => 5, 'tags' => ['henho'], 'product_id' => $shoe->id],
+            'title' => 'Bạn thích kiểu số mấy?', 'hashtags' => ['tet2027']];
+
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            [...$item, 'slot_index' => 1, 'hook' => 'không sản phẩm', 'outfit' => ['count' => 5, 'tags' => ['henho']]],
+            [...$item, 'slot_index' => 2, 'hook' => 'chưa có ootd', 'outfit' => ['count' => 5, 'tags' => ['henho'], 'product_id' => $noOotd->id]],
+        ]])->json('data.rejected');
+        $this->assertStringContainsString('bắt buộc outfit.product_id', implode(' ', $rejected[0]['errors']));
+        $this->assertStringContainsString('chưa có tag ootd', implode(' ', $rejected[1]['errors']));
+
+        $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$item]])->assertOk();
+        $this->assertSame([0], $res->json('data.accepted'), json_encode($res->json('data.rejected'), JSON_UNESCAPED_UNICODE));
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
+
+        $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
+        $this->assertSame(SocialPostStatus::Generating, $post->status);
+        $this->assertSame(5, $post->images()->count());
+        $batch = \App\Models\ImageBatch::query()->findOrFail($post->image_batch_id);
+        $this->assertSame(\App\Models\ImageBatch::OUTFIT_MODE_PRODUCT, $batch->outfit_mode);
+        $this->assertSame(['henho'], $batch->outfit_tags);
+        $this->assertSame([$shoe->id], Generation::query()->whereIn('id', $post->images()->pluck('generation_id'))->distinct()->pluck('product_id')->all());
+
+        // Bìa làm trước (như lô có sản phẩm); job gửi outfit_mode + tag ootd của sản phẩm
+        $token = $outfitWorker->regenerateToken();
+        $job = $this->withToken($token)->getJson('/api/v1/worker-jobs')->assertOk()->json('data');
+        $this->assertSame(Generation::KIND_OUTFIT_COVER, $job['kind']);
+        $this->assertSame('product', $job['batch']['outfit_mode']);
+        $this->assertSame(['giaycaogot', 'muinhon', 'giayden'], $job['product']['tags']['ootd']);
+        $this->assertSame('Cao gót mũi nhọn đen', $job['product']['ai_label']);
+        $this->assertSame('anh_san_pham', $job['product']['images'][0]['field_key']);
+    }
+
     public function test_only_ready_post_samples_are_usable(): void
     {
         config(['ai90.post_samples_enabled' => null]); // mặc định: PostSamples::READY
@@ -665,7 +714,7 @@ class ChannelPlanTest extends TestCase
         $samples = collect($this->actingAs($this->shop)->getJson('/api/v1/creator/channels/post-samples')->assertOk()->json('data'))->keyBy('key');
         $this->assertTrue($samples['lookbook']['enabled']);
         $this->assertFalse($samples['closeup']['enabled']);
-        $this->assertSame(['top_n', 'lookbook', 'outfit_by_day'], \App\Models\ChannelTextTemplate::sampleKeyOptions());
+        $this->assertSame(['top_n', 'lookbook', 'one_shoe_many_looks', 'outfit_by_day'], \App\Models\ChannelTextTemplate::sampleKeyOptions());
     }
 
     public function test_unboxing_creates_auto_batch_on_approve(): void

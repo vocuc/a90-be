@@ -326,7 +326,7 @@ class WorkerJobController extends Controller
 
     private function batchInfo(ImageBatchImage $image): array
     {
-        $batch = ImageBatch::query()->find($image->image_batch_id, ['id', 'title', 'hook_locked', 'outfit_tags', 'outfit_labels', 'text_template_id']);
+        $batch = ImageBatch::query()->find($image->image_batch_id, ['id', 'title', 'hook_locked', 'outfit_tags', 'outfit_labels', 'outfit_mode', 'text_template_id']);
         // Template chữ của kênh (đọc cả khi chủ shop đã bỏ template sau khi tạo lô: lô vẫn in theo kiểu đã chốt)
         $template = $batch?->text_template_id
             ? ChannelTextTemplate::query()->find($batch->text_template_id, ['id', 'name', 'style'])
@@ -342,6 +342,9 @@ class WorkerJobController extends Controller
             // Bài outfit_by_day: nhãn ngày in lên ảnh outfit thay "Outfit N" (phần tử 0 = ảnh vị trí 2), worker in theo
             // text_template; rỗng = lô thường (note/xay-kenh-tiktok/bai-viet-mau/outfit_by_day.txt)
             'outfit_labels' => $batch?->outfit_labels ?? [],
+            // 'product' (bài "Outfit - theo sản phẩm", 2026-11-24): chọn outfit OOTD cùng loại giày với product.tags.ootd, vẽ
+            // bằng Google Flow (ảnh sản phẩm + ảnh gốc outfit), giày đúng theo ảnh sản phẩm; null = lô thường (ChatGPT)
+            'outfit_mode' => $batch?->outfit_mode,
             // Worker phối đồ v2 in hook (title) lên ảnh bìa theo style này (style như ChannelTextTemplate); null = lô
             // không có template chữ
             'text_template' => $template ? ['id' => $template->id, 'name' => $template->name, 'style' => $template->style] : null,
@@ -370,6 +373,9 @@ class WorkerJobController extends Controller
                 'name' => $product->name,
                 'prompt_note' => $product->prompt_note,
                 'hashtags' => $product->hashtags->pluck('name')->values(),
+                // Tag AI (ProductTags): ai_label + tags.ootd = hashtag giày dạng OOTD để chọn outfit cùng loại giày
+                'ai_label' => $product->ai_label,
+                'tags' => $product->tags,
                 'images' => $product->images->map(fn ($i) => ['field_key' => $i->field_key, 'url' => $media->url($i->path)])->values(),
             ] : null,
             // Ảnh trong lịch sử tạo ảnh của sản phẩm (ảnh creative đã xong, chưa tắt, mới nhất trước): worker chọn ảnh

@@ -20,6 +20,12 @@ class ImageBatch extends Model
     /** Lô phối đồ "1 đôi giày – nhiều cách phối" (worker loại outfit). */
     public const SOURCE_OUTFIT = 'outfit';
 
+    /**
+     * outfit_mode của lô phối đồ bài "Outfit - theo sản phẩm" (2026-11-24): worker phối đồ chọn outfit OOTD cùng loại giày
+     * với sản phẩm (tags.ootd) và vẽ bằng Google Flow, giày đúng theo ảnh sản phẩm. null = lô thường.
+     */
+    public const OUTFIT_MODE_PRODUCT = 'product';
+
     protected $guarded = ['id'];
 
     protected function casts(): array

@@ -78,10 +78,11 @@ class OutfitBatchService
      * $lockedHook / $outfitTags (bài kế hoạch lookbook, 2026-11-21): lô có sẵn tiêu đề = hook, hook_locked = true, worker
      * không tạo hook mới và tìm outfit theo $outfitTags. $textTemplateId: template chữ của kênh để worker in hook lên ảnh bìa.
      * $outfitLabels (bài outfit_by_day): nhãn ngày in lên từng ảnh outfit thay "Outfit N" (phần tử i = ảnh vị trí i + 2).
+     * $outfitMode (bài one_shoe_many_looks): ImageBatch::OUTFIT_MODE_PRODUCT -> worker chọn outfit cùng loại giày, vẽ bằng Flow.
      */
     public function create(User $user, int $count, int $images, bool $insertLogo, string $idempotencyKey, int $workerId,
         ?array $productIds = null, bool $useProduct = true, ?string $lockedHook = null, array $outfitTags = [],
-        ?int $textTemplateId = null, ?array $outfitLabels = null): array
+        ?int $textTemplateId = null, ?array $outfitLabels = null, ?string $outfitMode = null): array
     {
         $lock = Cache::lock("outfit-batch:{$user->id}", 120);
         $lock->block(30);
@@ -102,11 +103,12 @@ class OutfitBatchService
             $creative = $this->systemCreative($user);
             $created = [];
             foreach ($products->values() as $n => $product) {
-                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags, $textTemplateId, $outfitLabels) {
+                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags, $textTemplateId, $outfitLabels, $outfitMode) {
                     $batch = ImageBatch::query()->create([
                         'user_id' => $user->id,
                         'idempotency_key' => "outfit:{$idempotencyKey}:{$n}",
                         'source' => ImageBatch::SOURCE_OUTFIT,
+                        'outfit_mode' => $product ? $outfitMode : null,
                         ...($lockedHook !== null ? ['title' => $lockedHook, 'hook_locked' => true, 'outfit_tags' => array_values($outfitTags),
                             'text_template_id' => $textTemplateId, 'outfit_labels' => $outfitLabels ? array_values($outfitLabels) : null] : []),
                     ]);

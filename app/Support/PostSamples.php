@@ -31,7 +31,7 @@ final class PostSamples
      * Làm xong 1 bài (a90-fe note/xay-kenh-tiktok/bai-viet-mau/<key>.txt "ĐÃ LÀM") thì thêm key vào đây.
      * config ai90.post_samples_enabled ghi đè (vd test: ['*'] = bật hết).
      */
-    public const READY = ['top_n', 'lookbook', 'outfit_by_day', 'unboxing', 'video_type_01'];
+    public const READY = ['top_n', 'lookbook', 'outfit_by_day', 'one_shoe_many_looks', 'unboxing', 'video_type_01'];
 
     /** @return array<string, array> key => bài viết mẫu (cả bài chưa bật), có cờ enabled */
     public static function all(): array
@@ -175,10 +175,14 @@ final class PostSamples
                 self::rule('first', 'outfit', false, 'Ảnh bìa lô phối đồ: worker in đúng hook (chủ đề) của bài lên bìa'),
                 self::rule('each', 'outfit', false, 'Ảnh outfit của lô, đã in sẵn "Outfit N"'),
             ], false, 'Không chọn ảnh có sẵn. Gửi hook = CHỦ ĐỀ cả lô (in lên bìa, worker không tạo hook khác), outfit.tags = 1-5 hashtag chủ đề để worker tìm outfit trên OOTD (vd henho, sangchanh, tet), outfit.count = tổng số ảnh lô (gồm 1 bìa), outfit.product_id nếu muốn lô gắn 1 sản phẩm. Caption: kết bằng câu hỏi "Bạn chọn outfit số mấy?".', 'outfit_batch'),
-            self::sample('one_shoe_many_looks', '1 đôi N cách phối', 'outfit', 'save', $photo, 3, 6, [
-                self::rule('first', 'product', true, 'Ảnh đôi giày + hook "1 đôi ... phối N kiểu"'),
-                self::rule('each', 'outfit', true, 'Mỗi outfit có đôi giày cùng kiểu, chữ = dịp / phong cách'),
-            ], false, 'Slide đầu là giày, các slide sau là outfit mang kiểu giày tương tự.'),
+            // Lô phối đồ GẮN SẢN PHẨM (người dùng chốt 2026-11-23/24): worker phối đồ chọn outfit OOTD theo hashtag chủ đề +
+            // cùng loại giày với sản phẩm (tags.ootd), vẽ bằng Google Flow với ĐÚNG đôi giày của ảnh sản phẩm; bìa như lô
+            // thường. a90-fe note/xay-kenh-tiktok/bai-viet-mau/one_shoe_many_looks.txt
+            [...self::sample('one_shoe_many_looks', 'Outfit - theo sản phẩm', 'outfit', 'save', $photo, 3, 6, [
+                self::rule('first', 'outfit', false, 'Ảnh bìa lô phối đồ: worker in đúng hook "1 đôi ... phối N kiểu" lên bìa'),
+                self::rule('each', 'outfit', false, 'Ảnh outfit mang ĐÚNG đôi giày sản phẩm (Flow vẽ), đã in sẵn "Outfit N"'),
+            ], true, 'Không chọn ảnh có sẵn. BẮT BUỘC outfit.product_id = 1 sản phẩm đã có tag ootd (hashtag giày OOTD, chạy /gan-tag-san-pham nếu thiếu). Hook "1 đôi <ai_label ngắn> phối N kiểu" / "<giày> mặc gì cho đẹp?" với N = outfit.count - 1, in lên bìa. outfit.count = tổng số ảnh lô (gồm 1 bìa); outfit.tags = 1-5 hashtag chủ đề tìm outfit trên OOTD (worker lọc thêm outfit cùng loại giày với sản phẩm). Caption kết bằng "Bạn thích kiểu số mấy?".', 'outfit_batch'),
+                'outfit_mode' => 'product'],
             self::sample('box_to_feet', 'Từ hộp lên chân', 'outfit', 'sale', $photo, 2, 4, [
                 self::rule('first', 'product', true, 'Giày trong hộp, chữ bỏ lửng "Đôi này..."'),
                 self::rule('middle', 'outfit', true, 'Outfit mang ĐÚNG kiểu giày đó "...mang lên thế này"'),
