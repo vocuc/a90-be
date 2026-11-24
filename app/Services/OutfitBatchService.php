@@ -113,8 +113,11 @@ class OutfitBatchService
                             'text_template_id' => $textTemplateId, 'outfit_labels' => $outfitLabels ? array_values($outfitLabels) : null] : []),
                     ]);
                     $paths = $product ? $product->images->pluck('path', 'field_key')->all() : [];
-                    for ($pos = 1; $pos <= $images; $pos++) {
-                        $generation = $this->newGeneration($user, $creative, $pos === 1 ? Generation::KIND_OUTFIT_COVER : Generation::KIND_OUTFIT,
+                    // Lô "Outfit - theo sản phẩm" (2026-11-24): KHÔNG có ảnh bìa trong lô ($images - 1 ảnh outfit); bìa do
+                    // content-worker dựng khi ảnh outfit xong (ảnh lịch sử sản phẩm + hook kiểu bìa tạp chí)
+                    $noCover = $product && $outfitMode === ImageBatch::OUTFIT_MODE_PRODUCT;
+                    for ($pos = 1; $pos <= ($noCover ? $images - 1 : $images); $pos++) {
+                        $generation = $this->newGeneration($user, $creative, $pos === 1 && ! $noCover ? Generation::KIND_OUTFIT_COVER : Generation::KIND_OUTFIT,
                             $paths, $product?->id, $workerId, $insertLogo, "outfit:{$batch->id}:{$pos}");
                         $batch->images()->create([
                             'generation_id' => $generation->id,

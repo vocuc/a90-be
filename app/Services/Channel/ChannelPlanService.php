@@ -662,6 +662,9 @@ class ChannelPlanService
         // Bài viết mẫu lấy ảnh bằng LÔ PHỐI ĐỒ mới (vd lookbook): không chọn ảnh có sẵn, chỉ ghi số ảnh + sản phẩm
         if (($sample['image_source'] ?? PostSamples::SOURCE_LIBRARY) === PostSamples::SOURCE_OUTFIT_BATCH) {
             $outfit = $this->validateOutfit($channel, $sample, $raw, $format, $errors);
+            if (($sample['cover_collage'] ?? false) && ! ContentJobService::hasWorker($channel->user_id)) {
+                $errors[] = 'Shop chưa được gắn worker dựng nội dung (content-worker), không dựng được bìa bài này.';
+            }
             // Hook in lên ảnh bìa theo template chữ của kênh (worker phối đồ v2, người dùng chốt 2026-11-21)
             $textTemplateId = $this->approvedTemplateId($channel, $raw, $sampleKey, $errors);
             $signature = self::signature($sampleKey, $hook, []);

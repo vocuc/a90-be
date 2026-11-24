@@ -130,6 +130,9 @@ class ContentJobService
             // true: worker phải gửi thêm 1 ảnh bìa ghép ở ĐẦU (số ảnh gửi = số nguyên liệu + 1)
             'cover_collage' => (bool) ($sample['cover_collage'] ?? false),
             'hook' => $post->hook,
+            // Bìa lô "Outfit - theo sản phẩm" (2026-11-24): { background: 1 ảnh lịch sử tạo ảnh của sản phẩm (ngẫu nhiên trong
+            // ảnh mới nhất) | null = dùng ảnh outfit đầu, text_template: template chữ của lô } -> in hook phía trên kiểu bìa tạp chí
+            'cover' => $this->productBatchCover($post),
             'images' => $post->images->sortBy('position')->values()->map(function (SocialPostImage $i) use ($templates) {
                 $generation = $i->output?->generation;
                 $template = $templates->get($i->text_template_id);
@@ -143,6 +146,28 @@ class ContentJobService
                     'text_template' => $template ? ['id' => $template->id, 'name' => $template->name, 'style' => $template->style] : null,
                 ];
             })->all(),
+        ];
+    }
+
+    public const COVER_HISTORY = 10;
+
+    private function productBatchCover(SocialPost $post): ?array
+    {
+        $batch = $post->imageBatch()->first();
+        if (! $batch || $batch->outfit_mode !== \App\Models\ImageBatch::OUTFIT_MODE_PRODUCT) {
+            return null;
+        }
+        $productId = (int) \App\Models\Generation::query()
+            ->whereIn('id', $batch->images()->pluck('generation_id'))->value('product_id');
+        $output = $productId ? app(\App\Services\ShopImageLibrary::class)->productImages($post->user_id, $productId)
+            ->orderByDesc('id')->limit(self::COVER_HISTORY)->get()->shuffle()->first() : null;
+        $template = $batch->text_template_id ? ChannelTextTemplate::query()->find($batch->text_template_id, ['id', 'name', 'style']) : null;
+
+        return [
+            'style' => 'magazine',
+            'background' => $output ? $this->media->url($output->image_path) : null,
+            'background_output_id' => $output?->id,
+            'text_template' => $template ? ['id' => $template->id, 'name' => $template->name, 'style' => $template->style] : null,
         ];
     }
 
