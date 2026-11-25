@@ -74,7 +74,7 @@ abstract class TestCase extends BaseTestCase
         $creative->config()->create(array_merge([
             // 1 ảnh sản phẩm + tỉ lệ khung hình (bắt buộc với mọi Creative)
             'input_schema' => [
-                ['key' => 'product_image', 'label' => 'Ảnh sản phẩm', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
+                ['key' => 'anh_san_pham', 'label' => 'Ảnh sản phẩm', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
                 ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'sort_order' => 2,
                     'validation' => [], 'options' => [['value' => '1:1', 'label' => '1:1']], 'default_value' => '1:1'],
             ],
@@ -93,7 +93,7 @@ abstract class TestCase extends BaseTestCase
         return $this->actingAs($user)->post('/api/v1/generations', array_merge([
             'creative_id' => $creative->id,
             'inputs' => array_merge([
-                'product_image' => UploadedFile::fake()->image('product.png', 64, 64),
+                'anh_san_pham' => UploadedFile::fake()->image('product.png', 64, 64),
                 'aspectRatio' => '1:1',
             ], $inputs),
             'quantity' => $quantity,

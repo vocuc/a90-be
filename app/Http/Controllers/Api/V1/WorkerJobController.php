@@ -262,7 +262,7 @@ class WorkerJobController extends Controller
     }
 
     /**
-     * Yêu cầu gửi tới model dạng phẳng: mỗi ảnh đầu vào một khoá camelCase (product_image -> productImage),
+     * Yêu cầu gửi tới model dạng phẳng: mỗi ảnh đầu vào một khoá camelCase (anh_san_pham -> anhSanPham),
      * gồm cả ảnh nguyên liệu ẩn của Creator, kèm prompt đã ghép, tỉ lệ khung hình và tên model.
      */
     private function request(Generation $generation, MediaStorage $media): array

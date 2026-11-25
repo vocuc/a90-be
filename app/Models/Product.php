@@ -18,6 +18,13 @@ class Product extends Model
     /** Độ dài tối đa của "Yêu cầu" (prompt_note), nối vào cuối prompt nên giữ ngắn so với prompt Creative. */
     public const PROMPT_NOTE_MAX = 2000;
 
+    /**
+     * Khung "Ảnh sản phẩm" cố định (người dùng chốt 2026-11-25): mọi sản phẩm BẮT BUỘC có 1 ảnh field_key này, form không
+     * cho xoá / đổi tên. Gắn tag AI, worker phối đồ chọn giày, tạo lô (điền vào trường Creative cùng key) dựa vào ảnh này.
+     * Thay cho key cũ product_image (migration 2026_11_25_100000 đổi hết sản phẩm, Creative, lượt tạo ảnh).
+     */
+    public const MAIN_IMAGE_KEY = 'anh_san_pham';
+
     protected $casts = ['is_active' => 'boolean', 'tags' => 'array', 'tag_sources' => 'array', 'tagged_at' => 'datetime'];
 
     /**

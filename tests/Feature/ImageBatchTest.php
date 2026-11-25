@@ -24,7 +24,7 @@ class ImageBatchTest extends TestCase
             'items' => array_map(fn (array $item) => [
                 'creative_id' => $item[0]->id,
                 'quantity' => $item[1],
-                'inputs' => ['product_image' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
+                'inputs' => ['anh_san_pham' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
             ], $items),
             'idempotency_key' => (string) Str::uuid(),
         ], $extra), ['Accept' => 'application/json']);
@@ -89,14 +89,14 @@ class ImageBatchTest extends TestCase
 
         $this->actingAs($user)->post('/api/v1/image-batches', [
             'items' => [
-                ['creative_id' => $a->id, 'quantity' => 1, 'inputs' => ['product_image' => UploadedFile::fake()->image('a.png'), 'aspectRatio' => '1:1']],
+                ['creative_id' => $a->id, 'quantity' => 1, 'inputs' => ['anh_san_pham' => UploadedFile::fake()->image('a.png'), 'aspectRatio' => '1:1']],
                 ['creative_id' => $b->id, 'quantity' => 1, 'inputs' => ['aspectRatio' => '1:1']],
             ],
             'idempotency_key' => 'k1',
         ], ['Accept' => 'application/json'])
             ->assertStatus(422)
-            ->assertJsonValidationErrors('items.1.inputs.product_image')
-            ->assertJsonMissingValidationErrors('items.0.inputs.product_image');
+            ->assertJsonValidationErrors('items.1.inputs.anh_san_pham')
+            ->assertJsonMissingValidationErrors('items.0.inputs.anh_san_pham');
 
         $this->actingAs($user)->postJson('/api/v1/image-batches', [
             'items' => [['creative_id' => 999999, 'quantity' => 1]], 'idempotency_key' => 'k2',
@@ -207,25 +207,25 @@ class ImageBatchTest extends TestCase
             ->assertJsonPath('data.creative.title', 'Ảnh sản phẩm studio')
             ->assertJsonPath('data.inputs.aspectRatio', '1:1')
             ->json('data.inputs');
-        $fileId = $inputs['product_image'][0]['file_id'];
+        $fileId = $inputs['anh_san_pham'][0]['file_id'];
         $this->assertStringStartsWith('f_', $fileId);
 
         $new = $this->actingAs($user)->post("/api/v1/image-batches/{$batch->id}/images/{$image->id}/regenerate", [
             'inputs' => ['aspectRatio' => '4:5'],
-            'keep_files' => ['product_image' => [$fileId]],
+            'keep_files' => ['anh_san_pham' => [$fileId]],
             'idempotency_key' => 'edit-1',
         ], ['Accept' => 'application/json'])->assertStatus(202)->json('data');
 
         $generation = Generation::query()->find($new['generation_id']);
         $this->assertSame('4:5', $generation->aspect_ratio);
-        $this->assertSame($oldGeneration->input_paths['product_image'], $generation->input_paths['product_image']);
+        $this->assertSame($oldGeneration->input_paths['anh_san_pham'], $generation->input_paths['anh_san_pham']);
 
         // file_id sai -> lỗi theo trường
         $this->actingAs($user)->post("/api/v1/image-batches/{$batch->id}/images/{$image->id}/regenerate", [
             'inputs' => ['aspectRatio' => '1:1'],
-            'keep_files' => ['product_image' => ['f_wrong']],
+            'keep_files' => ['anh_san_pham' => ['f_wrong']],
             'idempotency_key' => 'edit-2',
-        ], ['Accept' => 'application/json'])->assertStatus(422)->assertJsonValidationErrors('keep_files.product_image');
+        ], ['Accept' => 'application/json'])->assertStatus(422)->assertJsonValidationErrors('keep_files.anh_san_pham');
     }
 
     public function test_image_inputs_null_when_input_file_was_deleted(): void
@@ -233,7 +233,7 @@ class ImageBatchTest extends TestCase
         $user = $this->buyer();
         $batch = $this->completedBatch($user);
         $image = $batch->images()->first();
-        Storage::disk('media')->delete(Generation::query()->find($image->generation_id)->input_paths['product_image']);
+        Storage::disk('media')->delete(Generation::query()->find($image->generation_id)->input_paths['anh_san_pham']);
 
         $this->actingAs($user)->getJson("/api/v1/image-batches/{$batch->id}/images/{$image->id}/inputs")
             ->assertOk()

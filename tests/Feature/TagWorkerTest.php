@@ -58,7 +58,7 @@ class TagWorkerTest extends TestCase
     {
         $a = $this->product();
         $b = $this->product();
-        $noField = $this->product('product_image');
+        $noField = $this->product('anh_khac');
         $foreign = Product::query()->create(['user_id' => $this->creator()->id, 'name' => 'Khác']);
 
         $this->start([$a->id])->assertStatus(409)->assertJsonPath('code', 'TAG_WORKER_REQUIRED');

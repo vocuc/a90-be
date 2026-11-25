@@ -26,7 +26,7 @@ class AutoBatchTest extends TestCase
      * @param  string[]  $keys
      * @param  string[]  $hashtags  mặc định khớp hashtag mà group() gắn cho creative
      */
-    private function product(User $user, array $keys = ['product_image'], ?string $name = null, array $hashtags = ['Giày']): Product
+    private function product(User $user, array $keys = ['anh_san_pham'], ?string $name = null, array $hashtags = ['Giày']): Product
     {
         $id = $this->actingAs($user)->post('/api/v1/creator/products', [
             'name' => $name,
@@ -90,7 +90,7 @@ class AutoBatchTest extends TestCase
     public function test_product_crud_keeps_and_drops_images(): void
     {
         $user = $this->creator();
-        $product = $this->product($user, ['product_image', 'back_image'], 'Áo thun');
+        $product = $this->product($user, ['anh_san_pham', 'back_image'], 'Áo thun');
         $images = $product->images()->get();
 
         $this->actingAs($user)->getJson("/api/v1/creator/products/{$product->id}")
@@ -104,14 +104,14 @@ class AutoBatchTest extends TestCase
         $this->actingAs($user)->post("/api/v1/creator/products/{$product->id}", [
             'images' => [
                 ['id' => $images[0]->id, 'field_key' => 'main'],
-                ['file' => UploadedFile::fake()->image('new.png'), 'field_key' => 'product_image'],
+                ['file' => UploadedFile::fake()->image('new.png'), 'field_key' => 'anh_san_pham'],
             ],
         ], ['Accept' => 'application/json'])
             ->assertOk()
             ->assertJsonPath('data.name', null)
             ->assertJsonCount(2, 'data.images')
             ->assertJsonPath('data.images.0.field_key', 'main')
-            ->assertJsonPath('data.images.1.field_key', 'product_image')
+            ->assertJsonPath('data.images.1.field_key', 'anh_san_pham')
             // Không gửi hashtags -> bỏ hết
             ->assertJsonCount(0, 'data.hashtags');
 
@@ -127,7 +127,7 @@ class AutoBatchTest extends TestCase
         $user = $this->creator();
 
         $response = $this->actingAs($user)->post('/api/v1/creator/products', [
-            'images' => [['file' => UploadedFile::fake()->image('tall.png', 1000, 1500), 'field_key' => 'product_image']],
+            'images' => [['file' => UploadedFile::fake()->image('tall.png', 1000, 1500), 'field_key' => 'anh_san_pham']],
         ], ['Accept' => 'application/json'])->assertCreated();
 
         $image = Product::query()->sole()->images()->sole();
@@ -143,14 +143,79 @@ class AutoBatchTest extends TestCase
             ->assertJsonPath('data.images.0.thumb_url', "https://media.test/{$image->thumb_path}");
     }
 
+    public function test_product_requires_main_image_frame(): void
+    {
+        $user = $this->creator();
+        $json = ['Accept' => 'application/json'];
+
+        // Thiếu khung "Ảnh sản phẩm" anh_san_pham -> 422 ở images
+        $this->actingAs($user)->post('/api/v1/creator/products', [
+            'images' => [['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'phu_kien']],
+        ], $json)->assertStatus(422)->assertJsonValidationErrors('images');
+
+        $product = $this->product($user, ['anh_san_pham', 'phu_kien']);
+        [$main, $extra] = [$product->images()->where('field_key', 'anh_san_pham')->value('id'), $product->images()->where('field_key', 'phu_kien')->value('id')];
+
+        // Sửa mà bỏ khung ảnh sản phẩm -> 422, ảnh giữ nguyên
+        $this->actingAs($user)->post("/api/v1/creator/products/{$product->id}", [
+            'images' => [['id' => $extra, 'field_key' => 'phu_kien']],
+        ], $json)->assertStatus(422)->assertJsonValidationErrors('images');
+        $this->assertSame(2, $product->images()->count());
+
+        // Đổi ảnh trong khung (ảnh mới, cùng key) -> được
+        $this->actingAs($user)->post("/api/v1/creator/products/{$product->id}", [
+            'images' => [['file' => UploadedFile::fake()->image('moi.png'), 'field_key' => 'anh_san_pham'], ['id' => $extra, 'field_key' => 'phu_kien']],
+        ], $json)->assertOk()->assertJsonPath('data.images.0.field_key', 'anh_san_pham');
+        $this->assertNotSame($main, $product->images()->where('field_key', 'anh_san_pham')->value('id'));
+    }
+
+    public function test_migration_renames_product_image_to_anh_san_pham(): void
+    {
+        $user = $this->creator();
+        $migration = require database_path('migrations/2026_11_25_100000_rename_product_image_field_to_anh_san_pham.php');
+
+        // Sản phẩm cũ key product_image; sản phẩm có cả 2 key thì giữ nguyên (tránh trùng)
+        $old = Product::query()->create(['user_id' => $user->id, 'name' => 'Cũ']);
+        $old->images()->create(['field_key' => 'product_image', 'path' => 'products/a.png', 'position' => 0]);
+        $old->images()->create(['field_key' => 'phu_kien', 'path' => 'products/b.png', 'position' => 1]);
+        $both = Product::query()->create(['user_id' => $user->id, 'name' => 'Cả hai']);
+        $both->images()->create(['field_key' => 'anh_san_pham', 'path' => 'products/c.png', 'position' => 0]);
+        $both->images()->create(['field_key' => 'product_image', 'path' => 'products/d.png', 'position' => 1]);
+
+        // Creative trường product_image (prompt giữ nguyên); Creative có cả 2 trường thì bỏ qua
+        $field = fn (string $key) => ['key' => $key, 'label' => 'Ảnh', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []];
+        $prompt = 'Đi đôi giày ở productImage {{product_image}}';
+        $creative = $this->publishedCreative($user, ['input_schema' => [$field('product_image'), $field('outfit_image')], 'prompt_template' => $prompt]);
+        $mixed = $this->publishedCreative($user, ['input_schema' => [$field('product_image'), $field('anh_san_pham')]]);
+
+        // Bảng generations đã bỏ / thêm cột qua nhiều migration -> chỉ ghi cột còn tồn tại
+        $generationId = DB::table('generations')->insertGetId(array_intersect_key([
+            'user_id' => $user->id, 'creative_id' => $creative->id, 'creator_id' => $user->id, 'model_id' => $creative->model_id,
+            'type' => 'owner', 'input_paths' => json_encode(['product_image' => 'in/a.png', 'outfit_image' => 'in/b.png']),
+            'aspect_ratio' => '1:1', 'quantity' => 1, 'price_per_image' => 0, 'prompt_snapshot' => 'x', 'idempotency_key' => 'mig',
+            'created_at' => now(), 'updated_at' => now(),
+        ], array_flip(\Illuminate\Support\Facades\Schema::getColumnListing('generations'))));
+
+        $migration->up();
+
+        $this->assertEqualsCanonicalizing(['anh_san_pham', 'phu_kien'], $old->images()->pluck('field_key')->all());
+        $this->assertEqualsCanonicalizing(['anh_san_pham', 'product_image'], $both->images()->pluck('field_key')->all());
+        $config = $creative->config()->first();
+        $this->assertSame(['anh_san_pham', 'outfit_image'], array_column($config->input_schema, 'key'));
+        $this->assertSame($prompt, $config->prompt_template);
+        $this->assertSame(['product_image', 'anh_san_pham'], array_column($mixed->config()->first()->input_schema, 'key'));
+        $this->assertSame(['anh_san_pham' => 'in/a.png', 'outfit_image' => 'in/b.png'],
+            json_decode(DB::table('generations')->where('id', $generationId)->value('input_paths'), true));
+    }
+
     public function test_product_validates_field_keys(): void
     {
         $user = $this->creator();
 
         $this->actingAs($user)->post('/api/v1/creator/products', [
             'images' => [
-                ['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'product_image'],
-                ['file' => UploadedFile::fake()->image('b.png'), 'field_key' => 'product_image'],
+                ['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'anh_san_pham'],
+                ['file' => UploadedFile::fake()->image('b.png'), 'field_key' => 'anh_san_pham'],
                 ['file' => UploadedFile::fake()->image('c.png'), 'field_key' => 'ảnh'],
             ],
         ], ['Accept' => 'application/json'])
@@ -168,7 +233,7 @@ class AutoBatchTest extends TestCase
 
         $this->actingAs($user)->post('/api/v1/creator/products', [
             'hashtags' => ['#giay', 'GIÀY', 'Sale_50'],
-            'images' => [['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'product_image']],
+            'images' => [['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'anh_san_pham']],
         ], ['Accept' => 'application/json'])
             ->assertCreated()
             ->assertJsonCount(2, 'data.hashtags')
@@ -180,7 +245,7 @@ class AutoBatchTest extends TestCase
 
         $this->actingAs($user)->post('/api/v1/creator/products', [
             'hashtags' => ['a b', '#'],
-            'images' => [['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'product_image']],
+            'images' => [['file' => UploadedFile::fake()->image('a.png'), 'field_key' => 'anh_san_pham']],
         ], ['Accept' => 'application/json'])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['hashtags.0', 'hashtags.1']);
@@ -375,18 +440,18 @@ class AutoBatchTest extends TestCase
     {
         $user = $this->creator();
         $ok = $this->publishedCreative($user);
-        // Không có trường product_image
+        // Không có trường anh_san_pham
         $noField = $this->publishedCreative($user, config: ['input_schema' => [
             ['key' => 'model_photo', 'label' => 'Ảnh mẫu', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
         ]]);
         // Còn trường chữ bắt buộc không có mặc định
         $needsText = $this->publishedCreative($user, config: ['input_schema' => [
-            ['key' => 'product_image', 'label' => 'Ảnh', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
+            ['key' => 'anh_san_pham', 'label' => 'Ảnh', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
             ['key' => 'slogan', 'label' => 'Slogan', 'type' => 'text', 'required' => true, 'sort_order' => 2, 'validation' => []],
         ]]);
         // Trường chữ bắt buộc có mặc định thì dùng mặc định
         $withDefault = $this->publishedCreative($user, config: ['input_schema' => [
-            ['key' => 'product_image', 'label' => 'Ảnh', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
+            ['key' => 'anh_san_pham', 'label' => 'Ảnh', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
             ['key' => 'slogan', 'label' => 'Slogan', 'type' => 'text', 'required' => true, 'sort_order' => 2, 'validation' => [], 'default_value' => 'Sale'],
         ]]);
         $paused = $this->publishedCreative($user);
@@ -402,7 +467,7 @@ class AutoBatchTest extends TestCase
         $path = $product->images()->first()->path;
         $generations = Generation::query()->orderBy('id')->get();
         $this->assertSame([$ok->id, $withDefault->id], $generations->pluck('creative_id')->all());
-        $this->assertSame(['product_image' => $path], $generations[0]->input_paths);
+        $this->assertSame(['anh_san_pham' => $path], $generations[0]->input_paths);
         $this->assertSame('Sale', $generations[1]->input_values['slogan']);
     }
 
@@ -432,7 +497,9 @@ class AutoBatchTest extends TestCase
         $this->group($user, [$this->publishedCreative($user, config: ['input_schema' => [
             ['key' => 'model_photo', 'label' => 'Ảnh mẫu', 'type' => 'image', 'required' => true, 'sort_order' => 1, 'validation' => []],
         ]])], 'G2');
-        $p1 = $this->product($user, ['other_key']);
+        // Sản phẩm cũ chỉ có ảnh key khác (form mới bắt buộc khung anh_san_pham nên tạo thẳng trong DB)
+        $p1 = Product::query()->create(['user_id' => $user->id, 'name' => 'P1']);
+        $p1->images()->create(['field_key' => 'other_key', 'path' => 'products/p1.png', 'position' => 0]);
         $p2 = $this->product($user);
 
         // Seed nào cũng chỉ ra cặp P2 x G1

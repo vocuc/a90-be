@@ -107,7 +107,7 @@ class ProductTagTopicTest extends TestCase
         $b = $this->product('B');
         Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Không ảnh']); // không có ảnh -> không cần gắn
         $noField = Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Không có anh_san_pham']);
-        ProductImage::query()->create(['product_id' => $noField->id, 'path' => 'products/x.png', 'field_key' => 'product_image', 'position' => 1]);
+        ProductImage::query()->create(['product_id' => $noField->id, 'path' => 'products/x.png', 'field_key' => 'anh_khac', 'position' => 1]);
 
         $list = $this->api('GET', "shops/{$this->shop->id}/products/untagged")->assertOk()->json('data');
         $this->assertEqualsCanonicalizing([$a->id, $b->id], array_column($list, 'id'));

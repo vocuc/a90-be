@@ -105,7 +105,7 @@ class ImageWorkerSelectionTest extends TestCase
             'items' => [[
                 'creative_id' => $creative->id,
                 'quantity' => 7,
-                'inputs' => ['product_image' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
+                'inputs' => ['anh_san_pham' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
             ]],
             'idempotency_key' => 'batch-1',
             'worker_id' => $chosen->id,

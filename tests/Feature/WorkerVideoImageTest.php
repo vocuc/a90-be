@@ -27,7 +27,7 @@ class WorkerVideoImageTest extends TestCase
             'items' => [[
                 'creative_id' => $this->publishedCreative($this->creator())->id,
                 'quantity' => $quantity,
-                'inputs' => ['product_image' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
+                'inputs' => ['anh_san_pham' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
             ]],
             'idempotency_key' => (string) Str::uuid(),
             'product_id' => $product?->id,

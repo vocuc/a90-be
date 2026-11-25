@@ -23,8 +23,8 @@ class ProductTagService
 
     public const LIST_MAX = 200;
 
-    /** Skill chỉ xem ảnh sản phẩm có trường này (người dùng chốt 2026-11-21); sản phẩm không có -> không gắn tag được. */
-    public const TAG_FIELD_KEY = 'anh_san_pham';
+    /** Skill chỉ xem ảnh sản phẩm có trường này (người dùng chốt 2026-11-21) = khung ảnh sản phẩm cố định. */
+    public const TAG_FIELD_KEY = Product::MAIN_IMAGE_KEY;
 
     public function __construct(private MediaStorage $media) {}
 

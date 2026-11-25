@@ -46,7 +46,7 @@ class GenerationTest extends TestCase
         // Tạo ảnh lẻ không chèn logo
         $this->assertNull($job['logo']);
         $this->assertSame([
-            'productImage' => "https://media.test/{$generation->input_paths['product_image']}",
+            'anhSanPham' => "https://media.test/{$generation->input_paths['anh_san_pham']}",
             'prompt' => 'Place the product on a marble table. Avoid text and watermark.',
             'aspectRatio' => '4:5',
             'modelDisplayName' => 'Gemini 2.5 Flash Image',
@@ -248,7 +248,7 @@ class GenerationTest extends TestCase
         $token = $this->workerToken('retry-worker');
         $job = $this->claimJob($token)->json('data');
         $this->assertSame($retry->json('data.outputs.0.id'), $job['output_id']);
-        $this->assertSame($original['input_images']['product_image'], $job['request']['productImage']);
+        $this->assertSame($original['input_images']['anh_san_pham'], $job['request']['anhSanPham']);
         $this->completeJob($token, $job['id'])->assertOk();
 
         $this->assertSame('completed', $this->latestStatus($retry)['status']);
@@ -363,7 +363,7 @@ class GenerationTest extends TestCase
         // Sản phẩm của người khác: không thấy ảnh nào
         $this->actingAs($this->buyer())->getJson("/api/v1/generations?product_id={$product->id}")->assertOk()->assertJsonCount(0, 'data');
 
-        $product->images()->create(['field_key' => 'product_image', 'path' => 'products/ao.png', 'thumb_path' => 'products/ao-thumb.png', 'position' => 1]);
+        $product->images()->create(['field_key' => 'anh_san_pham', 'path' => 'products/ao.png', 'thumb_path' => 'products/ao-thumb.png', 'position' => 1]);
         // Creative đã mua của creator khác không có trong ô lọc (chỉ creative của chính shop)
         $filters = $this->actingAs($buyer)->getJson('/api/v1/generations/filters')->assertOk()
             ->assertJsonCount(0, 'data.creatives')

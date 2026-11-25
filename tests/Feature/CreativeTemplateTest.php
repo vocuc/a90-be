@@ -18,7 +18,7 @@ class CreativeTemplateTest extends TestCase
     private function schema(array $override = []): array
     {
         return [
-            ['key' => 'product_image', 'label' => 'Ảnh giày', 'type' => 'image', 'required' => true,
+            ['key' => 'anh_san_pham', 'label' => 'Ảnh giày', 'type' => 'image', 'required' => true,
                 'validation' => ['max_size_mb' => 10, 'allowed_types' => ['image/jpeg', 'image/png', 'image/webp']]],
             ['key' => 'outfit_image', 'label' => 'Ảnh outfit', 'type' => 'image', 'required' => true,
                 'validation' => ['max_size_mb' => 10, 'allowed_types' => ['image/jpeg', 'image/png', 'image/webp']]],
@@ -39,7 +39,7 @@ class CreativeTemplateTest extends TestCase
             'category_id' => Category::query()->value('id'),
             'video_url' => 'https://www.tiktok.com/@shop/video/123',
             'input_schema' => $this->schema(),
-            'prompt_template' => 'Tạo một người mẫu mặc outfitImage và đi đôi giày của tôi ở productImage',
+            'prompt_template' => 'Tạo một người mẫu mặc outfitImage và đi đôi giày của tôi ở anhSanPham',
         ], $override);
     }
 
@@ -71,7 +71,7 @@ class CreativeTemplateTest extends TestCase
 
         $this->app['auth']->forgetGuards();
         $detail = $this->getJson("/api/v1/creatives/{$slug}")->assertOk()
-            ->assertJsonPath('data.input_schema.0.key', 'product_image')
+            ->assertJsonPath('data.input_schema.0.key', 'anh_san_pham')
             ->assertJsonPath('data.description', 'Chụp giày trên nền trơn.')
             ->assertJsonPath('data.options.default_aspect_ratio', '9:16');
         $this->assertStringNotContainsString('Tạo một người mẫu', $detail->getContent());
@@ -90,11 +90,11 @@ class CreativeTemplateTest extends TestCase
         $post(['input_schema' => $schema])->assertStatus(422)->assertJsonValidationErrors('input_schema.2.key');
         // Tên trường trùng
         $schema = $this->schema();
-        $schema[1]['key'] = 'product_image';
+        $schema[1]['key'] = 'anh_san_pham';
         $post(['input_schema' => $schema])->assertStatus(422)->assertJsonValidationErrors('input_schema.1.key');
         // Biến chưa khai báo / biến là trường ảnh
         $post(['prompt_template' => 'Ảnh {{missing}}'])->assertStatus(422)->assertJsonValidationErrors('prompt_template');
-        $post(['prompt_template' => 'Ảnh {{product_image}}'])->assertStatus(422)->assertJsonValidationErrors('prompt_template');
+        $post(['prompt_template' => 'Ảnh {{anh_san_pham}}'])->assertStatus(422)->assertJsonValidationErrors('prompt_template');
         // Loại trường chưa hỗ trợ
         $post(['input_schema' => $this->schema([['key' => 'gallery', 'label' => 'Bộ ảnh', 'type' => 'image_set', 'required' => true]])])
             ->assertStatus(422)->assertJsonValidationErrors('input_schema.3.type');
@@ -117,23 +117,23 @@ class CreativeTemplateTest extends TestCase
         ], ['Accept' => 'application/json']);
 
         // Thiếu ảnh bắt buộc
-        $send(['product_image' => UploadedFile::fake()->image('shoe.png')])
+        $send(['anh_san_pham' => UploadedFile::fake()->image('shoe.png')])
             ->assertStatus(422)->assertJsonValidationErrors('inputs.outfit_image');
 
         $response = $send([
-            'product_image' => UploadedFile::fake()->image('shoe.png'),
+            'anh_san_pham' => UploadedFile::fake()->image('shoe.png'),
             'outfit_image' => UploadedFile::fake()->image('outfit.jpg'),
             'aspectRatio' => '16:9',
         ])->assertStatus(202)->assertJsonPath('data.aspect_ratio', '16:9');
 
         $generation = Generation::query()->findOrFail($response->json('data.id'));
-        $this->assertEqualsCanonicalizing(['product_image', 'outfit_image'], array_keys($generation->input_paths));
+        $this->assertEqualsCanonicalizing(['anh_san_pham', 'outfit_image'], array_keys($generation->input_paths));
 
         $job = $this->claimJob($this->workerToken())->assertOk()->json('data');
         $this->assertSame([
-            'productImage' => "https://media.test/{$generation->input_paths['product_image']}",
+            'anhSanPham' => "https://media.test/{$generation->input_paths['anh_san_pham']}",
             'outfitImage' => "https://media.test/{$generation->input_paths['outfit_image']}",
-            'prompt' => 'Tạo một người mẫu mặc outfitImage và đi đôi giày của tôi ở productImage',
+            'prompt' => 'Tạo một người mẫu mặc outfitImage và đi đôi giày của tôi ở anhSanPham',
             'aspectRatio' => '16:9',
             'modelDisplayName' => 'Nano Banana Pro (Gemini 3 Pro Image)',
         ], $job['request']);
@@ -151,7 +151,7 @@ class CreativeTemplateTest extends TestCase
             'quantity' => 1,
             'idempotency_key' => (string) Str::uuid(),
             'inputs' => [
-                'product_image' => UploadedFile::fake()->image('shoe.png'),
+                'anh_san_pham' => UploadedFile::fake()->image('shoe.png'),
                 'outfit_image' => UploadedFile::fake()->image('outfit.png'),
                 'note' => 'Nền màu be',
             ],
@@ -203,7 +203,7 @@ class CreativeTemplateTest extends TestCase
             'quantity' => 1,
             'idempotency_key' => (string) Str::uuid(),
             'inputs' => [
-                'product_image' => UploadedFile::fake()->image('shoe.png'),
+                'anh_san_pham' => UploadedFile::fake()->image('shoe.png'),
                 'outfit_image' => UploadedFile::fake()->image('outfit.jpg'),
                 'brand_logo' => 'x',
             ],
@@ -216,7 +216,7 @@ class CreativeTemplateTest extends TestCase
         $this->assertArrayNotHasKey('brand_logo', $generation->input_values);
 
         $job = $this->claimJob($this->workerToken())->assertOk()->json('data.request');
-        $this->assertSame(['productImage', 'outfitImage', 'brandLogo', 'prompt', 'aspectRatio', 'modelDisplayName'], array_keys($job));
+        $this->assertSame(['anhSanPham', 'outfitImage', 'brandLogo', 'prompt', 'aspectRatio', 'modelDisplayName'], array_keys($job));
         $this->assertSame("https://media.test/{$generation->asset_paths['brand_logo']}", $job['brandLogo']);
     }
 

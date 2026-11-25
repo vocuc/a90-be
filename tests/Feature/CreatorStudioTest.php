@@ -23,7 +23,7 @@ class CreatorStudioTest extends TestCase
             'model_id' => AiModel::query()->firstOrFail()->id,
             'max_outputs' => 4,
             'input_schema' => [
-                ['key' => 'product_image', 'label' => 'Ảnh mỹ phẩm', 'type' => 'image', 'required' => true],
+                ['key' => 'anh_san_pham', 'label' => 'Ảnh mỹ phẩm', 'type' => 'image', 'required' => true],
                 ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '4:5'],
             ],
             'prompt_template' => 'Luxury cosmetic shot',
@@ -96,7 +96,7 @@ class CreatorStudioTest extends TestCase
             'title' => 'Mẫu riêng',
             'model_id' => AiModel::query()->firstOrFail()->id,
             'input_schema' => [
-                ['key' => 'product_image', 'label' => 'Ảnh', 'type' => 'image', 'required' => true],
+                ['key' => 'anh_san_pham', 'label' => 'Ảnh', 'type' => 'image', 'required' => true],
                 ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '1:1'],
             ],
             'prompt_template' => 'Studio shot',
@@ -152,7 +152,7 @@ class CreatorStudioTest extends TestCase
         $creative->update(['status' => 'draft']);
 
         $response = $this->actingAs($creator)->post("/api/v1/creator/creatives/{$creative->id}/test", [
-            'inputs' => ['product_image' => UploadedFile::fake()->image('p.png'), 'aspectRatio' => '1:1'],
+            'inputs' => ['anh_san_pham' => UploadedFile::fake()->image('p.png'), 'aspectRatio' => '1:1'],
             'quantity' => 1,
             'idempotency_key' => (string) Str::uuid(),
         ], ['Accept' => 'application/json'])

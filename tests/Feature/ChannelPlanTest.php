@@ -9,6 +9,8 @@ use App\Models\ContentPlanItem;
 use App\Models\Generation;
 use App\Models\GenerationOutput;
 use App\Models\Hashtag;
+use App\Models\Product;
+use App\Models\ProductImage;
 use App\Models\SocialPost;
 use App\Models\ContentJob;
 use App\Models\User;
@@ -907,12 +909,11 @@ class ChannelPlanTest extends TestCase
         $creative->hashtags()->sync(Hashtag::syncPivot(['giay']));
         $productId = $this->actingAs($this->shop)->post('/api/v1/creator/products', [
             'name' => 'Cao gót đỏ', 'hashtags' => ['giay'],
-            'images' => [['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'product_image']],
+            'images' => [['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'anh_san_pham']],
         ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
-        $lonely = $this->actingAs($this->shop)->post('/api/v1/creator/products', [
-            'name' => 'Không ghép được', 'hashtags' => ['giay'],
-            'images' => [['file' => UploadedFile::fake()->image('q.png', 32, 32), 'field_key' => 'khac']],
-        ], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
+        // Sản phẩm cũ chỉ có ảnh key khác (form mới bắt buộc khung anh_san_pham nên tạo thẳng trong DB)
+        $lonely = Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Không ghép được'])->id;
+        ProductImage::query()->create(['product_id' => $lonely, 'path' => 'products/q.png', 'field_key' => 'khac', 'position' => 0]);
         $groupId = $this->actingAs($this->shop)->postJson('/api/v1/creator/creative-groups', ['name' => 'Studio', 'creative_ids' => [$creative->id]])
             ->assertCreated()->json('data.id');
         $this->app['auth']->forgetGuards();

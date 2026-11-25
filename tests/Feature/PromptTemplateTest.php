@@ -10,7 +10,7 @@ class PromptTemplateTest extends TestCase
     private function schema(): array
     {
         return [
-            ['key' => 'product_image', 'label' => 'Ảnh sản phẩm', 'type' => 'image', 'required' => true],
+            ['key' => 'anh_san_pham', 'label' => 'Ảnh sản phẩm', 'type' => 'image', 'required' => true],
             ['key' => 'aspectRatio', 'label' => 'Tỉ lệ khung hình', 'type' => 'aspect_ratio', 'required' => true, 'default_value' => '1:1'],
         ];
     }

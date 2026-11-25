@@ -58,7 +58,7 @@ class VideoPostTest extends TestCase
             'items' => [[
                 'creative_id' => $this->publishedCreative($this->creator())->id,
                 'quantity' => $images,
-                'inputs' => ['product_image' => UploadedFile::fake()->image('p.png', 64, 64), 'aspectRatio' => '1:1'],
+                'inputs' => ['anh_san_pham' => UploadedFile::fake()->image('p.png', 64, 64), 'aspectRatio' => '1:1'],
             ]],
             'idempotency_key' => (string) Str::uuid(),
             'product_id' => $product->id,

@@ -66,7 +66,7 @@ class GenerationProductTest extends TestCase
             'items' => [[
                 'creative_id' => $creative->id,
                 'quantity' => 7,
-                'inputs' => ['product_image' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
+                'inputs' => ['anh_san_pham' => UploadedFile::fake()->image('product.png', 64, 64), 'aspectRatio' => '1:1'],
             ]],
             'idempotency_key' => 'batch-1',
             'product_id' => $product->id,
@@ -113,7 +113,7 @@ class GenerationProductTest extends TestCase
     public function test_product_api_saves_and_clears_prompt_note(): void
     {
         $user = $this->creator();
-        $image = fn () => ['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'product_image'];
+        $image = fn () => ['file' => UploadedFile::fake()->image('p.png', 32, 32), 'field_key' => 'anh_san_pham'];
 
         $id = $this->actingAs($user)->post('/api/v1/creator/products', [
             'prompt_note' => '  Giữ nguyên logo.  ',

@@ -169,7 +169,7 @@ class ProductController extends Controller
         return array_values(array_unique($ids));
     }
 
-    /** multipart: name?, prompt_note?, hashtags[]?, images[i][file], images[i][field_key] */
+    /** multipart: name?, prompt_note?, hashtags[]?, images[i][file], images[i][field_key] (bắt buộc 1 ảnh key anh_san_pham) */
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate($this->rules(false), $this->messages());
@@ -322,7 +322,10 @@ class ProductController extends Controller
         $product->images()->delete();
 
         $directory = "products/{$product->user_id}";
-        foreach (array_values($images) as $position => $image) {
+        // validated() có thể xếp phần tử khác thứ tự gửi (ảnh mới đứng trước ảnh giữ lại) -> sắp lại theo chỉ số gửi lên
+        // (rule "list" bảo đảm 0..n-1) để vị trí và file images.{i}.file khớp đúng phần tử.
+        ksort($images);
+        foreach ($images as $position => $image) {
             if (! empty($image['id'])) {
                 $kept = $old[(int) $image['id']];
                 [$path, $thumbPath] = [$kept->path, $kept->thumb_path];
@@ -364,7 +367,13 @@ class ProductController extends Controller
                     $fail('Hashtag phải chứa chữ cái hoặc chữ số.');
                 }
             }],
-            'images' => ['required', 'array', 'min:1', 'list'],
+            // Khung ảnh sản phẩm cố định (2026-11-25): bắt buộc có 1 ảnh key Product::MAIN_IMAGE_KEY
+            'images' => ['required', 'array', 'min:1', 'list', function (string $attribute, mixed $value, Closure $fail) {
+                $keys = is_array($value) ? array_column(array_filter($value, 'is_array'), 'field_key') : [];
+                if (! in_array(Product::MAIN_IMAGE_KEY, $keys, true)) {
+                    $fail('Vui lòng thêm ảnh vào khung "Ảnh sản phẩm".');
+                }
+            }],
             'images.*.id' => $updating ? ['nullable', 'integer'] : ['prohibited'],
             'images.*.file' => [$updating ? 'required_without:images.*.id' : 'required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:'.$maxKb],
             'images.*.field_key' => ['required', 'string', 'max:64', 'regex:/^[A-Za-z0-9_]+$/', 'distinct'],
