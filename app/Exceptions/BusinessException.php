@@ -44,11 +44,6 @@ class BusinessException extends RuntimeException
         return new self('INVALID_STATE', $message, 409);
     }
 
-    public static function postNotEditable(): self
-    {
-        return new self('POST_NOT_EDITABLE', 'Bài đăng không còn ở trạng thái chờ gửi.', 409);
-    }
-
     public static function ghnSettingsRequired(): self
     {
         return new self('GHN_SETTINGS_REQUIRED', 'Bạn cần kết nối GHN (Token, ShopId) trong Quản lý cửa hàng trước.', 400);
