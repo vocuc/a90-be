@@ -891,6 +891,13 @@ class ChannelPlanTest extends TestCase
         $this->withToken($this->contentToken)->post("/api/v1/worker-jobs/{$content['id']}", ['status' => 'completed',
             'files' => array_map(fn ($k) => UploadedFile::fake()->image("s{$k}.jpg", 30, 40), range(0, 4))], ['Accept' => 'application/json'])->assertOk();
         $this->assertSame(5, $post->fresh()->images()->count());
+
+        // Tab Kế hoạch: bài lô phối đồ không có ảnh lúc lập kỳ -> tạo xong thì hiện ảnh thật của bài đăng (post_images)
+        $this->app['auth']->forgetGuards();
+        $row = $this->actingAs($this->shop)->getJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}")->assertOk()->json('data');
+        $this->assertSame([], $row['items'][0]['images']);
+        $this->assertCount(5, $row['items'][0]['post_images']);
+        $this->assertNotNull($row['items'][0]['post_images'][0]['thumb_url']);
     }
 
     public function test_only_ready_post_samples_are_usable(): void

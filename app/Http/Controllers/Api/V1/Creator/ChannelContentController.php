@@ -652,7 +652,7 @@ class ChannelContentController extends Controller
 
     private function planDetail(ContentPlan $p): array
     {
-        return [...$this->planSummary($p), 'items' => $p->items()->with('post')->get()->map(fn ($i) => $this->item($i))];
+        return [...$this->planSummary($p), 'items' => $p->items()->with('post.images.output')->get()->map(fn ($i) => $this->item($i))];
     }
 
     private function item(ContentPlanItem $i): array
@@ -691,6 +691,12 @@ class ChannelContentController extends Controller
             'hashtags' => $i->hashtags ?? [],
             'social_post_id' => $i->social_post_id,
             'post_status' => $i->post?->status,
+            // Ảnh THẬT của bài đăng sau khi duyệt (2026-11-25): bài lô phối đồ / lô ảnh sản phẩm không có ảnh lúc lập kỳ,
+            // tạo xong ảnh thì tab Kế hoạch hiện ảnh này (bản đã chèn chữ nếu có) thay ô "Lô phối đồ" / "Lô ảnh"
+            'post_images' => $i->post ? $i->post->images->sortBy('position')->values()
+                ->filter(fn ($img) => $img->isUsable())
+                ->map(fn ($img) => ['id' => $img->id, 'thumb_url' => $this->media->url($img->overlay_path ?: $img->thumbPath())])
+                ->values()->all() : [],
         ];
     }
 
