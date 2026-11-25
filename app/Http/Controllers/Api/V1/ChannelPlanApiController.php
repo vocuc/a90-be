@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Middleware\EnsureChannelPlanToken;
 use App\Exceptions\BusinessException;
 use App\Http\Controllers\Controller;
 use App\Models\Channel;
@@ -30,7 +31,7 @@ class ChannelPlanApiController extends Controller
      * null, không giữ slot kỳ mới). */
     public function context(Request $request, int $channel): JsonResponse
     {
-        $model = $this->channel($channel);
+        $model = $this->channel($request, $channel);
         $fill = $request->filled('fill_plan')
             ? ($model->plans()->find((int) $request->query('fill_plan')) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy kỳ kế hoạch.', 404))
             : null;
@@ -41,7 +42,7 @@ class ChannelPlanApiController extends Controller
     public function persona(Request $request, int $channel): JsonResponse
     {
         $data = $request->validate(['persona' => ['required', 'array'], 'persona.*' => ['nullable', 'string', 'max:'.Channel::PERSONA_FIELD_MAX]]);
-        $model = $this->plans->savePersona($this->channel($channel), $data['persona']);
+        $model = $this->plans->savePersona($this->channel($request, $channel), $data['persona']);
 
         return response()->json(['data' => ['persona' => $model->persona]]);
     }
@@ -54,7 +55,7 @@ class ChannelPlanApiController extends Controller
             'items.*.percent' => ['required', 'numeric', 'min:0', 'max:100'],
             'items.*.reason' => ['nullable', 'string'],
         ]);
-        $lineup = $this->plans->saveLineup($this->channel($channel), $data['items'], true);
+        $lineup = $this->plans->saveLineup($this->channel($request, $channel), $data['items'], true);
 
         return response()->json(['data' => ['id' => $lineup->id, 'status' => $lineup->status, 'items' => $lineup->items]], 201);
     }
@@ -68,7 +69,7 @@ class ChannelPlanApiController extends Controller
             ...ChannelTextTemplate::sampleKeyRules('templates.*.sample_keys'),
             ...ChannelTextTemplate::styleRules('templates.*.style'),
         ]);
-        $saved = $this->plans->saveTemplates($this->channel($channel), $data['templates']);
+        $saved = $this->plans->saveTemplates($this->channel($request, $channel), $data['templates']);
 
         return response()->json(['data' => $saved->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'status' => $t->status,
             'sample_keys' => $t->sample_keys])], 201);
@@ -87,14 +88,14 @@ class ChannelPlanApiController extends Controller
             'topics.*.note' => ['nullable', 'string', 'max:'.ChannelTopic::NOTE_MAX],
         ]);
 
-        return response()->json(['data' => $this->topics->addTopics($this->channel($channel), $data['topics'])], 201);
+        return response()->json(['data' => $this->topics->addTopics($this->channel($request, $channel), $data['topics'])], 201);
     }
 
     /** Gửi bài cho kỳ đang giữ slot (plan.id trong context). Gửi bổ sung slot trống: gọi lại cùng API. */
     public function submitPlan(Request $request, int $channel, int $plan): JsonResponse
     {
         $data = $request->validate(['items' => ['required', 'array', 'min:1']]);
-        $model = $this->channel($channel);
+        $model = $this->channel($request, $channel);
         $planModel = $model->plans()->find($plan) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy kỳ kế hoạch.', 404);
         $result = $this->plans->submitItems($model, $planModel, $data['items']);
 
@@ -111,7 +112,10 @@ class ChannelPlanApiController extends Controller
     {
         // images: bài lô phối đồ (vd lookbook) không gửi ảnh mà gửi outfit { count, product_id }; bài lô ảnh sản phẩm
         // (unboxing) gửi product_batch { product_id }
-        $model = SocialPost::query()->find($post) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy bài đăng.', 404);
+        $model = SocialPost::query()->find($post);
+        if (! $model || ! EnsureChannelPlanToken::allowsShop($request, (int) $model->user_id)) {
+            throw new BusinessException('NOT_FOUND', 'Không tìm thấy bài đăng.', 404);
+        }
         // Chế độ "Viết lại bằng AI" (redo_mode content, 2026-11-25): chỉ gửi hook / title / content / hashtags
         $contentOnly = $model->redo_mode === \App\Services\Channel\ChannelPlanService::REDO_CONTENT;
         $request->validate(['images' => ['nullable', 'array'], 'outfit' => ['nullable', 'array'], 'product_batch' => ['nullable', 'array'], 'product_id' => ['nullable', 'integer'],
@@ -125,7 +129,10 @@ class ChannelPlanApiController extends Controller
     public function redoItem(Request $request, int $item): JsonResponse
     {
         $request->validate(['images' => ['nullable', 'array'], 'outfit' => ['nullable', 'array'], 'product_batch' => ['nullable', 'array'], 'product_id' => ['nullable', 'integer'], 'sample_key' => ['required', 'string'], 'hook' => ['nullable', 'string']]);
-        $model = ContentPlanItem::query()->find($item) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy bài kế hoạch.', 404);
+        $model = ContentPlanItem::query()->with('plan.channel:id,user_id')->find($item);
+        if (! $model || ! EnsureChannelPlanToken::allowsShop($request, (int) $model->plan?->channel?->user_id)) {
+            throw new BusinessException('NOT_FOUND', 'Không tìm thấy bài kế hoạch.', 404);
+        }
         $model = $this->plans->redoItem($model, $request->all());
 
         return response()->json(['data' => ['id' => $model->id, 'plan_id' => $model->plan_id, 'hook' => $model->hook]]);
@@ -144,7 +151,7 @@ class ChannelPlanApiController extends Controller
             throw ValidationException::withMessages(['tags' => $errors]);
         }
 
-        return response()->json(['data' => $this->productTags->catalog($this->channel($channel), $filter, (int) ($data['limit'] ?? 100))]);
+        return response()->json(['data' => $this->productTags->catalog($this->channel($request, $channel), $filter, (int) ($data['limit'] ?? 100))]);
     }
 
     /** Skill /gan-tag-san-pham: sản phẩm của shop cần gắn tag (?all=1: mọi sản phẩm có ảnh). */
@@ -152,7 +159,7 @@ class ChannelPlanApiController extends Controller
     {
         $data = $request->validate(['all' => ['nullable', 'boolean']]);
 
-        return response()->json(['data' => $this->productTags->untagged($this->shop($user), (bool) ($data['all'] ?? false))]);
+        return response()->json(['data' => $this->productTags->untagged($this->shop($request, $user), (bool) ($data['all'] ?? false))]);
     }
 
     /** Skill /gan-tag-san-pham gửi tag: { items: [{ id, image_id, ai_label, tags: {kieu, got, mau, phong_cach, dip} }] } */
@@ -160,16 +167,25 @@ class ChannelPlanApiController extends Controller
     {
         $data = $request->validate(['items' => ['required', 'array', 'min:1', 'max:'.ProductTagService::LIST_MAX]]);
 
-        return response()->json(['data' => $this->productTags->saveAi($this->shop($user), $data['items'])]);
+        return response()->json(['data' => $this->productTags->saveAi($this->shop($request, $user), $data['items'])]);
     }
 
-    private function shop(int $id): User
+    /** Shop phải được admin gắn cho worker điều phối đang gọi; không thì 404 (như không tồn tại). */
+    private function shop(Request $request, int $id): User
     {
-        return User::query()->find($id) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy shop.', 404);
+        $user = EnsureChannelPlanToken::allowsShop($request, $id) ? User::query()->find($id) : null;
+
+        return $user ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy shop.', 404);
     }
 
-    private function channel(int $id): Channel
+    /** Kênh của shop đã gắn cho worker điều phối đang gọi; không thì 404. */
+    private function channel(Request $request, int $id): Channel
     {
-        return Channel::query()->find($id) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy kênh.', 404);
+        $channel = Channel::query()->find($id);
+        if (! $channel || ! EnsureChannelPlanToken::allowsShop($request, (int) $channel->user_id)) {
+            throw new BusinessException('NOT_FOUND', 'Không tìm thấy kênh.', 404);
+        }
+
+        return $channel;
     }
 }

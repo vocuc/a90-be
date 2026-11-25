@@ -265,9 +265,9 @@ Route::get('v1/video-images', [WorkerVideoImageController::class, 'index'])->mid
 // Máy làm template (D:ideo-tmp, npm run sync-templates) đồng bộ danh sách template vào shop worker được gắn (tài khoản tạo video)
 Route::put('v1/video-templates/sync', [WorkerVideoTemplateController::class, 'sync'])->middleware('worker');
 
-// Lệnh /lap-ke-hoach (skill FlowKit): token admin ability channel-plan, đọc / ghi kênh mọi shop
-// (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 6.2)
-Route::prefix('v1/channel-plan')->middleware(['throttle:api', 'auth:sanctum', 'active', 'channel-plan'])->group(function () {
+// Lệnh /lap-ke-hoach + /gan-tag-san-pham (skill FlowKit): token WORKER loại Điều phối, chỉ đọc / ghi kênh + sản phẩm của
+// shop admin đã gắn cho worker (bỏ token admin, 2026-11-25; a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 6.2)
+Route::prefix('v1/channel-plan')->middleware(['throttle:api', 'channel-plan'])->group(function () {
     Route::get('channels/{channel}/context', [ChannelPlanApiController::class, 'context'])->whereNumber('channel');
     Route::put('channels/{channel}/persona', [ChannelPlanApiController::class, 'persona'])->whereNumber('channel');
     Route::post('channels/{channel}/lineups', [ChannelPlanApiController::class, 'lineup'])->whereNumber('channel');

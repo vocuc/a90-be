@@ -2,28 +2,35 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Worker;
 use Closure;
 use Illuminate\Http\Request;
-use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Token cho lệnh /lap-ke-hoach (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 4.11): token của ADMIN có ability
- * "channel-plan" ghi rõ (token đăng nhập thường có "*" không được dùng ở đây).
- * Đi kèm: token channel-plan KHÔNG dùng được cho API thường (EnsureFullAccessToken trong nhóm auth thường).
+ * Token cho lệnh /lap-ke-hoach (và skill /gan-tag-san-pham): token của WORKER loại "Điều phối" (bỏ token admin
+ * channel-plan, người dùng chốt 2026-11-25). Worker chỉ đọc / ghi kênh, bài, sản phẩm của các shop admin đã gắn cho nó
+ * (ChannelPlanApiController kiểm tra từng shop qua allowsShop). Request mang worker ở attribute "worker".
  */
 class EnsureChannelPlanToken
 {
-    public const ABILITY = 'channel-plan';
-
     public function handle(Request $request, Closure $next): Response
     {
-        $user = $request->user();
-        $token = $user?->currentAccessToken();
-        if (! $user || ! $user->isAdmin() || ! $token instanceof PersonalAccessToken || ! in_array(self::ABILITY, $token->abilities ?? [], true)) {
-            return response()->json(['code' => 'FORBIDDEN', 'message' => 'Cần token lập kế hoạch (channel-plan) của admin.'], 403);
+        $worker = Worker::findActiveByToken($request->bearerToken());
+        if (! $worker || $worker->type !== Worker::TYPE_DISPATCH) {
+            return response()->json(['code' => 'FORBIDDEN', 'message' => 'Cần token worker loại Điều phối (đang bật).'], 403);
         }
+        $worker->forceFill(['last_seen_at' => now()])->saveQuietly();
+        $request->attributes->set('worker', $worker);
 
         return $next($request);
+    }
+
+    /** Worker đang gọi được làm việc cho shop này (admin đã gắn shop cho worker). */
+    public static function allowsShop(Request $request, int $shopId): bool
+    {
+        $worker = $request->attributes->get('worker');
+
+        return $worker instanceof Worker && $worker->users()->whereKey($shopId)->exists();
     }
 }

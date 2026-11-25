@@ -27,6 +27,8 @@ class ChannelPlanTest extends TestCase
 {
     private string $planToken;
 
+    private Worker $planWorker;
+
     private User $shop;
 
     private Channel $channel;
@@ -40,10 +42,11 @@ class ChannelPlanTest extends TestCase
         parent::setUp();
         // Test luồng chung với cả bài viết mẫu chưa làm xong (closeup, this_or_that...): bật hết
         config(['ai90.post_samples_enabled' => ['*']]);
-        $admin = User::factory()->create(['role' => 'admin']);
-        $this->planToken = $admin->createToken('plan:test', ['channel-plan'])->plainTextToken;
 
         $this->shop = $this->creator();
+        // Lệnh /lap-ke-hoach dùng token worker Điều phối được gắn shop (bỏ token admin, 2026-11-25)
+        [$this->planWorker, $this->planToken] = Worker::register('dieu-phoi-'.Str::random(4), Worker::TYPE_DISPATCH);
+        $this->planWorker->users()->attach($this->shop->id);
         [$worker, $this->workerToken] = Worker::register('dang-'.Str::random(4), Worker::TYPE_PUBLISH);
         $worker->users()->attach($this->shop->id);
         // Content-worker dựng bài ảnh có chữ (a90-fe note/xay-kenh-tiktok/worker-content.txt)
@@ -145,20 +148,30 @@ class ChannelPlanTest extends TestCase
 
     // ---- Token ----
 
-    public function test_only_admin_channel_plan_token_can_use_api_and_it_cannot_use_normal_api(): void
+    public function test_only_dispatch_worker_of_the_shop_can_use_plan_api(): void
     {
-        $userToken = $this->shop->createToken('api', ['*'])->plainTextToken;
-        $this->withToken($userToken)->getJson("/api/v1/channel-plan/channels/{$this->channel->id}/context")->assertForbidden();
-
-        $notAdmin = $this->shop->createToken('plan', ['channel-plan'])->plainTextToken;
+        $url = "/api/v1/channel-plan/channels/{$this->channel->id}/context";
+        // Token đăng nhập người dùng / token admin cũ (channel-plan) / worker loại khác: không dùng được
+        $this->withToken($this->shop->createToken('api', ['*'])->plainTextToken)->getJson($url)->assertForbidden();
+        $admin = User::factory()->create(['role' => 'admin']);
         $this->app['auth']->forgetGuards();
-        $this->withToken($notAdmin)->getJson("/api/v1/channel-plan/channels/{$this->channel->id}/context")->assertForbidden();
-
+        $this->withToken($admin->createToken('plan:old', ['channel-plan'])->plainTextToken)->getJson($url)->assertForbidden();
         $this->app['auth']->forgetGuards();
-        $this->withToken($this->planToken)->getJson('/api/v1/auth/me')->assertForbidden();
+        $this->withToken($this->workerToken)->getJson($url)->assertForbidden();
 
-        $this->app['auth']->forgetGuards();
+        // Worker điều phối của shop khác: không thấy kênh / bài / sản phẩm của shop này
+        $other = $this->creator();
+        [$otherWorker, $otherToken] = Worker::register('dieu-phoi-khac', Worker::TYPE_DISPATCH);
+        $otherWorker->users()->attach($other->id);
+        $this->withToken($otherToken)->getJson($url)->assertNotFound();
+        $this->withToken($otherToken)->getJson("/api/v1/channel-plan/channels/{$this->channel->id}/products")->assertNotFound();
+        $this->withToken($otherToken)->getJson("/api/v1/channel-plan/shops/{$this->shop->id}/products/untagged")->assertNotFound();
+
+        // Worker điều phối bị tắt: không dùng được; token worker không phải token đăng nhập
         $this->api('GET', "channels/{$this->channel->id}/context")->assertOk();
+        $this->withToken($this->planToken)->getJson('/api/v1/auth/me')->assertUnauthorized();
+        $this->planWorker->update(['is_active' => false]);
+        $this->api('GET', "channels/{$this->channel->id}/context")->assertForbidden();
     }
 
     // ---- Context, tuyến, template ----
@@ -319,12 +332,12 @@ class ChannelPlanTest extends TestCase
         // Trùng y hệt bài 1 (cùng ảnh + hook) -> 422
         $this->putJson($base, ['hook' => 'Hook 1'])->assertUnprocessable();
 
-        // Nút Làm lại: chưa gắn worker điều phối -> chỉ đánh dấu
+        // Nút Làm lại: chưa gắn worker điều phối -> chỉ đánh dấu (tạm gỡ worker điều phối của lệnh)
+        $this->planWorker->users()->detach($this->shop->id);
         $this->postJson("{$base}/redo")->assertOk()->assertJsonPath('data.redo_queued', false);
         $this->assertNotNull($item->fresh()->redo_requested_at);
         $this->deleteJson("{$base}/redo")->assertOk()->assertJsonPath('data.redo_requested_at', null);
-        [$dispatcher] = Worker::register('dieu-phoi-'.Str::random(4), Worker::TYPE_DISPATCH);
-        $dispatcher->users()->attach($this->shop->id);
+        $this->planWorker->users()->attach($this->shop->id);
         $this->postJson("{$base}/redo")->assertOk()->assertJsonPath('data.redo_queued', true);
         $this->assertTrue(\App\Models\PlanJob::query()->where('channel_id', $this->channel->id)->latest('id')->firstOrFail()->payload['redo']);
         $this->app['auth']->forgetGuards();
@@ -523,13 +536,14 @@ class ChannelPlanTest extends TestCase
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channels/{$this->channel->id}/plans/{$planId}/approve")->assertOk();
         [$a, $b] = SocialPost::query()->where('channel_id', $this->channel->id)->orderBy('id')->pluck('id')->all();
 
-        // Chưa gắn worker điều phối: chỉ đánh dấu, không tạo việc
+        // Chưa gắn worker điều phối: chỉ đánh dấu, không tạo việc (tạm gỡ worker điều phối của lệnh)
+        $this->planWorker->users()->detach($this->shop->id);
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$a}/redo")->assertOk();
         $this->assertSame(0, \App\Models\PlanJob::query()->count());
         $this->actingAs($this->shop)->deleteJson("/api/v1/creator/channel-posts/{$a}/redo")->assertOk();
 
-        [$dispatcher, $token] = Worker::register('dieu-phoi-'.Str::random(4), Worker::TYPE_DISPATCH);
-        $dispatcher->users()->attach($this->shop->id);
+        $this->planWorker->users()->attach($this->shop->id);
+        $token = $this->planToken;
         // Bấm "Làm lại" 2 bài liền: 1 việc làm lại (việc đang chờ dùng chung)
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$a}/redo")->assertOk();
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$b}/redo")->assertOk();
@@ -1145,14 +1159,16 @@ class ChannelPlanTest extends TestCase
 
     public function test_photo_post_with_text_needs_content_worker(): void
     {
-        Worker::query()->where('type', Worker::TYPE_CONTENT)->delete();
         $refs = $this->images(2);
         $this->approveSetup();
         $planId = $this->context()['plan']['id'];
-        $this->assertFalse($this->context()['channel']['content_worker']);
-        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$this->item(0, $refs)]])
-            ->json('data.rejected');
-        $this->assertStringContainsString('content-worker', implode(' ', $rejected[0]['errors']));
+        // Worker điều phối cũng dựng nội dung: shop gọi được API lập kế hoạch thì luôn có content-worker -> kiểm tra ở service
+        Worker::query()->where('type', Worker::TYPE_CONTENT)->delete();
+        $this->planWorker->users()->detach($this->shop->id);
+        $service = app(\App\Services\Channel\ChannelPlanService::class);
+        $this->assertFalse($service->context($this->channel->fresh())['channel']['content_worker']);
+        $result = $service->submitItems($this->channel->fresh(), \App\Models\ContentPlan::query()->findOrFail($planId), [$this->item(0, $refs)]);
+        $this->assertStringContainsString('content-worker', implode(' ', $result['rejected'][0]['errors']));
     }
 
     public function test_video_type_01_picks_template_and_product_images(): void

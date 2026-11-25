@@ -31,9 +31,10 @@ class ProductTagTopicTest extends TestCase
     {
         parent::setUp();
         config(['ai90.post_samples_enabled' => ['*']]);
-        $admin = User::factory()->create(['role' => 'admin']);
-        $this->planToken = $admin->createToken('plan:test', ['channel-plan'])->plainTextToken;
         $this->shop = $this->creator();
+        // Lệnh /lap-ke-hoach + /gan-tag-san-pham dùng token worker Điều phối được gắn shop (bỏ token admin, 2026-11-25)
+        [$planWorker, $this->planToken] = Worker::register('dieu-phoi-'.Str::random(4), Worker::TYPE_DISPATCH);
+        $planWorker->users()->attach($this->shop->id);
         [$worker] = Worker::register('dang-'.Str::random(4), Worker::TYPE_PUBLISH);
         $worker->users()->attach($this->shop->id);
         [$content] = Worker::register('dung-'.Str::random(4), Worker::TYPE_CONTENT);

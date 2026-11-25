@@ -8,7 +8,6 @@ use App\Http\Controllers\Admin\CreativeController;
 use App\Http\Controllers\Admin\CreatorController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\GenerationController;
-use App\Http\Controllers\Admin\PlanTokenController;
 use App\Http\Controllers\Admin\SettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\WorkerController;
@@ -61,8 +60,5 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');
 
         // Token cho lệnh /lap-ke-hoach (a90-fe note/xay-kenh-tiktok/dac-ta-giai-doan-1.txt mục 4.11)
-        Route::get('plan-tokens', [PlanTokenController::class, 'index'])->name('plan-tokens.index');
-        Route::post('plan-tokens', [PlanTokenController::class, 'store'])->name('plan-tokens.store');
-        Route::delete('plan-tokens/{token}', [PlanTokenController::class, 'destroy'])->whereNumber('token')->name('plan-tokens.destroy');
     });
 });
