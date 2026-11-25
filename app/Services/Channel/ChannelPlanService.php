@@ -1319,6 +1319,28 @@ class ChannelPlanService
             ->map(fn ($i) => ['generation_id' => $i->generation_id, 'output_id' => $i->output_id, 'text' => null])->all();
     }
 
+    /**
+     * Chủ shop sửa bài kênh ở trang bài đăng (tiêu đề / caption / hashtag / giờ / ảnh / chữ trên ảnh, 2026-11-25): ghi theo
+     * vào bài trong kỳ kế hoạch (tab Kế hoạch + lệnh lập kế hoạch chống trùng đọc từ đây). Bài không thuộc kỳ: bỏ qua.
+     * Ảnh: ảnh gốc của bài theo thứ tự (bỏ slide worker dựng thêm, ảnh upload không có trong lịch sử tạo ảnh).
+     */
+    public static function syncPlanItemFromPost(SocialPost $post): void
+    {
+        if (! $post->plan_item_id) {
+            return;
+        }
+        $images = $post->images()->where('added_by_worker', false)->whereNotNull('output_id')->orderBy('position')->get()
+            ->map(fn (SocialPostImage $i) => ['generation_id' => $i->generation_id, 'output_id' => $i->output_id, 'text' => $i->overlay_text])
+            ->values()->all();
+        ContentPlanItem::query()->whereKey($post->plan_item_id)->update([
+            'title' => $post->title,
+            'content' => (string) $post->content,
+            'hashtags' => json_encode($post->hashtags ?? []),
+            'scheduled_at' => $post->scheduled_at,
+            ...($images ? ['images' => json_encode($images)] : []),
+        ]);
+    }
+
     /** Ghi lại ảnh của bài theo thứ tự (kèm chữ + template chữ). */
     private function syncImages(SocialPost $post, array $images, ?int $textTemplateId): void
     {
@@ -1978,6 +2000,7 @@ class ChannelPlanService
             $post->last_error = null;
             $post->save();
             $this->contentJobs->queueForPost($post);
+            self::syncPlanItemFromPost($post); // chữ trên ảnh mới -> bài trong kỳ kế hoạch
 
             return $post->refresh();
         });

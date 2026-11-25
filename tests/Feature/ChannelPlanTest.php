@@ -661,6 +661,24 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(SocialPostStatus::Queued, $post->status, 'Không có chữ trên ảnh: về hàng chờ đăng');
         $this->assertSame('Hook viết lại', ContentPlanItem::query()->whereKey($post->plan_item_id)->value('hook'));
 
+        // Chủ shop sửa tay ở trang bài đăng (tiêu đề / caption / hashtag / thứ tự ảnh / chữ trên ảnh) -> bài trong kỳ đổi theo
+        $images = $post->images()->orderBy('position')->get();
+        $this->app['auth']->forgetGuards();
+        $this->actingAs($this->shop)->postJson("/api/v1/social/posts/{$post->id}/publish", [
+            'worker_id' => $this->channel->worker_id, 'type' => 'photo', 'platforms' => ['tiktok'],
+            'title' => 'Tiêu đề chủ shop sửa', 'content' => 'Caption chủ shop sửa', 'hashtags' => ['tet2027'],
+            'scheduled_at' => $post->scheduled_at->toIso8601String(),
+            'images' => $images->reverse()->map(fn ($i) => ['generation_id' => $i->generation_id, 'output_id' => $i->output_id])->values()->all(),
+        ])->assertOk();
+        $item = ContentPlanItem::query()->findOrFail($post->plan_item_id);
+        $this->assertSame(['Tiêu đề chủ shop sửa', 'Caption chủ shop sửa', ['tet2027']], [$item->title, $item->content, $item->hashtags]);
+        $this->assertSame($images->reverse()->pluck('output_id')->values()->all(), array_column($item->images, 'output_id'), 'Thứ tự ảnh theo bài');
+        $first = $post->images()->orderBy('position')->firstOrFail();
+        $this->actingAs($this->shop)->putJson("/api/v1/creator/channel-posts/{$post->id}/overlays", [
+            'overlays' => [['image_id' => $first->id, 'text' => 'Chữ chủ shop sửa']],
+        ])->assertOk();
+        $this->assertSame('Chữ chủ shop sửa', ContentPlanItem::query()->findOrFail($post->plan_item_id)->images[0]['text']);
+
         // Bỏ yêu cầu: xoá cả kiểu làm lại
         $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$post->id}/redo", ['mode' => 'content'])->assertOk();
         $this->actingAs($this->shop)->deleteJson("/api/v1/creator/channel-posts/{$post->id}/redo")->assertOk();

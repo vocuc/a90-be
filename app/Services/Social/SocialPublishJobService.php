@@ -84,6 +84,8 @@ class SocialPublishJobService
             $post->queuePlatforms();
             $post->syncStatus();
             $post->save();
+            // Bài kênh: tiêu đề / caption / hashtag / giờ / ảnh vừa sửa ghi theo vào bài trong kỳ kế hoạch (tab Kế hoạch)
+            \App\Services\Channel\ChannelPlanService::syncPlanItemFromPost($post);
 
             $this->audit->log('social_post.publish', $post, [
                 'type' => $post->type, 'worker_id' => $worker->id, 'platforms' => $post->platforms, 'images' => count($images),
