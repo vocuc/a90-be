@@ -370,6 +370,21 @@ class ChannelContentController extends Controller
     }
 
     /** Đánh dấu (POST) / bỏ đánh dấu (DELETE) làm lại: lần chạy /lap-ke-hoach kế tiếp làm lại bài. */
+    /**
+     * 1 bài của kênh (hook, chủ đề, dạng bài, chữ trên ảnh, cờ làm lại): khối "Nội dung kênh" ở trang /posts/:id
+     * (tab Lịch đăng gộp vào /posts, 2026-11-25). Bài không thuộc kênh -> 404.
+     */
+    public function channelPost(Request $request, int $post): JsonResponse
+    {
+        $model = $this->post($request, $post);
+        if (! $model->channel_id) {
+            throw new BusinessException('POST_NO_CHANNEL', 'Bài không thuộc kênh nào.', 404);
+        }
+
+        return response()->json(['data' => [...$this->calendarPost($model->load(['images.output', 'topic:id,name'])),
+            'channel' => ['id' => $model->channel_id, 'name' => $model->channel?->name]]]);
+    }
+
     public function redo(Request $request, int $post): JsonResponse
     {
         $model = $this->plans->requestRedo($this->post($request, $post), $request->isMethod('post'));

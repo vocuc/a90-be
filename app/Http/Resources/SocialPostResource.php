@@ -13,13 +13,13 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
- * Cần load: images.output, images.generation.creative, publishJobs, worker, product (SocialPostResource::RELATIONS).
+ * Cần load: images.output, images.generation.creative, publishJobs, worker, product, channel (SocialPostResource::RELATIONS).
  *
  * @mixin SocialPost
  */
 class SocialPostResource extends JsonResource
 {
-    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs', 'worker', 'product'];
+    public const RELATIONS = ['images.output', 'images.generation.creative', 'publishJobs', 'worker', 'product', 'channel:id,name'];
 
     /** Thông báo người dùng thấy ở nền tảng đăng lỗi; mã lỗi chi tiết chỉ admin xem (worker_jobs type publish). */
     public const PLATFORM_FAILED_MESSAGE = 'Đăng thất bại, vui lòng thử lại.';
@@ -37,6 +37,8 @@ class SocialPostResource extends JsonResource
             // Worker được giao đăng bài, giờ đăng, nền tảng đã chọn (note/gop-luong-dang-bai.txt ở repo frontend)
             'worker' => $this->worker ? ['id' => $this->worker->id, 'name' => $this->worker->name] : null,
             'scheduled_at' => $this->scheduled_at,
+            // Bài của kênh (lệnh lập kế hoạch tạo): tên kênh để lọc / hiện trên /posts. Bài tạo tay: null
+            'channel' => $this->channel_id ? ['id' => $this->channel_id, 'name' => $this->channel?->name] : null,
             'selected_platforms' => $this->platforms ?? [],
             // Bài video: worker dựng + đăng, template (bản chụp lúc chọn), sản phẩm lấy ảnh, giờ đăng. Bài ảnh: null
             'video' => $this->isVideo() ? [

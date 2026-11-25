@@ -42,7 +42,11 @@ class PostController extends Controller
             'worker_id' => ['nullable', 'integer'],
             // Lọc theo nguồn tạo bài, vd lookbook (bài lookbook cũ)
             'source' => ['nullable', Rule::in([SocialPost::SOURCE_BATCH, SocialPost::SOURCE_EXISTING, SocialPost::SOURCE_VIDEO, SocialPost::SOURCE_LOOKBOOK])],
+            // Lọc theo kênh + ngày đăng (gộp tab Lịch đăng của kênh vào /posts, 2026-11-25). Lọc ngày: xếp theo giờ đăng
+            'channel_id' => ['nullable', 'integer'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
         ]);
+        $day = isset($data['date']) ? \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $data['date'])->startOfDay() : null;
 
         $posts = SocialPost::query()
             ->where('user_id', $request->user()->id)
@@ -50,6 +54,8 @@ class PostController extends Controller
             ->when($data['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
             ->when($data['worker_id'] ?? null, fn ($q, $workerId) => $q->where('worker_id', $workerId))
             ->when($data['source'] ?? null, fn ($q, $source) => $q->where('source', $source))
+            ->when($data['channel_id'] ?? null, fn ($q, $channelId) => $q->where('channel_id', $channelId))
+            ->when($day, fn ($q) => $q->whereBetween('scheduled_at', [$day, $day->copy()->endOfDay()])->orderBy('scheduled_at'))
             ->with(SocialPostResource::RELATIONS)
             ->latest('id')
             ->paginate($data['per_page'] ?? 20);

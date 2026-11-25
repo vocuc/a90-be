@@ -167,6 +167,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::put('channels/{channel}/topic-categories/order', [ChannelContentController::class, 'orderTopicCategories'])->whereNumber('channel');
             Route::put('channels/{channel}/topic-categories/{category}', [ChannelContentController::class, 'updateTopicCategory'])->whereNumber(['channel', 'category']);
             Route::delete('channels/{channel}/topic-categories/{category}', [ChannelContentController::class, 'destroyTopicCategory'])->whereNumber(['channel', 'category']);
+            Route::get('channel-posts/{post}', [ChannelContentController::class, 'channelPost'])->whereNumber('post');
             Route::put('channel-posts/{post}/overlays', [ChannelContentController::class, 'updateOverlays'])->whereNumber('post');
             Route::post('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');
             Route::delete('channel-posts/{post}/redo', [ChannelContentController::class, 'redo'])->whereNumber('post');

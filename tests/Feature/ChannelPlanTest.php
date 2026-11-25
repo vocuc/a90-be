@@ -898,6 +898,21 @@ class ChannelPlanTest extends TestCase
         $this->assertSame([], $row['items'][0]['images']);
         $this->assertCount(5, $row['items'][0]['post_images']);
         $this->assertNotNull($row['items'][0]['post_images'][0]['thumb_url']);
+
+        // /posts lọc theo kênh + ngày đăng + trạng thái (tab Lịch đăng gộp vào /posts, 2026-11-25)
+        $day = $post->fresh()->scheduled_at->toDateString();
+        $list = fn (array $q) => $this->actingAs($this->shop)->getJson('/api/v1/social/posts?'.http_build_query($q))->assertOk()->json('data');
+        $found = $list(['channel_id' => $this->channel->id, 'date' => $day]);
+        $this->assertSame([$post->id], array_column($found, 'id'));
+        $this->assertSame(['id' => $this->channel->id, 'name' => $this->channel->name], $found[0]['channel']);
+        $this->assertSame([], $list(['channel_id' => $this->channel->id, 'date' => now()->subYear()->toDateString()]));
+        $this->assertSame([], $list(['channel_id' => $this->channel->id + 999]));
+        $this->assertSame([$post->id], array_column($list(['channel_id' => $this->channel->id, 'status' => $post->fresh()->status->value]), 'id'));
+        $this->actingAs($this->shop)->getJson('/api/v1/social/posts?date=25-11-2026')->assertStatus(422);
+        // Khối "Nội dung kênh" ở /posts/:id
+        $one = $this->actingAs($this->shop)->getJson("/api/v1/creator/channel-posts/{$post->id}")->assertOk()->json('data');
+        $this->assertSame([$post->id, $this->channel->id, 5], [$one['id'], $one['channel']['id'], count($one['images'])]);
+        $this->actingAs($this->creator())->getJson("/api/v1/creator/channel-posts/{$post->id}")->assertNotFound();
     }
 
     public function test_only_ready_post_samples_are_usable(): void
