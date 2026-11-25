@@ -31,6 +31,9 @@ class ProductTagService
     /**
      * Sản phẩm đang hoạt động ĐÃ GẮN TAG mà shop dùng được (của shop + được chia sẻ), khớp bộ lọc, có ảnh tạo (không
      * phải ảnh phối đồ) của shop. Mỗi sản phẩm 1 ref ngẫu nhiên trong RECENT_IMAGES ảnh tạo gần nhất. Ít dùng trong kênh trước.
+     * unbox_only (người dùng chốt 2026-11-25): sản phẩm khớp bộ lọc CHƯA có ảnh tạo của shop nhưng có ảnh khung "Ảnh sản
+     * phẩm" (nguyên liệu tạo ảnh, KHÔNG dùng đăng bài) -> lệnh chỉ được chọn cho bài đập hộp (product_batch: A51 tạo lô ảnh
+     * mới), sản phẩm mới thêm vẫn lên kế hoạch được. Không có ref. Mới thêm trước.
      *
      * @param  array<string, string[]>  $filter  đã ProductTags::cleanFilter
      */
@@ -57,11 +60,23 @@ class ProductTagService
             ];
         })->sortBy([['used', 'asc'], ['last_used_at', 'asc']])->values();
 
+        $unbox = $products->reject(fn (Product $p) => $outputs->has($p->id))
+            ->filter(fn (Product $p) => $p->images()->where('field_key', self::TAG_FIELD_KEY)->exists())
+            ->map(fn (Product $p) => ['id' => $p->id, 'label' => $p->ai_label ?: $p->name, 'tags' => $p->tags])
+            ->values();
+
         return [
             'products' => $rows->take($limit)->all(),
+            'unbox_only' => $unbox->take($limit)->all(),
             'total' => $rows->count(),
             'untagged' => $this->untaggedCount($shop),
         ];
+    }
+
+    /** Các id trong $productIds đã có ảnh tạo (không phải ảnh phối đồ) của shop = dùng được cho bài cần ảnh có sẵn / phối đồ. */
+    public function withShopImages(int $shopId, array $productIds): array
+    {
+        return $this->recentOutputs($shopId, $productIds)->keys()->map(fn ($id) => (int) $id)->all();
     }
 
     /** Số sản phẩm đã / chưa gắn tag của shop (context nhắc chạy /gan-tag-san-pham). */

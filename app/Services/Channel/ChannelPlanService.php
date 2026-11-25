@@ -972,6 +972,9 @@ class ChannelPlanService
         $productId = isset($raw['outfit']['product_id']) ? (int) $raw['outfit']['product_id'] : null;
         if ($productId && ! Product::query()->where('user_id', $channel->user_id)->active()->whereHas('images')->whereKey($productId)->exists()) {
             $errors[] = "outfit.product_id {$productId} không phải sản phẩm đang hoạt động (có ảnh) của shop.";
+        } elseif ($productId && ! app(ProductTagService::class)->withShopImages($channel->user_id, [$productId])) {
+            // Sản phẩm chưa có ảnh tạo của shop chỉ dùng cho bài đập hộp (người dùng chốt 2026-11-25)
+            $errors[] = "Sản phẩm {$productId} chưa có ảnh tạo của shop: chỉ dùng được cho bài đập hộp (product_batch).";
         }
         if (! Worker::query()->assignedTo($channel->user_id, Worker::TYPE_OUTFIT)->exists()) {
             $errors[] = 'Shop chưa được gắn worker phối đồ, không tạo được lô phối đồ.';
@@ -1001,11 +1004,14 @@ class ChannelPlanService
             } else {
                 $products = Product::query()->where('user_id', $channel->user_id)->active()->whereHas('images')->whereKey($ids)
                     ->get(['id', 'tags'])->keyBy('id');
+                $withImages = app(ProductTagService::class)->withShopImages($channel->user_id, $ids);
                 foreach ($ids as $id) {
                     if (! $products->has($id)) {
                         $errors[] = "Sản phẩm {$id} không phải sản phẩm đang hoạt động (có ảnh) của shop.";
                     } elseif (! ProductTags::shoeMatch($products[$id]->tags['kieu'] ?? null)) {
                         $errors[] = "Sản phẩm {$id} chưa có tag kieu (loại giày): chạy /gan-tag-san-pham hoặc chọn sản phẩm khác.";
+                    } elseif (! in_array($id, $withImages, true)) {
+                        $errors[] = "Sản phẩm {$id} chưa có ảnh tạo của shop: chỉ dùng được cho bài đập hộp (product_batch).";
                     }
                 }
             }

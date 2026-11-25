@@ -827,7 +827,7 @@ class ChannelPlanTest extends TestCase
         });
         $noKieu = \App\Models\Product::query()->create(['user_id' => $this->shop->id, 'name' => 'Chưa gắn kiểu', 'tags' => ['got' => 'cao']]);
         \App\Models\ProductImage::query()->create(['product_id' => $noKieu->id, 'path' => 'products/x.png', 'field_key' => 'anh_san_pham', 'position' => 1]);
-        // Lịch sử tạo ảnh: sản phẩm đầu 4 ảnh (lấy 3 mới nhất), sản phẩm 2 có 1 ảnh, còn lại không có (ô trống)
+        // Lịch sử tạo ảnh: sản phẩm đầu 4 ảnh (lấy 3 mới nhất), sản phẩm 2 có 1 ảnh, 3-4 chưa có (thêm sau, xem dưới)
         $gen = fn (array $refs) => (int) preg_replace('/^g(\d+)-o\d+$/', '$1', $refs[0]);
         $firstGen = $gen($this->images(4));
         Generation::query()->whereKey($firstGen)->update(['product_id' => $shoes[0]->id]);
@@ -845,6 +845,15 @@ class ChannelPlanTest extends TestCase
         $this->assertStringContainsString('4-6 sản phẩm', implode(' ', $rejected[0]['errors']));
         $this->assertStringContainsString('chưa có tag kieu', implode(' ', $rejected[1]['errors']));
         $this->assertStringContainsString('số sản phẩm + 1', implode(' ', $rejected[2]['errors']));
+
+        // Sản phẩm 3, 4 chưa có ảnh tạo của shop -> chỉ dùng cho bài đập hộp (người dùng chốt 2026-11-25)
+        $rejected = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$item]])->assertOk()->json('data.rejected');
+        $errors = implode(' ', $rejected[0]['errors']);
+        $this->assertStringContainsString("Sản phẩm {$ids[2]} chưa có ảnh tạo của shop", $errors);
+        $this->assertStringContainsString("Sản phẩm {$ids[3]} chưa có ảnh tạo của shop", $errors);
+        $this->assertStringNotContainsString("Sản phẩm {$ids[0]} chưa có ảnh", $errors);
+        Generation::query()->whereKey($gen($this->images(1)))->update(['product_id' => $shoes[2]->id]);
+        Generation::query()->whereKey($gen($this->images(1)))->update(['product_id' => $shoes[3]->id]);
 
         $res = $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [$item]])->assertOk();
         $this->assertSame([0], $res->json('data.accepted'), json_encode($res->json('data.rejected'), JSON_UNESCAPED_UNICODE));
@@ -875,7 +884,7 @@ class ChannelPlanTest extends TestCase
         $req = $content['request'];
         $this->assertTrue($req['cover_collage']);
         $this->assertSame(['MS1', 'MS2', 'MS3', 'MS4'], array_column($req['images'], 'code'));
-        $this->assertSame([3, 1, 0, 0], array_map(fn ($i) => count($i['product_images']), $req['images']));
+        $this->assertSame([3, 1, 1, 1], array_map(fn ($i) => count($i['product_images']), $req['images']));
         $this->assertSame($ids, array_column(array_column($req['images'], 'product'), 'id'));
         $firstHistory = GenerationOutput::query()->where('generation_id', $firstGen)->pluck('id')->all();
         $this->assertContains($req['cover']['background_output_id'], $firstHistory, 'Bìa từ ảnh lịch sử của sản phẩm đầu');

@@ -186,6 +186,12 @@ class ProductTagTopicTest extends TestCase
         $this->assertContains($row['ref'], $redRefs);
         $this->assertSame('Cao gót mũi nhọn đỏ', $row['label']);
         $this->assertArrayNotHasKey('thumb_url', $row);
+        // Sản phẩm đã gắn tag nhưng shop chưa tạo ảnh -> unbox_only (chỉ dùng cho bài đập hộp), không ref, không link ảnh nguyên liệu
+        $this->assertSame([$noImage->id], array_column($all['unbox_only'], 'id'));
+        $this->assertSame(['id', 'label', 'tags'], array_keys($all['unbox_only'][0]));
+        // Không có ảnh khung "Ảnh sản phẩm" -> không tạo lô được -> không trả
+        $noImage->images()->where('field_key', 'anh_san_pham')->delete();
+        $this->assertSame([], $this->api('GET', "channels/{$this->channel->id}/products")->json('data.unbox_only'));
 
         $tet = $this->api('GET', "channels/{$this->channel->id}/products?dip=tet,cafe")->json('data.products');
         $this->assertSame([$red->id], array_column($tet, 'id'));
