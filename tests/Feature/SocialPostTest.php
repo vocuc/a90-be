@@ -298,44 +298,6 @@ class SocialPostTest extends TestCase
         $this->assertSame(0, SocialPost::query()->count());
     }
 
-    // ---- Viết lại bằng AI ----
-
-    public function test_rewrite_returns_content_without_saving(): void
-    {
-        $user = $this->buyer();
-        $post = $this->pendingPost($user);
-        $this->setShopHashtags($user, ['a51', 'xuhuong']);
-        $this->aiResult = ['title' => 'Tiêu đề mới', 'content' => 'Nội dung mới #xuhuong', 'hashtags' => ['xuhuong', 'ngoaikho']];
-
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
-            ->assertOk()
-            ->assertJsonPath('data.title', 'Tiêu đề mới')
-            ->assertJsonPath('data.content', '')
-            ->assertJsonPath('data.hashtags', ['xuhuong']);
-
-        $this->assertSame($post->title, $post->fresh()->title, 'Không lưu vào bài');
-    }
-
-    public function test_rewrite_reports_ai_failure_and_disabled(): void
-    {
-        $user = $this->buyer();
-        $post = $this->pendingPost($user);
-        $other = $this->buyer();
-
-        $this->actingAs($other)->postJson("/api/v1/social/posts/{$post->id}/ai-content")->assertNotFound();
-
-        $this->aiResult = null;
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
-            ->assertStatus(503)->assertJsonPath('code', 'AI_CONTENT_FAILED');
-
-        $this->aiResult = ['title' => 'x', 'content' => 'y', 'hashtags' => []];
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")->assertOk();
-
-        config(['ai90.social.ai_content' => false]);
-        $this->actingAs($user)->postJson("/api/v1/social/posts/{$post->id}/ai-content")
-            ->assertStatus(409)->assertJsonPath('code', 'AI_CONTENT_DISABLED');
-    }
-
     public function test_ai_follows_channel_settings_and_length_limits(): void
     {
         $owner = $this->creator();

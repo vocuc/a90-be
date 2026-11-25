@@ -10,7 +10,6 @@ use App\Jobs\CreateScheduledBatchPost;
 use App\Models\Hashtag;
 use App\Models\ImageBatch;
 use App\Models\SocialPost;
-use App\Services\Social\SocialContentJobService;
 use App\Services\Social\SocialPostService;
 use App\Services\Social\SocialPublishJobService;
 use Illuminate\Http\JsonResponse;
@@ -198,18 +197,6 @@ class PostController extends Controller
     public function retry(Request $request, int $post, SocialPublishJobService $publisher): SocialPostResource
     {
         return $this->resource($publisher->retry($request->user(), $this->findPost($request, $post)));
-    }
-
-    /**
-     * "Viết lại bằng AI": trả { title, content, hashtags } để frontend điền vào form, KHÔNG lưu vào bài.
-     * Chỉ khi bài đang chờ gửi. AI lỗi -> 503 AI_CONTENT_FAILED.
-     */
-    public function aiContent(Request $request, int $post, SocialContentJobService $contentJobs): JsonResponse
-    {
-        $post = $this->findPost($request, $post);
-        $this->posts->assertEditable($post);
-
-        return response()->json(['data' => $contentJobs->rewrite($request->user(), $post)]);
     }
 
     public function destroy(Request $request, int $post): Response

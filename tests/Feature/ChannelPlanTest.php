@@ -609,6 +609,63 @@ class ChannelPlanTest extends TestCase
         $this->assertSame(0, SocialPost::query()->where('channel_id', $this->channel->id)->count());
     }
 
+    public function test_rewrite_content_redo_keeps_images_and_only_changes_text(): void
+    {
+        // "Viết lại bằng AI" (2026-11-25): tạo việc cho lệnh lập kế hoạch, chế độ content = chỉ viết lại chữ, giữ ảnh
+        $refs = $this->images(2);
+        $this->approveSetup();
+        $planId = $this->context()['plan']['id'];
+        $this->channel->update(['auto_approve_plan' => true]);
+        $this->api('POST', "channels/{$this->channel->id}/plans/{$planId}/items", ['items' => [
+            $this->item(0, $refs, ['images' => [['ref' => $refs[0]], ['ref' => $refs[1]]]]),
+        ]])->assertOk();
+        $post = SocialPost::query()->where('channel_id', $this->channel->id)->firstOrFail();
+        $imagesBefore = $post->images()->orderBy('position')->pluck('output_id')->all();
+        $this->assertSame(SocialPostStatus::Queued, $post->status);
+
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$post->id}/redo", ['mode' => 'other'])->assertStatus(422);
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$post->id}/redo", ['mode' => 'content'])
+            ->assertOk()->assertJsonPath('data.redo_mode', 'content');
+        $this->assertSame(SocialPostStatus::PendingReview, $post->fresh()->status, 'Chờ viết lại: worker không nhận');
+        $this->app['auth']->forgetGuards();
+        $request = $this->context()['redo_requests'][0];
+        $this->assertSame(['content', false], [$request['mode'], $request['hook_fixed']]);
+        $this->assertArrayHasKey('content', $request);
+
+        // Lệnh gửi chữ mới: bỏ qua mọi trường ảnh / dạng bài, ảnh giữ nguyên
+        $this->api('POST', "posts/{$post->id}/redo", ['hook' => '', 'title' => 'Tiêu đề mới'])->assertStatus(422);
+        $this->api('POST', "posts/{$post->id}/redo", [
+            'sample_key' => 'this_or_that', 'images' => [['ref' => $refs[1]]],
+            'hook' => 'Hook viết lại', 'title' => 'Tiêu đề viết lại', 'content' => 'Caption mới', 'hashtags' => ['tet2027'],
+        ])->assertOk();
+        $post->refresh();
+        $this->assertSame(['Hook viết lại', 'Tiêu đề viết lại', 'Caption mới'], [$post->hook, $post->title, $post->content]);
+        $this->assertSame('closeup', $post->sample_key, 'Dạng bài giữ nguyên');
+        $this->assertSame($imagesBefore, $post->images()->orderBy('position')->pluck('output_id')->all(), 'Ảnh giữ nguyên');
+        $this->assertNull($post->redo_requested_at);
+        $this->assertNull($post->redo_mode);
+        $this->assertSame(SocialPostStatus::Queued, $post->status, 'Không có chữ trên ảnh: về hàng chờ đăng');
+        $this->assertSame('Hook viết lại', ContentPlanItem::query()->whereKey($post->plan_item_id)->value('hook'));
+
+        // Bỏ yêu cầu: xoá cả kiểu làm lại
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$post->id}/redo", ['mode' => 'content'])->assertOk();
+        $this->actingAs($this->shop)->deleteJson("/api/v1/creator/channel-posts/{$post->id}/redo")->assertOk();
+        $this->assertNull($post->fresh()->redo_mode);
+
+        // Bài tạo tay chưa giao worker (chưa thuộc kênh): gửi kèm worker đang chọn -> bài thuộc kênh của worker, rồi mới chờ viết lại
+        $manual = SocialPost::query()->create(['user_id' => $this->shop->id, 'type' => 'photo', 'status' => SocialPostStatus::PendingReview,
+            'source' => SocialPost::SOURCE_EXISTING, 'title' => 'Bài tay', 'content' => '', 'idempotency_key' => (string) Str::uuid()]);
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$manual->id}/redo", ['mode' => 'content'])
+            ->assertStatus(409)->assertJsonPath('code', 'POST_NO_CHANNEL');
+        $this->actingAs($this->shop)->postJson("/api/v1/creator/channel-posts/{$manual->id}/redo", ['mode' => 'content', 'worker_id' => $this->channel->worker_id])
+            ->assertOk()->assertJsonPath('data.redo_mode', 'content');
+        $manual->refresh();
+        $this->assertSame([$this->channel->id, SocialPostStatus::PendingReview], [$manual->channel_id, $manual->status]);
+        $this->app['auth']->forgetGuards();
+        $this->api('POST', "posts/{$manual->id}/redo", ['hook' => 'Hook tay', 'title' => 'Tiêu đề AI', 'content' => 'Caption AI', 'hashtags' => []])->assertOk();
+        $this->assertSame(['Tiêu đề AI', SocialPostStatus::PendingReview], [$manual->fresh()->title, $manual->fresh()->status], 'Bài chưa gửi: vẫn chờ gửi, không tự đăng');
+    }
+
     public function test_rejecting_template_in_use_moves_posts_to_another_approved_template(): void
     {
         $refs = $this->images(2);

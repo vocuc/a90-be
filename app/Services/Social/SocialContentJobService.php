@@ -4,13 +4,11 @@ namespace App\Services\Social;
 
 use App\Enums\OutputStatus;
 use App\Enums\SocialPostStatus;
-use App\Exceptions\BusinessException;
 use App\Jobs\WriteSocialPostContent;
 use App\Models\Hashtag;
 use App\Models\Channel;
 use App\Models\SocialContentJob;
 use App\Models\SocialPost;
-use App\Models\User;
 use App\Services\MediaStorage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -94,21 +92,6 @@ class SocialContentJobService
         }
 
         return $ids->count();
-    }
-
-    /**
-     * "Viết lại bằng AI": trả nội dung mới, không lưu vào bài.
-     *
-     * @return array{title: string, content: string, hashtags: string[]}
-     */
-    public function rewrite(User $user, SocialPost $post): array
-    {
-        if (! self::enabled()) {
-            throw new BusinessException('AI_CONTENT_DISABLED', 'Tính năng AI viết nội dung đang tạm tắt.', 409);
-        }
-
-        return $this->write($post)
-            ?? throw new BusinessException('AI_CONTENT_FAILED', 'AI chưa viết được nội dung, vui lòng thử lại.', 503);
     }
 
     /**

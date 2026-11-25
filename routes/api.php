@@ -235,7 +235,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::post('posts/{post}/publish', [PostController::class, 'publish'])->whereNumber('post');
             Route::post('posts/{post}/retry', [PostController::class, 'retry'])->whereNumber('post');
             // "Viết lại bằng AI" (note/ai-viet-noi-dung-bai-dang.txt ở repo frontend): trả nội dung, không lưu vào bài
-            Route::post('posts/{post}/ai-content', [PostController::class, 'aiContent'])->whereNumber('post')->middleware('throttle:generations');
 
             // Bài đăng video có lịch: worker dựng video + tự đăng khi tới giờ (note/lap-lich-worker.txt ở repo frontend)
             Route::prefix('video-posts')->middleware('creator')->group(function () {

@@ -433,14 +433,21 @@ class ChannelPlanService
     {
         return $channel->posts()->whereNotNull('redo_requested_at')
             ->whereIn('status', [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued])
-            ->with('images')->orderBy('scheduled_at')->get()
+            ->with(['images', 'topic:id,name'])->orderBy('scheduled_at')->get()
             ->map(fn (SocialPost $p) => [
                 'post_id' => $p->id,
                 'scheduled_at' => $p->scheduled_at?->toIso8601String(),
                 'format' => $p->type,
                 'sample_key' => $p->sample_key,
+                // full = làm lại cả bài; content = CHỈ viết lại hook / title / content / hashtags, giữ ảnh (2026-11-25)
+                'mode' => $p->redo_mode ?? self::REDO_FULL,
+                // content: hook đã in trên ảnh bìa -> lệnh không cần viết hook (A51 giữ hook cũ)
+                'hook_fixed' => ($p->redo_mode === self::REDO_CONTENT) && self::hookInImage($p),
                 'hook' => $p->hook,
                 'title' => $p->title,
+                'content' => (string) $p->content,
+                'hashtags' => $p->hashtags ?? [],
+                'topic' => $p->topic?->name,
                 'images' => $p->images->map(fn ($i) => ['ref' => $i->output_id ? self::ref($i->generation_id, $i->output_id) : null, 'text' => $i->overlay_text])->values(),
             ]);
     }
@@ -1714,7 +1721,13 @@ class ChannelPlanService
 
     // ------------------------------------------------------------------ Làm lại bài
 
-    public function requestRedo(SocialPost $post, bool $on): SocialPost
+    /** "Làm lại bài này": lệnh làm lại cả bài (có thể tạo lô ảnh mới). */
+    public const REDO_FULL = 'full';
+
+    /** "Viết lại bằng AI" (2026-11-25): lệnh chỉ viết lại hook / tiêu đề / caption / hashtag, giữ nguyên ảnh. */
+    public const REDO_CONTENT = 'content';
+
+    public function requestRedo(SocialPost $post, bool $on, string $mode = self::REDO_FULL): SocialPost
     {
         if ($on && ! in_array($post->status, [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued], true)) {
             throw new BusinessException('POST_NOT_EDITABLE', 'Worker đã nhận bài, không làm lại được.', 409);
@@ -1722,8 +1735,9 @@ class ChannelPlanService
         if (! $post->channel_id) {
             throw new BusinessException('POST_NO_CHANNEL', 'Bài không thuộc kênh nào.', 409);
         }
-        DB::transaction(function () use ($post, $on) {
+        DB::transaction(function () use ($post, $on, $mode) {
             $post->redo_requested_at = $on ? now() : null;
+            $post->redo_mode = $on ? $mode : null;
             // Đánh dấu làm lại: worker không nhận bài trong lúc chờ lệnh làm lại
             if ($on && $post->status === SocialPostStatus::Queued) {
                 $post->status = SocialPostStatus::PendingReview;
@@ -1746,6 +1760,9 @@ class ChannelPlanService
         $channel = $post->channel ?? throw new BusinessException('POST_NO_CHANNEL', 'Bài không thuộc kênh nào.', 409);
         if (! in_array($post->status, [SocialPostStatus::Generating, SocialPostStatus::PendingReview, SocialPostStatus::Queued], true)) {
             throw new BusinessException('POST_NOT_EDITABLE', 'Worker đã nhận bài, không làm lại được.', 409);
+        }
+        if ($post->redo_mode === self::REDO_CONTENT) {
+            return $this->redoContent($post, $channel, $raw);
         }
         $lineup = $channel->approvedLineup() ?? throw new BusinessException('LINEUP_REQUIRED', 'Kênh chưa có tuyến nội dung đã duyệt.', 409);
         $signatures = $this->existingSignatures($channel, null, $post->id);
@@ -1780,6 +1797,7 @@ class ChannelPlanService
                 'content' => $data['content'],
                 'hashtags' => $data['hashtags'],
                 'redo_requested_at' => null,
+                'redo_mode' => null,
                 'last_error' => null,
             ]);
             $post->queuePlatforms();
@@ -1801,6 +1819,72 @@ class ChannelPlanService
                 ]);
             }
             $this->audit->log('social_post.plan_redo', $post);
+
+            return $post->refresh();
+        });
+    }
+
+    /**
+     * Hook đã được worker phối đồ in thẳng lên ảnh bìa (lô phối đồ thường của bài kế hoạch, hook_locked): viết lại chữ
+     * không đổi được hook (ảnh giữ nguyên). Bìa do content-worker dựng (Top N, "Outfit - theo sản phẩm") thì dựng lại được.
+     */
+    public static function hookInImage(SocialPost $post): bool
+    {
+        if (! $post->image_batch_id) {
+            return false;
+        }
+        $batch = ImageBatch::query()->find($post->image_batch_id, ['id', 'hook_locked', 'outfit_mode']);
+
+        return (bool) $batch?->hook_locked && $batch->outfit_mode !== ImageBatch::OUTFIT_MODE_PRODUCT;
+    }
+
+    /**
+     * Lệnh gửi bài "Viết lại bằng AI" (redo_mode content): chỉ thay hook / tiêu đề / caption / hashtag, GIỮ ảnh, dạng bài,
+     * chủ đề, giờ đăng. Hook đổi + bài có ảnh do content-worker dựng -> dựng lại ảnh có chữ từ chính ảnh gốc (không tạo ảnh).
+     * { hook?, title, content, hashtags }
+     */
+    private function redoContent(SocialPost $post, Channel $channel, array $raw): SocialPost
+    {
+        $sample = PostSamples::get((string) $post->sample_key) ?? [];
+        $caption = $this->caption($channel, $raw);
+        $errors = [];
+        if (PostSamples::hookFromTitle($sample)) {
+            $hook = $caption['title'];
+            if ($hook === '') {
+                $errors[] = 'title bắt buộc (bài này dùng tiêu đề làm hook, không cần gửi hook).';
+            }
+        } elseif (self::hookInImage($post)) {
+            $hook = $post->hook; // hook đã in trên ảnh bìa: giữ nguyên
+        } else {
+            $hook = trim((string) ($raw['hook'] ?? ''));
+            if ($hook === '' || mb_strlen($hook) > 200) {
+                $errors[] = 'hook bắt buộc, tối đa 200 ký tự.';
+            }
+        }
+        if ($caption['title'] === '' && ! PostSamples::hookFromTitle($sample)) {
+            $errors[] = 'title bắt buộc.';
+        }
+        if ($errors) {
+            throw ValidationException::withMessages(['item' => $errors]);
+        }
+
+        return DB::transaction(function () use ($post, $hook, $caption) {
+            $post = SocialPost::query()->lockForUpdate()->findOrFail($post->id);
+            $hookChanged = $hook !== $post->hook;
+            $post->fill([...$caption, 'hook' => $hook, 'redo_requested_at' => null, 'redo_mode' => null]);
+            // KHÔNG xếp lại nền tảng (bài đăng lỗi không tự đăng lại): về đúng trạng thái trước khi bấm (chờ đăng / chờ gửi)
+            $post->syncStatus();
+            $post->save();
+            // Ảnh đã xong + hook mới: content-worker dựng lại bìa / chữ từ ảnh gốc (bài không cần dựng: không làm gì)
+            if ($hookChanged && $post->status !== SocialPostStatus::Generating) {
+                $this->contentJobs->queueForPost($post);
+            }
+            if ($post->plan_item_id) {
+                ContentPlanItem::query()->whereKey($post->plan_item_id)->update([
+                    'hook' => $hook, 'title' => $caption['title'], 'content' => $caption['content'], 'hashtags' => json_encode($caption['hashtags']),
+                ]);
+            }
+            $this->audit->log('social_post.plan_redo_content', $post);
 
             return $post->refresh();
         });

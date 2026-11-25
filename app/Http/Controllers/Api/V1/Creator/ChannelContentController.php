@@ -28,6 +28,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -387,7 +388,18 @@ class ChannelContentController extends Controller
 
     public function redo(Request $request, int $post): JsonResponse
     {
-        $model = $this->plans->requestRedo($this->post($request, $post), $request->isMethod('post'));
+        // mode: full = "Làm lại bài này" (mặc định), content = "Viết lại bằng AI" (chỉ viết lại chữ, giữ ảnh)
+        $data = $request->validate([
+            'mode' => ['nullable', Rule::in([ChannelPlanService::REDO_FULL, ChannelPlanService::REDO_CONTENT])],
+            // Bài tạo tay chưa giao worker (chưa thuộc kênh): worker đang chọn ở form -> bài thuộc kênh của worker đó
+            'worker_id' => ['nullable', 'integer'],
+        ]);
+        $model = $this->post($request, $post);
+        if (! $model->channel_id && ! empty($data['worker_id']) && $request->isMethod('post')) {
+            $model->worker_id = app(\App\Services\Social\VideoPostService::class)->findWorker($request->user(), (int) $data['worker_id'])->id;
+            $model->save(); // SocialPost::booted gắn channel_id theo worker
+        }
+        $model = $this->plans->requestRedo($model, $request->isMethod('post'), $data['mode'] ?? ChannelPlanService::REDO_FULL);
 
         return response()->json(['data' => $this->calendarPost($model->load('images.output'))]);
     }
@@ -729,6 +741,7 @@ class ChannelContentController extends Controller
             'title' => $p->title,
             'hashtags' => $p->hashtags ?? [],
             'redo_requested_at' => $p->redo_requested_at,
+            'redo_mode' => $p->redo_mode,
             'last_error' => $p->last_error,
             'post_url' => $p->publishJobs()->whereNotNull('post_url')->latest('id')->value('post_url'),
             'images' => $p->images->sortBy('position')->values()->map(fn ($img) => [

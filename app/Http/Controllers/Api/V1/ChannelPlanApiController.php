@@ -111,8 +111,11 @@ class ChannelPlanApiController extends Controller
     {
         // images: bài lô phối đồ (vd lookbook) không gửi ảnh mà gửi outfit { count, product_id }; bài lô ảnh sản phẩm
         // (unboxing) gửi product_batch { product_id }
-        $request->validate(['images' => ['nullable', 'array'], 'outfit' => ['nullable', 'array'], 'product_batch' => ['nullable', 'array'], 'product_id' => ['nullable', 'integer'], 'sample_key' => ['required', 'string'], 'hook' => ['nullable', 'string']]);
         $model = SocialPost::query()->find($post) ?? throw new BusinessException('NOT_FOUND', 'Không tìm thấy bài đăng.', 404);
+        // Chế độ "Viết lại bằng AI" (redo_mode content, 2026-11-25): chỉ gửi hook / title / content / hashtags
+        $contentOnly = $model->redo_mode === \App\Services\Channel\ChannelPlanService::REDO_CONTENT;
+        $request->validate(['images' => ['nullable', 'array'], 'outfit' => ['nullable', 'array'], 'product_batch' => ['nullable', 'array'], 'product_id' => ['nullable', 'integer'],
+            'sample_key' => [$contentOnly ? 'nullable' : 'required', 'string'], 'hook' => ['nullable', 'string']]);
         $model = $this->plans->redo($model, $request->all());
 
         return response()->json(['data' => ['id' => $model->id, 'status' => $model->status]]);

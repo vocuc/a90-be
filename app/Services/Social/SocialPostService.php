@@ -315,14 +315,6 @@ class SocialPostService
         return $result;
     }
 
-    /** Chờ gửi hoặc chờ tới giờ (worker chưa nhận). */
-    public function assertEditable(SocialPost $post): void
-    {
-        if (! $post->isEditable()) {
-            throw BusinessException::postNotEditable();
-        }
-    }
-
     private function findExisting(User $user, string $idempotencyKey, string $source): ?SocialPost
     {
         $existing = SocialPost::query()
