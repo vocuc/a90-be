@@ -17,8 +17,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class Channel extends Model
 {
-    /** Tạm thời 1 tài khoản A51 chỉ tạo 1 kênh TikTok (2026-11-22). Mở lại thì tăng số này. */
-    public const MAX_PER_SHOP = 1;
+    /** Số kênh TikTok tối đa của 1 tài khoản A51 (mở nhiều kênh 2026-11-26; mỗi kênh cần 1 worker đăng bài riêng). */
+    public const MAX_PER_SHOP = 10;
 
     public const PLATFORM_TIKTOK = 'tiktok';
 
