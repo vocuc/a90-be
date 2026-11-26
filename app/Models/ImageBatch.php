@@ -72,7 +72,7 @@ class ImageBatch extends Model
     {
         return $query
             ->withProductId()
-            ->with(['coverImage.output', 'product.coverImage', 'group'])
+            ->with(['coverImage.output', 'product.coverImage', 'group', 'channel:id,name'])
             ->withCount([
                 'images',
                 'images as generating_count' => fn (Builder $q) => $q->whereHas('output', fn (Builder $o) => $o->whereIn('status', ImageBatchService::BUSY)),
@@ -80,6 +80,12 @@ class ImageBatch extends Model
                 'images as failed_count' => fn (Builder $q) => $q->whereHas('output', fn (Builder $o) => $o->where('status', OutputStatus::Failed)),
                 'posts',
             ]);
+    }
+
+    /** Kênh ảnh / lô được tạo cho (2026-11-26); null = không rõ kênh. */
+    public function channel(): BelongsTo
+    {
+        return $this->belongsTo(Channel::class);
     }
 
     /** Sản phẩm của lô theo cột ảo product_id (cần scope withProductId); null khi ảnh không gắn sản phẩm / sản phẩm đã xoá. */

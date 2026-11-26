@@ -82,7 +82,8 @@ class OutfitBatchService
      */
     public function create(User $user, int $count, int $images, bool $insertLogo, string $idempotencyKey, int $workerId,
         ?array $productIds = null, bool $useProduct = true, ?string $lockedHook = null, array $outfitTags = [],
-        ?int $textTemplateId = null, ?array $outfitLabels = null, ?string $outfitMode = null, ?array $imageProductIds = null): array
+        ?int $textTemplateId = null, ?array $outfitLabels = null, ?string $outfitMode = null, ?array $imageProductIds = null,
+        ?int $channelId = null): array
     {
         $lock = Cache::lock("outfit-batch:{$user->id}", 120);
         $lock->block(30);
@@ -107,9 +108,10 @@ class OutfitBatchService
                 : collect();
             $created = [];
             foreach ($products->values() as $n => $product) {
-                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags, $textTemplateId, $outfitLabels, $outfitMode, $imageProductIds, $imageProducts) {
+                $created[] = DB::transaction(function () use ($user, $product, $images, $insertLogo, $workerId, $creative, $idempotencyKey, $n, $lockedHook, $outfitTags, $textTemplateId, $outfitLabels, $outfitMode, $imageProductIds, $imageProducts, $channelId) {
                     $batch = ImageBatch::query()->create([
                         'user_id' => $user->id,
+                        'channel_id' => $channelId,
                         'idempotency_key' => "outfit:{$idempotencyKey}:{$n}",
                         'source' => ImageBatch::SOURCE_OUTFIT,
                         'outfit_mode' => $product ? $outfitMode : null,
@@ -123,7 +125,7 @@ class OutfitBatchService
                     for ($pos = 1; $pos <= ($noCover ? $images - 1 : $images); $pos++) {
                         $own = $noCover && $imageProductIds ? $imageProducts->get((int) ($imageProductIds[$pos - 1] ?? 0)) : null;
                         $generation = $this->newGeneration($user, $creative, $pos === 1 && ! $noCover ? Generation::KIND_OUTFIT_COVER : Generation::KIND_OUTFIT,
-                            $own ? $own->images->pluck('path', 'field_key')->all() : $paths, $own?->id ?? $product?->id, $workerId, $insertLogo, "outfit:{$batch->id}:{$pos}");
+                            $own ? $own->images->pluck('path', 'field_key')->all() : $paths, $own?->id ?? $product?->id, $workerId, $insertLogo, "outfit:{$batch->id}:{$pos}", null, $channelId);
                         $batch->images()->create([
                             'generation_id' => $generation->id,
                             'output_id' => $generation->outputs->first()->id,
@@ -155,7 +157,7 @@ class OutfitBatchService
             }
             $generation = Generation::query()->where('user_id', $user->id)->where('idempotency_key', $idempotencyKey)->first()
                 ?? $this->newGeneration($user, $original->creative()->firstOrFail(), $original->kind, $original->input_paths ?? [],
-                    $original->product_id, $original->worker_id, (bool) $original->insert_logo, $idempotencyKey, $original);
+                    $original->product_id, $original->worker_id, (bool) $original->insert_logo, $idempotencyKey, $original, $original->channel_id);
             $image->update(['generation_id' => $generation->id, 'output_id' => $generation->outputs()->first()->id]);
             $this->audit->log('image_batch.regenerate', $batch, ['image_id' => $image->id, 'generation_id' => $generation->id], $user->id);
             // Bài kế hoạch lấy ảnh từ lô phối đồ: bài về chờ, ảnh mới xong thì bài lại sẵn sàng đăng
@@ -178,7 +180,7 @@ class OutfitBatchService
     }
 
     private function newGeneration(User $user, AiCreative $creative, string $kind, array $paths, ?int $productId, ?int $workerId,
-        bool $insertLogo, string $idempotencyKey, ?Generation $parent = null): Generation
+        bool $insertLogo, string $idempotencyKey, ?Generation $parent = null, ?int $channelId = null): Generation
     {
         $generation = Generation::query()->create([
             'user_id' => $user->id,
@@ -199,6 +201,7 @@ class OutfitBatchService
             'insert_logo' => $insertLogo,
             'worker_id' => $workerId,
             'product_id' => $productId ?? 0,
+            'channel_id' => $channelId,
         ]);
         $generation->outputs()->create(['position' => 1, 'status' => OutputStatus::Queued]);
 

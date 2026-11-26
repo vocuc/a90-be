@@ -49,6 +49,8 @@ class ImageBatchResource extends JsonResource
             'status' => $counts['generating_count'] > 0 ? 'generating' : 'completed',
             // Lô tạo tự động (note/auto-tao-lo.txt ở repo frontend): sản phẩm / nhóm null khi lô tạo tay hoặc đã xoá
             'source' => $this->source ?? ImageBatch::SOURCE_MANUAL,
+            // Kênh lô tạo cho, null = không rõ kênh
+            'channel' => $this->whenLoaded('channel', fn () => $this->channel ? ['id' => $this->channel->id, 'name' => $this->channel->name] : null),
             'product' => $this->product ? [
                 'id' => $this->product->id,
                 'name' => $this->product->name,

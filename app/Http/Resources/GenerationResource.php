@@ -44,6 +44,8 @@ class GenerationResource extends JsonResource
                 'slug' => $this->creative->slug,
                 'title' => $this->creative->title,
             ]),
+            // Kênh ảnh tạo cho (lọc Lịch sử tạo ảnh theo kênh), null = không rõ kênh
+            'channel' => $this->whenLoaded('channel', fn () => $this->channel ? ['id' => $this->channel->id, 'name' => $this->channel->name] : null),
             'parent_generation_id' => $this->parent_generation_id,
             'quantity' => $this->quantity,
             'aspect_ratio' => $this->aspect_ratio,

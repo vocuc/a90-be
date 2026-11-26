@@ -1307,7 +1307,7 @@ class ChannelPlanService
         $productId = ! empty($outfit['product_id']) ? (int) $outfit['product_id'] : null;
         $batches = $this->outfitBatches->create($user, 1, (int) $outfit['count'], (bool) $user->logoPath(), $key, $workerId,
             $productId ? [$productId] : null, (bool) $productId, $hook, $outfit['tags'] ?? [], $textTemplateId, $outfit['labels'] ?? null,
-            $outfit['mode'] ?? null, $outfit['product_ids'] ?? null);
+            $outfit['mode'] ?? null, $outfit['product_ids'] ?? null, $channel->id);
 
         return $batches[0] ?? throw new BusinessException('OUTFIT_NO_PRODUCT', 'Không tạo được lô phối đồ.', 422);
     }

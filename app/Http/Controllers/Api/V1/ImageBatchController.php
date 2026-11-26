@@ -67,6 +67,8 @@ class ImageBatchController extends Controller
             'worker_id' => ['nullable', 'integer'],
             // Sản phẩm: chỉ lưu vào generations.product_id của mọi ảnh trong lô, không gắn vào lô (image_batches.product_id)
             'product_id' => ['nullable', 'integer'],
+            // Kênh lô tạo cho (image_batches / generations.channel_id), không gửi = không rõ kênh
+            ...self::channelRule($request),
         ], [
             'items.*.creative_id.distinct' => 'Mỗi mẫu chỉ được chọn một lần trong lô.',
         ]);
@@ -101,7 +103,7 @@ class ImageBatchController extends Controller
             ];
         }
 
-        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo, [], $workerId, $productId);
+        $batch = $this->batches->create($request->user(), $resolved, $data['idempotency_key'], $insertLogo, [], $workerId, $productId, self::channelId($data));
 
         return $this->resource($batch)->response()->setStatusCode(201);
     }
@@ -212,12 +214,14 @@ class ImageBatchController extends Controller
             'product_ids' => ['nullable', 'array', 'max:'.OutfitBatchService::MAX_COUNT],
             'product_ids.*' => ['integer'],
             'use_product' => ['nullable', 'boolean'],
+            ...self::channelRule($request),
         ]);
         $user = $request->user();
         $workerId = Worker::outfitWorkerIdFor($user->id, $data['worker_id'] ?? null);
         $created = app(OutfitBatchService::class)->create($user, (int) $data['count'],
             (int) ($data['images_per_batch'] ?? OutfitBatchService::DEFAULT_IMAGES), $this->insertLogo($request, $data),
-            $data['idempotency_key'], $workerId, self::productIds($data), $request->boolean('use_product', true));
+            $data['idempotency_key'], $workerId, self::productIds($data), $request->boolean('use_product', true),
+            channelId: self::channelId($data));
         $batches = ImageBatch::query()->whereKey(array_map(fn (ImageBatch $b) => $b->id, $created))
             ->withSummary()->orderBy('id')->get();
 

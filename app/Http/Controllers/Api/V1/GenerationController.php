@@ -21,6 +21,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Validation\Rule;
 
 class GenerationController extends Controller
 {
@@ -41,6 +42,8 @@ class GenerationController extends Controller
             'worker_id' => ['nullable', 'integer'],
             // Sản phẩm ảnh này tạo cho (lưu vào generations.product_id), không gửi = 0
             'product_id' => ['nullable', 'integer'],
+            // Kênh ảnh này tạo cho (generations.channel_id), không gửi = không rõ kênh
+            'channel_id' => ['nullable', 'integer', Rule::exists('channels', 'id')->where('user_id', $request->user()->id)],
         ]);
 
         $creative = AiCreative::query()->find($data['creative_id'])
@@ -51,6 +54,7 @@ class GenerationController extends Controller
 
         $generation = $this->generations->create(
             $request->user(), $creative, $input, $data['quantity'], $data['idempotency_key'], [], null, $workerId, $productId,
+            isset($data['channel_id']) ? (int) $data['channel_id'] : null,
         );
 
         return (new GenerationResource($generation->load('creative')))->response()->setStatusCode(202);
@@ -62,6 +66,7 @@ class GenerationController extends Controller
      * chưa tắt và không lỗi, failed = ảnh tạo thất bại, disabled = ảnh người dùng đã tắt (failed / disabled gồm cả ảnh phối đồ).
      * Không có tab: mọi đơn, kèm ảnh chưa tắt (như cũ, dùng cho ô chọn ảnh).
      * creative_id: chỉ đơn của creative đó. product_id: chỉ đơn có generations.product_id = sản phẩm đó.
+     * channel: id kênh = chỉ ảnh tạo cho kênh đó; none = ảnh không rõ kênh (generations.channel_id null).
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -69,8 +74,10 @@ class GenerationController extends Controller
             'tab' => ['nullable', 'in:active,outfit,failed,disabled'],
             'creative_id' => ['nullable', 'integer'],
             'product_id' => ['nullable', 'integer'],
+            'channel' => ['nullable', 'string', 'regex:/^(\d+|none)$/'],
         ]);
         $tab = $data['tab'] ?? null;
+        $channel = $data['channel'] ?? null;
         $userId = $request->user()->id;
         $productId = $data['product_id'] ?? null;
         $tabFilter = match ($tab) {
@@ -86,11 +93,13 @@ class GenerationController extends Controller
             ->where('user_id', $userId)
             ->when($data['creative_id'] ?? null, fn ($q, $id) => $q->where('creative_id', $id))
             ->when($productId, fn ($q, $id) => $q->where('product_id', $id))
+            ->when($channel === 'none', fn ($q) => $q->whereNull('channel_id'))
+            ->when($channel !== null && $channel !== 'none', fn ($q) => $q->where('channel_id', (int) $channel))
             // Ảnh phối đồ (lô Phối đồ) tách riêng tab "Phối đồ"; tab "Đang hoạt động" chỉ còn ảnh creative
             ->when($tab === 'active', fn ($q) => $q->where('kind', Generation::KIND_CREATIVE))
             ->when($tab === 'outfit', fn ($q) => $q->whereIn('kind', Generation::OUTFIT_KINDS))
             ->when($tab || $productId, fn ($q) => $q->whereHas('outputs', $tabFilter))
-            ->with(['creative', 'outputs' => $tabFilter])
+            ->with(['creative', 'channel:id,name', 'outputs' => $tabFilter])
             ->latest('id')
             ->paginate(min((int) $request->query('per_page', 20), 50));
 

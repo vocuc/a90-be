@@ -42,16 +42,17 @@ class ImageBatchService
      * @param  array<string, mixed>  $attributes  cột thêm của lô (lô tự động: source, creative_group_id)
      * @param  ?int  $workerId  worker tạo ảnh người dùng chọn cho cả lô (note/chon-worker-tao-anh.txt), null = worker nào cũng nhận
      * @param  ?int  $productId  sản phẩm lưu vào generations.product_id của mọi ảnh trong lô (lô không lưu sản phẩm), null = 0
+     * @param  ?int  $channelId  kênh lô tạo cho: lưu ở image_batches.channel_id và generations.channel_id, null = không rõ kênh
      */
-    public function create(User $user, array $items, string $idempotencyKey, bool $insertLogo = false, array $attributes = [], ?int $workerId = null, ?int $productId = null): ImageBatch
+    public function create(User $user, array $items, string $idempotencyKey, bool $insertLogo = false, array $attributes = [], ?int $workerId = null, ?int $productId = null, ?int $channelId = null): ImageBatch
     {
         if ($existing = $this->findExisting($user, $idempotencyKey)) {
             return $existing;
         }
 
         try {
-            return DB::transaction(function () use ($user, $items, $idempotencyKey, $insertLogo, $attributes, $workerId, $productId) {
-                $batch = ImageBatch::query()->create([...$attributes, 'user_id' => $user->id, 'idempotency_key' => $idempotencyKey]);
+            return DB::transaction(function () use ($user, $items, $idempotencyKey, $insertLogo, $attributes, $workerId, $productId, $channelId) {
+                $batch = ImageBatch::query()->create([...$attributes, 'user_id' => $user->id, 'channel_id' => $channelId, 'idempotency_key' => $idempotencyKey]);
                 $position = 0;
 
                 foreach (array_values($items) as $i => $item) {
@@ -62,7 +63,7 @@ class ImageBatchService
 
                     for ($done = 0, $part = 0; $done < $item['quantity']; $done += $chunk, $part++) {
                         $quantity = min($chunk, $item['quantity'] - $done);
-                        $generation = $this->generations->create($user, $creative, $input, $quantity, "batch:{$batch->id}:{$i}:{$part}", $kept, null, $workerId, $productId);
+                        $generation = $this->generations->create($user, $creative, $input, $quantity, "batch:{$batch->id}:{$i}:{$part}", $kept, null, $workerId, $productId, $channelId);
                         // Cùng transaction với lúc tạo output nên worker chưa nhận job trước khi đặt cờ logo
                         if ($insertLogo) {
                             $generation->update(['insert_logo' => true]);

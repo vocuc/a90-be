@@ -32,8 +32,9 @@ class GenerationService
      *
      * @param  array<string, string>  $keptPaths  ảnh đầu vào dùng lại từ lần tạo trước theo tên trường (khi không tải ảnh mới)
      * @param  ?int  $workerId  worker tạo ảnh người dùng chọn (đã kiểm tra bằng Worker::imageWorkerIdFor), null = worker nào cũng nhận
+     * @param  ?int  $channelId  kênh ảnh này tạo cho (generations.channel_id, đã kiểm tra thuộc người dùng), null = không rõ kênh
      */
-    public function create(User $user, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey, array $keptPaths = [], ?Generation $parent = null, ?int $workerId = null, ?int $productId = null): Generation
+    public function create(User $user, AiCreative $creative, GenerationInput $input, int $quantity, string $idempotencyKey, array $keptPaths = [], ?Generation $parent = null, ?int $workerId = null, ?int $productId = null, ?int $channelId = null): Generation
     {
         if ($existing = $this->findExisting($user, $idempotencyKey, $creative->id)) {
             return $existing;
@@ -48,6 +49,7 @@ class GenerationService
                 'insert_logo' => (bool) $parent?->insert_logo,
                 'worker_id' => $workerId ?? $parent?->worker_id,
                 'product_id' => $productId ?? $parent?->product_id ?? 0,
+                'channel_id' => $channelId ?? $parent?->channel_id,
             ], $parent);
     }
 
@@ -97,6 +99,7 @@ class GenerationService
                 'insert_logo' => $original->insert_logo,
                 'worker_id' => $original->worker_id,
                 'product_id' => $original->product_id ?? 0,
+                'channel_id' => $original->channel_id,
             ],
             $original, $outputs->pluck('id')->all());
     }

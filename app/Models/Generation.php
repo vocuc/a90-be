@@ -59,6 +59,12 @@ class Generation extends Model
         return $this->belongsTo(Worker::class);
     }
 
+    /** Kênh ảnh / lô được tạo cho (2026-11-26); null = không rõ kênh. */
+    public function channel(): BelongsTo
+    {
+        return $this->belongsTo(Channel::class);
+    }
+
     /** Sản phẩm generation tạo ảnh cho; product_id = 0: không gắn sản phẩm (không có khoá ngoại). */
     public function product(): BelongsTo
     {
