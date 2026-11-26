@@ -57,10 +57,10 @@ class PromptTemplateController extends Controller
             $configs = $template->configs()->with('creative:id,title')->lockForUpdate()->get();
 
             // Prompt gộp của Creative nào lỗi (quá dài, dùng biến Creative không có...) thì không lưu Template
-            $broken = $configs->filter(fn (AiCreativeConfig $config) => CreativeTemplate::promptError(
+            $broken = $configs->filter(fn (AiCreativeConfig $config) => (CreativeTemplate::promptError(
                 $config->input_schema ?? [],
                 $merge($config),
-            ) !== null);
+            ) ?? PromptTemplate::optionsError($config->input_schema ?? [], $data['blocks'])) !== null);
             if ($broken->isNotEmpty()) {
                 throw ValidationException::withMessages([
                     'blocks' => 'Prompt gộp của các Creative sau không hợp lệ: '
@@ -97,16 +97,21 @@ class PromptTemplateController extends Controller
             'blocks.*.content' => ['nullable', 'string', 'max:'.CreativeTemplate::MAX_PROMPT_LENGTH],
             // Block ghim: đứng sau prompt riêng của Creative, tối đa 1 block
             'blocks.*.pinned' => ['sometimes', 'boolean'],
+            // Biến thể nội dung: mỗi lần tạo ảnh lấy ngẫu nhiên 1 option nối sau nội dung chính của block
+            'blocks.*.options' => ['sometimes', 'array', 'max:'.PromptTemplate::MAX_OPTIONS],
+            'blocks.*.options.*' => ['nullable', 'string', 'max:'.PromptTemplate::MAX_OPTION_LENGTH],
         ]);
 
         $blocks = array_values(array_map(fn (array $b) => [
             'title' => trim((string) ($b['title'] ?? '')),
             'content' => trim((string) ($b['content'] ?? '')),
             'pinned' => (bool) ($b['pinned'] ?? false),
+            'options' => PromptTemplate::options($b),
         ], $data['blocks']));
         if (count(array_filter($blocks, fn ($b) => $b['pinned'])) > 1) {
             throw ValidationException::withMessages(['blocks' => 'Chỉ ghim được 1 block xuống cuối.']);
         }
+        // Option dài nhất của mỗi block: độ dài trường hợp xấu nhất
         $prompt = PromptTemplate::merge($blocks, null);
         if ($prompt === '') {
             throw ValidationException::withMessages(['blocks' => 'Template cần ít nhất 1 block có nội dung.']);

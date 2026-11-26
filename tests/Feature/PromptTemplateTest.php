@@ -113,6 +113,45 @@ class PromptTemplateTest extends TestCase
         ])->assertStatus(422)->assertJsonValidationErrors(['blocks']);
     }
 
+    public function test_block_options_are_picked_randomly_when_generating(): void
+    {
+        $this->actingAs($this->creator());
+
+        $templateId = $this->postJson('/api/v1/creator/prompt-templates', [
+            'title' => 'Có option',
+            'blocks' => [
+                ['title' => 'BỐI CẢNH', 'content' => 'Ảnh studio.', 'options' => ['Nền gỗ.', '  ', 'Nền đá cẩm thạch.']],
+            ],
+        ])->assertCreated()
+            ->assertJsonPath('data.blocks.0.options', ['Nền gỗ.', 'Nền đá cẩm thạch.'])
+            // Xem trước / bản lưu dùng option dài nhất
+            ->assertJsonPath('data.prompt', "BỐI CẢNH\nẢnh studio.\nNền đá cẩm thạch.")
+            ->json('data.id');
+
+        $creativeId = $this->postJson('/api/v1/creator/creatives', [
+            'model_id' => AiModel::query()->firstOrFail()->id,
+            'input_schema' => $this->schema(),
+            'prompt_template' => 'Riêng.',
+            'prompt_template_id' => $templateId,
+        ])->assertCreated()->json('data.id');
+
+        $config = \App\Models\AiCreative::query()->findOrFail($creativeId)->config;
+        $seen = [];
+        for ($i = 0; $i < 60; $i++) {
+            $seen[$config->generationPrompt()] = true;
+        }
+        $this->assertEqualsCanonicalizing([
+            "BỐI CẢNH\nẢnh studio.\nNền gỗ.\n\nRiêng.",
+            "BỐI CẢNH\nẢnh studio.\nNền đá cẩm thạch.\n\nRiêng.",
+        ], array_keys($seen));
+
+        // Option dùng biến Creative không có -> không lưu Template
+        $this->putJson("/api/v1/creator/prompt-templates/{$templateId}", [
+            'title' => 'Có option',
+            'blocks' => [['title' => '', 'content' => 'A', 'options' => ['Màu {{mau}}', 'x']]],
+        ])->assertStatus(422)->assertJsonValidationErrors(['blocks']);
+    }
+
     public function test_creative_without_template_still_requires_prompt_and_templates_are_private(): void
     {
         $owner = $this->creator();

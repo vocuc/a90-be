@@ -147,7 +147,7 @@ class GenerationService
                     'quantity' => $quantity,
                     // "Yêu cầu" của sản phẩm (nếu có) nối vào cuối prompt của mọi Creative
                     'prompt_snapshot' => Product::appendPromptNote(
-                        CreativeTemplate::render($config->prompt_template, $config->input_schema, $input['input_values'] ?? []),
+                        CreativeTemplate::render($config->generationPrompt(),$config->input_schema, $input['input_values'] ?? []),
                         $input['product_id'] ?? null,
                     ),
                     'status' => GenerationStatus::Queued,

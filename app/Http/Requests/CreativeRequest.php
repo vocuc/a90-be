@@ -66,6 +66,9 @@ class CreativeRequest extends FormRequest
                     $settings->int('generation.input_max_size_kb'),
                     $settings->int('generation.max_hidden_images'),
                 );
+                if (! isset($errors['prompt_template']) && $message = $this->optionsError()) {
+                    $errors['prompt_template'] = $message;
+                }
                 $errors += $this->assetErrors($this->input('input_schema'));
                 foreach ($errors as $path => $message) {
                     $validator->errors()->add($path, $message);
@@ -82,6 +85,15 @@ class CreativeRequest extends FormRequest
         $own = $this->has('prompt_template') ? (string) $this->input('prompt_template') : (string) $config?->ownPrompt();
 
         return PromptTemplate::mergeFor($templateId ? (int) $templateId : null, $own);
+    }
+
+    /** Option trong các block của Template (gửi lên hoặc đang dùng) phải chỉ dùng biến có trong input_schema. */
+    private function optionsError(): ?string
+    {
+        $templateId = $this->has('prompt_template_id') ? $this->input('prompt_template_id') : $this->route('creative')?->config?->prompt_template_id;
+        $template = $templateId ? PromptTemplate::query()->find((int) $templateId) : null;
+
+        return $template ? PromptTemplate::optionsError($this->input('input_schema'), $template->blocks ?? []) : null;
     }
 
     /**
