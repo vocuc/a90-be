@@ -37,7 +37,10 @@ class CreativeController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             // group: creative cùng nhóm liền nhau (trang Quản lý Creative); mặc định: sửa gần nhất trước
             'sort' => ['nullable', Rule::in(['group'])],
+            // Lọc theo kênh của nhóm chứa creative: id kênh | shared (nhóm dùng chung) | none (chưa vào nhóm nào)
+            'channel' => ['nullable', 'string', 'regex:/^(\d+|shared|none)$/'],
         ]);
+        $channel = $filters['channel'] ?? null;
 
         $creatives = AiCreative::query()
             ->where('creator_id', $request->user()->id)
@@ -45,7 +48,10 @@ class CreativeController extends Controller
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($filters['visibility'] ?? null, fn ($q, $visibility) => $q->where('is_public', $visibility === 'public'))
             ->when($filters['q'] ?? null, fn ($q, $term) => $q->where('title', 'like', '%'.addcslashes($term, '%_\\').'%'))
-            ->with(['images', 'hashtags', 'groups'])
+            ->when($channel === 'none', fn ($q) => $q->whereDoesntHave('groups'))
+            ->when($channel === 'shared', fn ($q) => $q->whereHas('groups', fn ($g) => $g->whereNull('channel_id')))
+            ->when($channel !== null && ctype_digit($channel), fn ($q) => $q->whereHas('groups', fn ($g) => $g->where('channel_id', (int) $channel)))
+            ->with(['images', 'hashtags', 'groups.channel:id,name'])
             // Tỷ lệ khung hình mặc định hiện trên thẻ, lấy bằng subquery (không load cả config)
             ->addSelect(['default_aspect_ratio' => AiCreativeConfig::query()
                 ->select('default_aspect_ratio')

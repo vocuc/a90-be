@@ -40,7 +40,7 @@ class CreatorCreativeResource extends JsonResource
             // không có thì dùng ảnh bìa của Creative
             'cover_url' => $media->url(($this->resource->getAttributes()['latest_output_path'] ?? null) ?: $this->images->first()?->thumbPathOrOriginal()),
             // Nhóm tạo lô tự động đang chứa Creative (chỉ có ở danh sách)
-            'group' => $this->whenLoaded('groups', fn () => ($group = $this->groups->first()) ? ['id' => $group->id, 'name' => $group->name] : null),
+            'group' => $this->whenLoaded('groups', fn () => ($group = $this->groups->first()) ? ['id' => $group->id, 'name' => $group->name, 'channel' => $group->relationLoaded('channel') && $group->channel ? ['id' => $group->channel->id, 'name' => $group->channel->name] : null] : null),
             'published_at' => $this->published_at,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
